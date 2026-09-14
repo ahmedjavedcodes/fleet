@@ -12,6 +12,7 @@ venv/
 node_modules/
 .next/
 out/
+*.tsbuildinfo
 frontend/.env*.local
 
 # Environment files
