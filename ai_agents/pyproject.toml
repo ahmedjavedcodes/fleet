@@ -1,0 +1,30 @@
+[project]
+name = "fleet-ai-agents"
+version = "0.1.0"
+description = "Fleet Management SaaS - Autonomous Agentic Framework (FleetCopilot)"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=0.3",
+    "langgraph>=0.2",
+    "langchain-anthropic>=0.3",
+    "langchain-openai>=0.2",
+    "mcp>=1.0",
+    "pinecone>=5.0",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.5",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
