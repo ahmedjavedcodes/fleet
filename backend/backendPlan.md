@@ -25,6 +25,121 @@ Throughout this document, each data flow step is labeled:
 
 ---
 
+## Foundation layer — entities, attributes, relationships & RBAC
+
+Every problem below (1 through 5) is built on five foundational entities: `Organization`, `User`, `Driver`, `Vehicle`, `Supplier`. This section defines their attributes, how they relate to each other, and how role-based access control governs who can touch what. The problem sections reference these entities but assume this layer as settled ground — read this first.
+
+### Organization — the tenant boundary
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| name | string | |
+| slug | string, unique | Used in URLs/subdomains |
+| subscription_tier | enum | trial / starter / pro / enterprise |
+| created_at | timestamp | |
+
+Every other entity belongs to exactly one Organization via `organization_id` (`OrgScopedMixin`). No entity is ever shared across two organizations — that's the tenant isolation boundary.
+
+### User — the login account (authentication only)
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| organization_id | UUID (FK) | |
+| email | string, unique per org | |
+| hashed_password | string | bcrypt |
+| full_name | string | |
+| phone | string, nullable | |
+| role | enum | admin / fleet_manager / driver / mechanic |
+| is_active | bool | Deactivate without deleting |
+| last_login_at | timestamp, nullable | |
+
+`User` is deliberately just the authentication record — not a person's full operational profile. It exists so login, JWT issuance, and role enforcement have one clean source of truth. No age/date_of_birth here — a login account doesn't need it.
+
+### Driver — the operational profile (separate from User)
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| organization_id | UUID (FK) | |
+| user_id | UUID (FK), **nullable** | Only set if this driver has app login access |
+| full_name | string | |
+| license_number | string | |
+| license_expiry | date | |
+| phone | string | |
+| status | enum | active / suspended / inactive |
+
+`Driver` is split from `User` on purpose: a fleet manager can register a driver's license and phone number before that driver ever gets a login, or a driver may never need login access at all (someone else logs their trips for them). `user_id` being nullable is what makes both cases possible.
+
+### Vehicle — the physical asset
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| organization_id | UUID (FK) | |
+| plate_number | string, unique per org | |
+| make / model / year | string / string / int | |
+| vin | string, unique | |
+| current_odometer | int | Updated by fuel logs, trips, service logs |
+| fuel_type | enum | diesel / petrol / hybrid / electric |
+| status | enum | active / maintenance / retired |
+| service_interval_km / _months | int / int | Drives maintenance scheduling — Problem 3 |
+
+### Supplier — parts vendor
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| organization_id | UUID (FK) | |
+| name / contact_email / phone | string | |
+| avg_lead_time_days | int | |
+| reliability_score | float, computed | Recalculated on every PO receive — Problem 2 |
+
+### Relationships and cardinality
+
+**Organization → User / Vehicle / Driver / Supplier: 1 : N.** One org, many of each — the tenant isolation boundary.
+
+**User ↔ Driver: 1 : 0..1 (optional).** A `User` with `role = driver` typically has one linked `Driver` profile. A `Driver` can exist with `user_id = null` (no login access at all). A `User` with `role = admin` or `fleet_manager` has no `Driver` profile.
+
+**Driver ↔ Vehicle: many-to-many, via `TripLog` — no direct foreign key.** One driver drives many vehicles over time; one vehicle is driven by many drivers over time. Each `TripLog` row is one `(driver, vehicle, time-window)` pairing. There is no cap on either side, and the system does not enforce a fixed driver-vehicle assignment.
+
+**Driver → FuelLog / TripLog / DriverReport / IncidentLog: 1 : N.**
+
+**Vehicle → FuelLog / MaintenanceLog / TripLog / DriverReport / IncidentLog: 1 : N.**
+
+**Vehicle ↔ ComplianceRule: soft match, not a foreign key.** A rule is defined for `(vehicle_make, vehicle_model, service_type)`. Every vehicle matching that make/model inherits the rule automatically — adding a 51st identical truck requires zero new rule rows.
+
+**Supplier → PartsInventory / PurchaseOrder: 1 : N.**
+
+**PartsInventory ↔ PurchaseOrder: many-to-many, but soft (JSONB, not a join table).** Captured in `PurchaseOrder.line_items`.
+
+**MaintenanceLog → MechanicReport: 1 : 0..1.**
+
+### Role-based access control
+
+`User.role` is one of `admin`, `fleet_manager`, `driver`, `mechanic`. Enforcement happens at two levels:
+
+1. **Route-level** — a `require_role([...])` dependency rejects with 403 before the router body runs, based on the JWT's role claim.
+2. **Row-level** — on routes a `driver` or `mechanic` *can* reach, the service layer filters to their own records (`WHERE driver_id = current_user.driver_profile.id`), on top of the standard org-scope filter.
+
+| Domain | Admin | Fleet Manager | Driver | Mechanic |
+|---|---|---|---|---|
+| Vehicles, Drivers, Suppliers | full | full | read-only | read-only |
+| FuelLog, TripLog, DriverReport | full | read all | own only | — |
+| MaintenanceLog, MechanicReport | full | read all | — | own jobs |
+| PartsInventory, PurchaseOrders | full | full | — | read-only |
+| ComplianceRule | full | full | — | read-only |
+| Dashboard/insights | full | full | — | — |
+
+### Open design decisions (flagged, not yet adopted)
+
+- **No "currently assigned vehicle" field.** `Vehicle.assigned_driver_id` (nullable FK to `Driver`) would give a fast "who's on truck #7 today" lookup, distinct from `TripLog` history. Not added to the schema until decided.
+- **Mechanic has no dedicated entity.** `MaintenanceLog.mechanic_name` is free text, not a FK — unlike `Driver`, there's no structured profile for mechanic performance tracking. Mirroring the `Driver` pattern is an option, not yet adopted.
+- **PartsInventory ties one part to one primary Supplier.** Real purchasing sometimes multi-sources a part. A `PartSupplier` join table would support that; not added until needed.
+
+---
+
 ## Problem 1 — Fuel price volatility
 
 *Fleet managers are bleeding money and don't know where it's going.*
@@ -365,14 +480,14 @@ No new data is entered for this problem. It's purely an output layer — it read
 
 ## Complete model list (after merge)
 
-13 models total, organized by build dependency:
+16 models total, organized by build dependency. Tier 1 and Tier 2 are defined in full in the Foundation layer above — this table is the condensed reference.
 
 ### Tier 1 — Foundation (no domain FKs)
 
 | Model | Key fields |
 |-------|------------|
 | `Organization` | id (UUID), name, slug (unique), subscription_tier, created_at |
-| `User` | id, organization_id (FK), email, hashed_password, full_name, role (enum: admin/fleet_manager/driver/mechanic), is_active |
+| `User` | id, organization_id (FK), email, hashed_password, full_name, phone (nullable), role (enum: admin/fleet_manager/driver/mechanic), is_active |
 
 ### Tier 2 — Core fleet entities
 

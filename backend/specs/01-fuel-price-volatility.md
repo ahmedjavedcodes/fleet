@@ -2,7 +2,7 @@
 
 **Derived from:** [`backendPlan.md`](../backendPlan.md#problem-1--fuel-price-volatility) · [`plans/01-fuel-price-volatility.md`](../plans/01-fuel-price-volatility.md)
 **Status:** Ready for execution
-**Depends on:** Foundation models (`Organization`, `User`, `Vehicle`, `Driver`), `AuditMixin`, `OrgScopedMixin`, auth (`get_current_user`)
+**Depends on:** [`specs/00-foundation.md`](./00-foundation.md) — `Organization`, `User` (auth-only), `Driver` (operational profile), `Vehicle`, `AuditMixin`/`OrgScopedMixin`, `get_current_user`/`require_role`/`get_current_driver_profile`.
 
 ---
 
@@ -67,6 +67,15 @@ The system must turn every fill-up into a single comparable number — cost per 
 - Read-only aggregation: total cost and average `cost_per_km` for the requested month, both fleet-wide and broken down per vehicle.
 - Must be implemented as a function reusable by the Problem 5 dashboard service, not duplicated there.
 
+### 3.5 Access control
+
+Per the Spec 00 permission matrix, `FuelLog` is `admin: full`, `fleet_manager: read all`, `driver: own only`, `mechanic: none`.
+
+- `POST`/`PUT`/receipt-upload: `admin` or `driver` only. `fleet_manager` and `mechanic` receive `403`.
+- `GET` (list/detail): `admin`, `fleet_manager`, `driver`. A `driver` additionally has results filtered to `FuelLog.driver_id == their own Driver.id` — never sees another driver's logs, even within the same organization.
+- `GET /fuel/summary`: `admin`, `fleet_manager` only (fleet-wide aggregation, not a driver-facing view).
+- A `driver`-role user with no linked `Driver` profile sees an empty list on `GET /fuel`, not an error.
+
 ---
 
 ## 4. Constraints
@@ -79,6 +88,8 @@ The system must turn every fill-up into a single comparable number — cost per 
 6. **File storage is separate from file interpretation.** The backend is a storage/status layer for receipts only; parsing is explicitly out of scope (`ai_agents`).
 7. **`created_by` is stamped server-side** from the authenticated user; it is never client-supplied.
 8. **No background jobs.** Anomaly detection and odometer updates run synchronously inside the request that triggers them.
+9. **Role gating is centralized.** Every route declares its allowed roles via the shared `require_role` dependency; no handler or service function re-implements a role check inline.
+10. **`created_by` (the acting `User`) and `driver_id` (the `Driver` the log is about) are distinct fields that may differ** — e.g. an `admin` logging a fill-up on behalf of a driver. Row-level "own only" filtering for `driver`-role callers filters on `driver_id`, never on `created_by`.
 
 ---
 
@@ -97,6 +108,10 @@ The system must turn every fill-up into a single comparable number — cost per 
 | EC-9 | `update_fuel_log` request omits fields that don't affect the delta (e.g. only `notes`) | `cost_per_km` recomputes to the same value; no spurious change. |
 | EC-10 | A different organization's fuel logs, vehicles, or summary | Never visible in any response, including aggregate totals. |
 | EC-11 | Uploading a receipt with an unsupported/empty file | `400`; the fuel log itself remains valid and queryable regardless of receipt state. |
+| EC-12 | `fleet_manager` attempts `POST /fuel` or `PUT /fuel/{id}` | `403` — matrix grants `fleet_manager` read-only on this domain. |
+| EC-13 | `mechanic` calls any route in this domain | `403` — mechanics have no access to `FuelLog` at all. |
+| EC-14 | `driver` requests `GET /fuel/{id}` for a log belonging to a different driver | `404`, not `403` — avoids confirming the log's existence to a caller who shouldn't see it. |
+| EC-15 | `driver`-role user with no linked `Driver` profile calls `GET /fuel` or `POST /fuel` | `GET` returns an empty list; `POST` is rejected (no `driver_id` to attribute the log to) rather than silently creating an orphaned log. |
 
 ---
 
@@ -113,3 +128,6 @@ The system must turn every fill-up into a single comparable number — cost per 
 - [ ] **AC-9:** `GET /fuel/summary?month=YYYY-MM` returns totals matching a manual `SUM`/`AVG` over the same seeded data, both fleet-wide and per vehicle.
 - [ ] **AC-10:** `GET /fuel` filtered by `vehicle_id`, `driver_id`, and a date range returns exactly the matching rows, scoped to the caller's organization.
 - [ ] **AC-11:** No endpoint in this domain returns or is affected by another organization's data.
+- [ ] **AC-12:** `fleet_manager` and `mechanic` tokens receive `403` on `POST`/`PUT /fuel/{id}`/`POST /fuel/{id}/receipt`; `admin` and `driver` tokens succeed.
+- [ ] **AC-13:** A `driver` token listing `/fuel` sees only their own logs; a second driver's logs never appear, verified with two drivers seeded in the same organization.
+- [ ] **AC-14:** A `driver` token requesting another driver's `GET /fuel/{id}` receives `404`.

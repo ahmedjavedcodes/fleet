@@ -2,7 +2,7 @@
 
 **Derived from:** [`backendPlan.md`](../backendPlan.md#problem-2--unpredictable-spare-parts) · [`plans/02-unpredictable-spare-parts.md`](../plans/02-unpredictable-spare-parts.md)
 **Status:** Ready for execution
-**Depends on:** Foundation models, `AuditMixin`/`OrgScopedMixin`, auth. **Shares a transaction boundary with Spec 03** (`MechanicReport` creation triggers stock decrement) — see Constraints §4.7.
+**Depends on:** [`specs/00-foundation.md`](./00-foundation.md), `AuditMixin`/`OrgScopedMixin`, `require_role`. **Shares a transaction boundary with Spec 03** (`MechanicReport` creation triggers stock decrement) — see Constraints §4.7.
 
 ---
 
@@ -64,6 +64,8 @@ A truck breaks down; the mechanic needs a part; the shelf is empty; the supplier
 6. **`PurchaseOrder.line_items` and `PartsInventory.compatible_vehicles` are JSONB**, not normalized join tables — a deliberate tradeoff at this scale. Do not introduce join tables without revisiting this decision.
 7. **A received purchase order is immutable** except through the receive action itself; `PUT` on a received order is rejected.
 8. **Concurrent stock mutations are serialized** via row-level locking on `PartsInventory`, not application-level mutexes.
+9. **Access control per the Spec 00 permission matrix:** `PartsInventory`/`PurchaseOrder` are `admin: full`, `fleet_manager: full`, `driver: none`, `mechanic: read-only`. `Supplier` is `admin: full`, `fleet_manager: full`, `driver: read-only`, `mechanic: read-only`.
+10. **No row-level ("own only") filtering in this domain.** Unlike `FuelLog`/`TripLog`, parts/suppliers/orders aren't owned by an individual — access is gated by role alone, applied on top of the standard organization scope.
 
 ---
 
@@ -82,6 +84,9 @@ A truck breaks down; the mechanic needs a part; the shelf is empty; the supplier
 | EC-9 | A part with `reorder_threshold = 0` | Never appears in low-stock unless `qty_on_hand` goes negative, which is itself prevented (EC-2) — so effectively never flags; this is expected, not a bug. |
 | EC-10 | Registering a part with no `supplier_id` | Allowed — `supplier_id` is optional (a part may have multiple potential suppliers, tracked per purchase order instead). |
 | EC-11 | Cross-organization access to inventory, suppliers, or purchase orders | Never visible, in list or detail views. |
+| EC-12 | `driver` calls any inventory or purchase-order route | `403` — matrix grants `driver` no access to these domains at all. |
+| EC-13 | `mechanic` attempts `POST /inventory` or `PATCH /purchase-orders/{id}/receive` | `403` — mechanic is read-only on both. |
+| EC-14 | `mechanic` calls `GET /inventory`, `/inventory/low-stock`, or `GET /purchase-orders` | `200` — explicitly allowed (read-only). |
 
 ---
 
@@ -100,3 +105,5 @@ A truck breaks down; the mechanic needs a part; the shelf is empty; the supplier
 - [ ] **AC-11:** Forcing the supplier-score recalculation step to fail during a receive leaves stock levels unchanged (full transaction rollback).
 - [ ] **AC-12:** `GET /suppliers?sort=reliability_score` returns suppliers ordered correctly, nulls handled consistently (e.g. sorted last).
 - [ ] **AC-13:** No cross-organization data appears in inventory, supplier, or purchase-order responses.
+- [ ] **AC-14:** `driver` tokens receive `403` on every route in this domain (inventory, suppliers, purchase orders alike — except supplier `GET`, which is read-only-allowed for all roles).
+- [ ] **AC-15:** `mechanic` tokens succeed on all `GET` routes in this domain and receive `403` on every write route (`POST`/`PUT`/`PATCH`).

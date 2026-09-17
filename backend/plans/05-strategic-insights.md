@@ -19,9 +19,10 @@
 | `compliance_service.get_vehicle_compliance` | Plan 03 | fleet-health compliance signal |
 | `inventory_service.list_low_stock` | Plan 02 | `dashboard/summary` |
 | `incident_service.list_incidents` | Plan 04 | `dashboard/summary`, fleet-health incident signal |
-| `Vehicle`, `Driver` (active counts) | Foundation | `dashboard/summary` |
+| `Vehicle`, `Driver` (active counts) | Plan 00 | `dashboard/summary` |
+| `require_role` | Plan 00 | every route in this plan |
 
-Do not start this plan until at least Plans 01, 02, 03, and 04 have their service-layer functions in place (routers can lag, but the service functions must exist and be stable).
+Do not start this plan until at least Plans 00, 01, 02, 03, and 04 have their service-layer functions in place (routers can lag, but the service functions must exist and be stable).
 
 ---
 
@@ -109,12 +110,16 @@ async def get_fleet_health(db, org_id) -> FleetHealthResponse:
 
 ## 4. Routes — `app/api/dashboard.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| GET | `/api/v1/dashboard/summary` | `get_summary` |
-| GET | `/api/v1/dashboard/fuel-trends` | `get_fuel_trends` (query: `months`, default 12) |
-| GET | `/api/v1/dashboard/maintenance-calendar` | `get_maintenance_calendar` (query: `window_days`, default 30) |
-| GET | `/api/v1/dashboard/fleet-health` | `get_fleet_health` |
+Per `plans/00-foundation.md` §6: `Dashboard/insights` is `admin: full`, `fleet_manager: full`, `driver: —`, `mechanic: —`. All four routes below are gated identically — `require_role("admin", "fleet_manager")` — with no row-level filtering (the dashboard is inherently fleet-wide, not per-individual).
+
+| Method | Path | Handler | Roles allowed |
+|---|---|---|---|
+| GET | `/api/v1/dashboard/summary` | `get_summary` | `admin`, `fleet_manager` |
+| GET | `/api/v1/dashboard/fuel-trends` | `get_fuel_trends` (query: `months`, default 12) | `admin`, `fleet_manager` |
+| GET | `/api/v1/dashboard/maintenance-calendar` | `get_maintenance_calendar` (query: `window_days`, default 30) | `admin`, `fleet_manager` |
+| GET | `/api/v1/dashboard/fleet-health` | `get_fleet_health` | `admin`, `fleet_manager` |
+
+`driver` and `mechanic` have no access to any route in this router.
 
 All four are `GET`-only, org-scoped, and safe to expose over MCP to `ai_agents` unmodified — per `backend/CLAUDE.md`'s note that read paths free of side effects are the ones safe to hand to an LLM-driven agent.
 
@@ -131,6 +136,7 @@ All four are `GET`-only, org-scoped, and safe to expose over MCP to `ai_agents` 
 - `test_fleet_health_signal_thresholds` — one test per signal's bucket boundaries, once thresholds are finalized.
 - `test_dashboard_endpoints_never_write` — a targeted test (or code-review checklist item) confirming no `INSERT`/`UPDATE`/`DELETE` is reachable from any function in `dashboard_service.py`.
 - `test_org_scoping` — a second organization's data never influences any dashboard number.
+- `test_driver_and_mechanic_forbidden_on_all_dashboard_routes` — `driver`/`mechanic` tokens get `403` on all four routes; `admin`/`fleet_manager` succeed.
 
 ---
 

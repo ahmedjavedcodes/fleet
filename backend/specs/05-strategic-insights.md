@@ -2,7 +2,7 @@
 
 **Derived from:** [`backendPlan.md`](../backendPlan.md#problem-5--strategic-insights) · [`plans/05-strategic-insights.md`](../plans/05-strategic-insights.md)
 **Status:** Ready for execution — **build last**
-**Depends on (hard):** service-layer functions from Specs 01 (`fuel_service`), 02 (`inventory_service`), 03 (`maintenance_service`, `compliance_service`), 04 (`incident_service` — for open-incident counts). Do not begin until those functions exist and are stable.
+**Depends on (hard):** [`specs/00-foundation.md`](./00-foundation.md) (`require_role`), plus service-layer functions from Specs 01 (`fuel_service`), 02 (`inventory_service`), 03 (`maintenance_service`, `compliance_service`), 04 (`incident_service` — for open-incident counts). Do not begin until those functions exist and are stable.
 
 ---
 
@@ -68,6 +68,7 @@ For each active vehicle, compute four normalized (0–100) signals and combine t
 5. **Missing signals are excluded, not defaulted.** The fleet-health weighted average must never silently treat "no applicable compliance rules" as either full or zero compliance.
 6. **This is the last problem to be built** — it cannot be implemented, let alone tested end-to-end, before Specs 01–04's relevant service functions exist.
 7. **These endpoints are the ones safe to expose over MCP to `ai_agents` unmodified**, precisely because they are read-only and side-effect-free — this property must be preserved, not incidentally broken by a future change that adds a write path here.
+8. **Access control per the Spec 00 permission matrix:** `Dashboard/insights` is `admin: full`, `fleet_manager: full`, `driver: —`, `mechanic: —`. All four routes are gated identically; there is no row-level filtering to apply since every number here is fleet-wide by definition.
 
 ---
 
@@ -84,6 +85,7 @@ For each active vehicle, compute four normalized (0–100) signals and combine t
 | EC-7 | Two organizations both request `/dashboard/summary` concurrently | Each sees only its own organization's numbers — no leakage under concurrent load. |
 | EC-8 | An underlying Spec 01–04 service function's behavior changes (e.g. anomaly threshold) | The dashboard's fuel-efficiency signal reflects it automatically, since it calls that function rather than re-implementing the threshold — verified via the regression guard in AC-2. |
 | EC-9 | `months`/`window_days` query params are zero, negative, or absurdly large | Validated with sane bounds (e.g. `1 <= months <= 24`); reject out-of-range values with `422` rather than running an unbounded query. |
+| EC-10 | `driver` or `mechanic` calls any dashboard route | `403` — matrix grants neither role any access to this domain. |
 
 ---
 
@@ -98,3 +100,4 @@ For each active vehicle, compute four normalized (0–100) signals and combine t
 - [ ] **AC-7:** No write (INSERT/UPDATE/DELETE) is reachable from any function in `dashboard_service.py` — verified by code review or a static check, not just absence of failing tests.
 - [ ] **AC-8:** No endpoint in this domain returns or is influenced by another organization's data, including in fleet-wide totals.
 - [ ] **AC-9:** Out-of-range `months`/`window_days` query parameters are rejected with `422` rather than silently clamped or causing an unbounded query.
+- [ ] **AC-10:** `driver` and `mechanic` tokens receive `403` on all four dashboard routes; `admin` and `fleet_manager` tokens succeed on all four.

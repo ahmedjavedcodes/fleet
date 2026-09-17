@@ -9,9 +9,9 @@
 
 ## 0. Prerequisites
 
-- Foundation models + mixins.
-- `Vehicle.current_odometer`, `Driver` must exist.
+- **[`plans/00-foundation.md`](./00-foundation.md)** — `Vehicle.current_odometer`, `Driver` (with optional `user_id` link), mixins, `require_role`/`get_current_user`/`get_current_driver_profile`.
 - No cross-dependency on Plans 02/03 — this domain is self-contained except for reading `Vehicle`/`Driver`.
+- Row-level "own only" filtering in this plan uses `get_current_driver_profile` (Plan 00 §5) exactly as Plan 01 does for `FuelLog` — filter on `driver_id`, never on `created_by`, since a manager can log a trip/report on a driver's behalf.
 
 ---
 
@@ -143,39 +143,45 @@ async def get_driver_timeline(db, org_id, driver_id) -> list[TimelineEntry]:
 
 ## 4. Routes
 
+Per `plans/00-foundation.md` §6: `TripLog`/`DriverReport` are `admin: full`, `fleet_manager: read all`, `driver: own only`, `mechanic: —`. `IncidentLog` is **not listed in the matrix** — treated below per `backendPlan.md`'s narrative ("manager or driver logs an incident"), flagged as an inference to confirm, not a settled rule.
+
 ### `app/api/trips.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/trips` | `create_trip` |
-| GET | `/api/v1/trips` | `list_trips` (filters: `driver_id`, `vehicle_id`, `date_from`, `date_to`) |
-| GET | `/api/v1/trips/{id}` | `get_trip` |
+| Method | Path | Handler | Roles allowed | Row-level filter |
+|---|---|---|---|---|
+| POST | `/api/v1/trips` | `create_trip` | `admin`, `driver` | — |
+| GET | `/api/v1/trips` | `list_trips` (filters: `driver_id`, `vehicle_id`, `date_from`, `date_to`) | `admin`, `fleet_manager`, `driver` | `driver` restricted to own `driver_id`, per `get_current_driver_profile` |
+| GET | `/api/v1/trips/{id}` | `get_trip` | `admin`, `fleet_manager`, `driver` | same; `404` (not `403`) for another driver's trip |
+
+`mechanic` has no access to this router.
 
 ### `app/api/driver_reports.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/driver-reports` | `create_driver_report` |
-| GET | `/api/v1/driver-reports` | `list_driver_reports` (filters: `driver_id`, `vehicle_id`, `condition`) |
-| GET | `/api/v1/driver-reports/{id}` | `get_driver_report` |
+| Method | Path | Handler | Roles allowed | Row-level filter |
+|---|---|---|---|---|
+| POST | `/api/v1/driver-reports` | `create_driver_report` | `admin`, `driver` | — |
+| GET | `/api/v1/driver-reports` | `list_driver_reports` (filters: `driver_id`, `vehicle_id`, `condition`) | `admin`, `fleet_manager`, `driver` | `driver` restricted to own `driver_id` |
+| GET | `/api/v1/driver-reports/{id}` | `get_driver_report` | `admin`, `fleet_manager`, `driver` | same |
 
-**No `PUT`/`PATCH`/`DELETE` route in this router.** If a linter or scaffold generator auto-adds a CRUD update route, remove it — this is intentional per `backendPlan.md`.
+`mechanic` has no access to this router. **No `PUT`/`PATCH`/`DELETE` route in this router.** If a linter or scaffold generator auto-adds a CRUD update route, remove it — this is intentional per `backendPlan.md`.
 
 ### `app/api/incidents.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/incidents` | `create_incident` |
-| GET | `/api/v1/incidents` | `list_incidents` (filters: `type`, `severity`, `status`) |
-| GET | `/api/v1/incidents/{id}` | `get_incident` |
-| PUT | `/api/v1/incidents/{id}` | `update_incident_resolution` — body is `IncidentLogResolutionUpdate`, not a generic update schema |
+| Method | Path | Handler | Roles allowed (inferred — confirm) | Row-level filter |
+|---|---|---|---|---|
+| POST | `/api/v1/incidents` | `create_incident` | `admin`, `fleet_manager`, `driver` | — |
+| GET | `/api/v1/incidents` | `list_incidents` (filters: `type`, `severity`, `status`) | `admin`, `fleet_manager`, `driver` | `driver` restricted to incidents where `driver_id` is their own, **or** incidents on vehicles they've driven — pick one and document it; the plan's source text doesn't specify which |
+| GET | `/api/v1/incidents/{id}` | `get_incident` | `admin`, `fleet_manager`, `driver` | same |
+| PUT | `/api/v1/incidents/{id}` | `update_incident_resolution` — body is `IncidentLogResolutionUpdate`, not a generic update schema | `admin`, `fleet_manager` only | resolution workflow is a manager/admin action, not a driver one |
+
+`mechanic` has no access to this router (no stated role in the source material).
 
 ### Timeline endpoints — added to existing `vehicles.py` / `drivers.py` routers
 
-| Method | Path | Handler |
-|---|---|---|
-| GET | `/api/v1/vehicles/{id}/timeline` | `timeline_service.get_vehicle_timeline` |
-| GET | `/api/v1/drivers/{id}/timeline` | `timeline_service.get_driver_timeline` |
+| Method | Path | Handler | Roles allowed | Row-level filter |
+|---|---|---|---|---|
+| GET | `/api/v1/vehicles/{id}/timeline` | `timeline_service.get_vehicle_timeline` | all four roles (matches "Vehicles" row: everyone has at least read) | none — a vehicle's timeline is visible to anyone who can read that vehicle |
+| GET | `/api/v1/drivers/{id}/timeline` | `timeline_service.get_driver_timeline` | `admin`, `fleet_manager`, `driver` | `driver` may only request **their own** `{id}` — a driver requesting another driver's timeline gets `403`/`404`, since this view exposes another person's handover/incident history, not just vehicle state |
 
 ---
 
@@ -194,6 +200,10 @@ async def get_driver_timeline(db, org_id, driver_id) -> list[TimelineEntry]:
 - `test_timeline_scoped_to_single_vehicle_or_driver` — records for other vehicles/drivers never appear.
 - `test_created_by_stamped_on_every_record` — across all three models, `created_by` matches the authenticated user, not a client-supplied value.
 - `test_org_scoping` across all four routers (trips, driver-reports, incidents, timelines).
+- `test_mechanic_forbidden_on_all_routes` — `mechanic` tokens get `403` across trips, driver-reports, and incidents routers.
+- `test_driver_own_only_filter_on_trips_and_reports` — two drivers seeded in one org, each sees only their own `TripLog`/`DriverReport` rows.
+- `test_driver_cannot_view_another_drivers_timeline` — `GET /drivers/{other_id}/timeline` as a `driver` token returns `403`/`404`.
+- `test_fleet_manager_cannot_resolve_incidents_as_driver_would` — actually confirm the reverse: `driver` token on `PUT /incidents/{id}` gets `403` (resolution is manager/admin only per the inferred rule above).
 
 ---
 

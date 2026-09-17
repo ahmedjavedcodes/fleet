@@ -2,7 +2,7 @@
 
 **Derived from:** [`backendPlan.md`](../backendPlan.md#problem-4--driver-accountability--asset-misuse) · [`plans/04-driver-accountability.md`](../plans/04-driver-accountability.md)
 **Status:** Ready for execution
-**Depends on:** Foundation models (`Vehicle`, `Driver`), `AuditMixin`/`OrgScopedMixin`, auth. No cross-dependency on Specs 02/03.
+**Depends on:** [`specs/00-foundation.md`](./00-foundation.md) — `Vehicle`, `Driver`, `AuditMixin`/`OrgScopedMixin`, `require_role`/`get_current_driver_profile`. No cross-dependency on Specs 02/03. **`IncidentLog` role access is inferred, not matrix-specified** — see Constraints §4.8.
 
 ---
 
@@ -68,6 +68,9 @@ A truck returns with a dented fender. The driver who returned it says it was alr
 5. **Timeline is one UNION ALL query**, not three queries merged in Python — this is both a performance and a correctness requirement (guarantees consistent ordering across same-date records from different tables).
 6. **`created_by` is stamped server-side** on every record from the authenticated user — no record can exist without a known author.
 7. **Odometer updates from trip logging follow the same non-decreasing rule** as fuel logging (Spec 01) — never regress `Vehicle.current_odometer`.
+8. **Access control per the Spec 00 permission matrix:** `TripLog`/`DriverReport` are `admin: full`, `fleet_manager: read all`, `driver: own only`, `mechanic: none`. `IncidentLog` is **not in the matrix** — this spec infers `admin`/`fleet_manager`/`driver` can create and read (matching the "manager or driver logs an incident" narrative in `backendPlan.md`), with resolution updates (`PUT`) restricted to `admin`/`fleet_manager` only. **Confirm this inference before treating it as final** — it is a gap in the source plan, not a documented rule.
+9. **Row-level "own only" filtering uses `Driver.id` via `get_current_driver_profile`, never `created_by`.** A fleet manager or admin logging a trip/report on a driver's behalf produces a record whose `created_by` (the acting `User`) differs from `driver_id` (whose custody/condition it's about) — the ownership filter is always on `driver_id`.
+10. **A `driver`-role caller may only request their own `/drivers/{id}/timeline`.** Unlike the vehicle timeline (visible to all authenticated roles, since it's about the asset, not a person), the driver timeline exposes another individual's handover/incident history and is access-restricted accordingly.
 
 ---
 
@@ -85,6 +88,10 @@ A truck returns with a dented fender. The driver who returned it says it was alr
 | EC-8 | Soft-deleted record queried via timeline or list endpoints | Excluded from results, but still present in the underlying table (verifiable directly, not via the API). |
 | EC-9 | `driver_id` on an incident is unknown/unassigned at filing time | Allowed — `driver_id` is nullable on `IncidentLog`. |
 | EC-10 | Cross-organization access to trips, reports, incidents, or timelines | Never visible. |
+| EC-11 | `mechanic` calls any route in this domain | `403` — matrix grants `mechanic` no access to trips, reports, or incidents. |
+| EC-12 | `driver` requests `GET /trips`/`GET /driver-reports` | Returns only rows where `driver_id` matches their own linked `Driver` profile; empty list if unlinked. |
+| EC-13 | `driver` requests `GET /drivers/{other_driver_id}/timeline` | `403`/`404` — a driver may only view their own timeline. |
+| EC-14 | `driver` attempts `PUT /incidents/{id}` (resolution update) | `403` per the inferred rule that resolution is a manager/admin action. |
 
 ---
 
@@ -101,3 +108,7 @@ A truck returns with a dented fender. The driver who returned it says it was alr
 - [ ] **AC-9:** A soft-deleted trip, report, or incident is excluded from both list endpoints and the timeline, but remains present in the database with `is_deleted = true`.
 - [ ] **AC-10:** Every created record's `created_by` matches the authenticated caller, regardless of any `created_by` value sent in the request body.
 - [ ] **AC-11:** No cross-organization data appears in any endpoint in this domain.
+- [ ] **AC-12:** `mechanic` tokens receive `403` on every route in trips, driver-reports, and incidents routers.
+- [ ] **AC-13:** Two drivers seeded in the same organization each see only their own rows via `GET /trips` and `GET /driver-reports`; neither sees the other's.
+- [ ] **AC-14:** A `driver` token requesting `GET /drivers/{other_id}/timeline` for a different driver is rejected; requesting their own succeeds.
+- [ ] **AC-15:** A `driver` token calling `PUT /incidents/{id}` is rejected with `403`.

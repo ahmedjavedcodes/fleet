@@ -2,7 +2,7 @@
 
 **Derived from:** [`backendPlan.md`](../backendPlan.md#problem-3--breakdowns-maintenance--compliance-merged) · [`plans/03-breakdowns-maintenance-compliance.md`](../plans/03-breakdowns-maintenance-compliance.md)
 **Status:** Ready for execution
-**Depends on:** Foundation models, including `Vehicle.make/model/current_odometer/service_interval_km/service_interval_months`. **Shares a transaction boundary with Spec 02** (mechanic report creation decrements parts stock).
+**Depends on:** [`specs/00-foundation.md`](./00-foundation.md), including `Vehicle.make/model/current_odometer/service_interval_km/service_interval_months`. **Shares a transaction boundary with Spec 02** (mechanic report creation decrements parts stock). **Has an open RBAC design question** — see Constraints §4.9.
 
 ---
 
@@ -86,6 +86,8 @@ The fleet-wide matrix repeats this per active vehicle.
 7. **Mechanic-report text is stored verbatim.** No keyword extraction, no classification, no severity scoring in this module.
 8. **The mechanic-report + stock-decrement side effect is one transaction**, shared with Spec 02 — see that spec's constraints for the stock-specific rules.
 9. **`ServiceType` is a fixed enum** shared identically between `ComplianceRule` and `MaintenanceLog` — the same nine values in both places, never diverging.
+10. **Access control per the Spec 00 permission matrix:** `MaintenanceLog`/`MechanicReport` are `admin: full`, `fleet_manager: read all`, `driver: none`, `mechanic: own jobs`. `ComplianceRule` is `admin: full`, `fleet_manager: full`, `driver: none`, `mechanic: read-only`.
+11. **Open design gap: `mechanic: own jobs` currently has no reliable filter key.** `MaintenanceLog.mechanic_name` is free text (no FK to `User`/`Driver`/a dedicated `Mechanic` entity), so "this mechanic's own jobs" cannot yet be filtered reliably. Until a schema decision is made (see Plan 03 §5 for the three options considered), row-level filtering for `mechanic` on this domain is a known gap — do not silently implement a fragile name-matching filter as a substitute without flagging it.
 
 ---
 
@@ -104,6 +106,9 @@ The fleet-wide matrix repeats this per active vehicle.
 | EC-9 | `GET /maintenance/upcoming` window boundary (exactly 1000 km remaining) | Excluded (`< window_km`, not `<=`) — verify against the exact operator chosen and test the boundary. |
 | EC-10 | Vehicle with `current_odometer` below `odometer_at_service` of its own latest log (data entry error) | Should not crash; `km_gap` may be negative, which correctly evaluates to `compliant` (negative gap is never `> interval_km`). |
 | EC-11 | Cross-organization access to rules, logs, reports, or compliance views | Never visible. |
+| EC-12 | `driver` calls any route in either router | `403` — matrix grants `driver` no access to maintenance or compliance domains. |
+| EC-13 | `fleet_manager` attempts `POST`/`PUT /maintenance` or the mechanic-report endpoint | `403` per the literal matrix reading (`read all`, not `full`) — confirm this is intended before treating a passing `403` test as correct. |
+| EC-14 | `mechanic` attempts `POST`/`PUT /compliance/rules` | `403` — mechanic is read-only on `ComplianceRule`. |
 
 ---
 
@@ -120,3 +125,6 @@ The fleet-wide matrix repeats this per active vehicle.
 - [ ] **AC-9:** Two vehicles sharing the same make/model both see the same set of applicable rules; a third vehicle of a different model does not see them.
 - [ ] **AC-10:** `GET /vehicles/{id}/compliance` returns identical results to `GET /compliance/status/{vehicle_id}` for the same vehicle (same underlying function).
 - [ ] **AC-11:** No cross-organization data appears in any maintenance or compliance response.
+- [ ] **AC-12:** `driver` tokens receive `403` on every route in both routers.
+- [ ] **AC-13:** `mechanic` tokens succeed on `GET /compliance/rules` and `GET /compliance/status*` and receive `403` on `POST`/`PUT /compliance/rules`.
+- [ ] **AC-14:** `admin` tokens succeed on every route in both routers.

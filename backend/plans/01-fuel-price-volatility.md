@@ -9,15 +9,14 @@
 
 ## 0. Prerequisites
 
-These must exist before this plan starts (Tier 1/2 foundation, not part of this problem but required by it):
+**[`plans/00-foundation.md`](./00-foundation.md) must be built first.** This plan assumes it's in place:
 
-- `Organization`, `User` (Tier 1)
+- `Organization`, `User` (auth-only), `Driver` (operational profile, optionally linked to `User` via nullable `user_id`)
 - `Vehicle` (needs `current_odometer`, `organization_id`)
-- `Driver` (needs `organization_id`)
 - `AuditMixin`, `OrgScopedMixin` in `app/models/mixins.py`
-- Auth dependency (`get_current_user`) returning a `User` with `organization_id`
+- `get_current_user`, `require_role(...)`, `get_current_driver_profile` in `app/core/deps.py`
 
-If any of these don't exist yet, build them first as a separate foundation task — this plan assumes they're in place.
+Note the `User`/`Driver` split: `FuelLog.driver_id` FKs to `Driver.id`, never to `User.id`. `created_by` (from `AuditMixin`) is always a `User.id` — the account that made the API call — which is a different value from `driver_id` when, e.g., a fleet manager logs a fill-up on a driver's behalf.
 
 ---
 
@@ -118,14 +117,19 @@ async def get_monthly_summary(db, org_id, month: date | None) -> FuelSummaryResp
 
 ## 4. Routes — `app/api/fuel.py`
 
-| Method | Path | Handler | Auth |
-|---|---|---|---|
-| POST | `/api/v1/fuel` | `create_fuel_log` | any authenticated user in org |
-| GET | `/api/v1/fuel` | `list_fuel_logs` (filters: `vehicle_id`, `driver_id`, `date_from`, `date_to`) | same |
-| GET | `/api/v1/fuel/{id}` | `get_fuel_log` | same |
-| PUT | `/api/v1/fuel/{id}` | `update_fuel_log` | same |
-| POST | `/api/v1/fuel/{id}/receipt` | `attach_receipt` (multipart) | same |
-| GET | `/api/v1/fuel/summary` | `get_monthly_summary` (query: `month`) | same |
+Per `plans/00-foundation.md` §6 permission matrix: `FuelLog` is `admin: full`, `fleet_manager: read all`, `driver: own only`, `mechanic: —`.
+
+| Method | Path | Handler | Roles allowed | Row-level filter |
+|---|---|---|---|---|
+| POST | `/api/v1/fuel` | `create_fuel_log` | `admin`, `driver` | — |
+| GET | `/api/v1/fuel` | `list_fuel_logs` (filters: `vehicle_id`, `driver_id`, `date_from`, `date_to`) | `admin`, `fleet_manager`, `driver` | `driver` sees only rows where `driver_id == get_current_driver_profile().id` |
+| GET | `/api/v1/fuel/{id}` | `get_fuel_log` | `admin`, `fleet_manager`, `driver` | same as above; `driver` gets `404` (not `403`, to avoid confirming another driver's log exists) for a log that isn't theirs |
+| PUT | `/api/v1/fuel/{id}` | `update_fuel_log` | `admin`, `driver` | `driver` may only update their own log (same filter, applied before the update, not after) |
+| POST | `/api/v1/fuel/{id}/receipt` | `attach_receipt` (multipart) | `admin`, `driver` | same ownership filter |
+| GET | `/api/v1/fuel/summary` | `get_monthly_summary` (query: `month`) | `admin`, `fleet_manager` | fleet-wide, no row filter |
+| `mechanic` | — | — | no access to any route in this domain (`require_role` excludes it entirely) | |
+
+**Open item, per `plans/00-foundation.md` §6:** the matrix gives `fleet_manager` only `read all` on `FuelLog`, so `POST`/`PUT`/`receipt` exclude it above — this reads as intentional (fleet managers oversee, drivers/admins record), but confirm before implementation if fleet managers are expected to log fuel on a driver's behalf.
 
 Every handler resolves `organization_id` from the JWT-derived `current_user`, never from a request parameter.
 

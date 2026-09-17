@@ -9,8 +9,8 @@
 
 ## 0. Prerequisites
 
-- Foundation models (`Organization`, `User`, `Vehicle`) and mixins.
-- `Supplier` (Tier 2) must exist before `PartsInventory` and `PurchaseOrder` (both FK to it).
+- **[`plans/00-foundation.md`](./00-foundation.md)** — `Organization`, `User`, `Vehicle`, `Supplier`, mixins, `require_role`/`get_current_user`.
+- `Supplier` (foundation entity) must exist before `PartsInventory` and `PurchaseOrder` (both FK to it). Note: `Supplier.reliability_score` is *defined* in Plan 00's model but *computed* here (§3.1 below) — this plan owns that computation, not Plan 00.
 - **Cross-dependency on Plan 03:** `MechanicReport.parts_used` is the consumption event that decrements stock (step 3 below). If Plan 03 (`MaintenanceLog`/`MechanicReport`) hasn't been built yet, build at minimum the `MechanicReport` model and its creation endpoint stub before wiring the decrement side effect — or sequence Plan 03 before this plan's §3.2. Recommended build order: **Plan 01 → Plan 03 (models only) → Plan 02 → finish Plan 03 routes.** If that's too disruptive, build `PartsInventory`/`Supplier`/`PurchaseOrder` fully here and land the decrement hook as a small addition when Plan 03's `MechanicReport` creation endpoint is built.
 
 ---
@@ -148,31 +148,37 @@ async def receive_purchase_order(db, org_id, po_id, received_by) -> PurchaseOrde
 
 ## 4. Routes
 
+Per `plans/00-foundation.md` §6: `PartsInventory`/`PurchaseOrders` are `admin: full`, `fleet_manager: full`, `driver: —`, `mechanic: read-only`. `Supplier` (a foundation entity, per the "Vehicles, Drivers, Suppliers" row) is `admin: full`, `fleet_manager: full`, `driver: read-only`, `mechanic: read-only`.
+
 ### `app/api/inventory.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/inventory` | `create_part` |
-| GET | `/api/v1/inventory` | `list_parts` (filters: `category`, `supplier_id`, `compatible_make`, `compatible_model`) |
-| PUT | `/api/v1/inventory/{id}` | `update_part` |
-| GET | `/api/v1/inventory/low-stock` | `list_low_stock` |
+| Method | Path | Handler | Roles allowed |
+|---|---|---|---|
+| POST | `/api/v1/inventory` | `create_part` | `admin`, `fleet_manager` |
+| GET | `/api/v1/inventory` | `list_parts` (filters: `category`, `supplier_id`, `compatible_make`, `compatible_model`) | `admin`, `fleet_manager`, `mechanic` |
+| PUT | `/api/v1/inventory/{id}` | `update_part` | `admin`, `fleet_manager` |
+| GET | `/api/v1/inventory/low-stock` | `list_low_stock` | `admin`, `fleet_manager`, `mechanic` |
+
+`driver` has no access to any route in this router (matrix: `—`).
 
 ### `app/api/suppliers.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/suppliers` | `create_supplier` |
-| GET | `/api/v1/suppliers` | `list_suppliers` (query: `sort=reliability_score`) |
-| PUT | `/api/v1/suppliers/{id}` | `update_supplier` |
+| Method | Path | Handler | Roles allowed |
+|---|---|---|---|
+| POST | `/api/v1/suppliers` | `create_supplier` | `admin`, `fleet_manager` |
+| GET | `/api/v1/suppliers` | `list_suppliers` (query: `sort=reliability_score`) | all four roles |
+| PUT | `/api/v1/suppliers/{id}` | `update_supplier` | `admin`, `fleet_manager` |
 
 ### `app/api/purchase_orders.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/purchase-orders` | `create_purchase_order` |
-| GET | `/api/v1/purchase-orders` | `list_purchase_orders` (filters: `status`, `supplier_id`, `date_from`, `date_to`) |
-| PUT | `/api/v1/purchase-orders/{id}` | `update_purchase_order` |
-| PATCH | `/api/v1/purchase-orders/{id}/receive` | `receive_purchase_order` — **the most important endpoint in this domain**, per `backendPlan.md` |
+| Method | Path | Handler | Roles allowed |
+|---|---|---|---|
+| POST | `/api/v1/purchase-orders` | `create_purchase_order` | `admin`, `fleet_manager` |
+| GET | `/api/v1/purchase-orders` | `list_purchase_orders` (filters: `status`, `supplier_id`, `date_from`, `date_to`) | `admin`, `fleet_manager`, `mechanic` |
+| PUT | `/api/v1/purchase-orders/{id}` | `update_purchase_order` | `admin`, `fleet_manager` |
+| PATCH | `/api/v1/purchase-orders/{id}/receive` | `receive_purchase_order` — **the most important endpoint in this domain**, per `backendPlan.md` | `admin`, `fleet_manager` |
+
+No row-level ("own only") filtering exists anywhere in this domain — access is purely role-gated, not per-user, since parts/suppliers/orders aren't owned by an individual.
 
 ---
 

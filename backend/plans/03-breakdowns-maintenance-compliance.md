@@ -9,8 +9,7 @@
 
 ## 0. Prerequisites
 
-- Foundation models + mixins.
-- `Vehicle` must already have `make`, `model`, `current_odometer`, `service_interval_km`, `service_interval_months` fields — verify these exist on the Tier 2 `Vehicle` model before starting; add them via migration if missing.
+- **[`plans/00-foundation.md`](./00-foundation.md)** — `Vehicle` (with `make`, `model`, `current_odometer`, `service_interval_km`, `service_interval_months`), mixins, `require_role`/`get_current_user`. Note `MaintenanceLog.mechanic_name` stays free text per Plan 00 §9 — there is no structured `Mechanic` entity to FK against; row-level "own jobs" filtering for the `mechanic` role therefore cannot filter by a `mechanic_id` FK and must use a different mechanism (see §6 below).
 - **Cross-dependency with Plan 02:** `MechanicReport.parts_used` triggers `inventory_service.decrement_stock_for_parts_used` (Plan 02 §3.2). Build `PartsInventory` at least minimally (or stub the decrement call behind a feature check) before wiring the mechanic-report endpoint fully. See Plan 02 §0 for suggested sequencing.
 
 ---
@@ -184,33 +183,49 @@ async def get_fleet_compliance_matrix(db, org_id) -> FleetComplianceMatrixRespon
 
 ## 4. Routes
 
+Per `plans/00-foundation.md` §6: `MaintenanceLog`/`MechanicReport` are `admin: full`, `fleet_manager: read all`, `driver: —`, `mechanic: own jobs`. `ComplianceRule` is `admin: full`, `fleet_manager: full`, `driver: —`, `mechanic: read-only`.
+
 ### `app/api/maintenance.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/maintenance` | `create_maintenance_log` |
-| GET | `/api/v1/maintenance` | `list_maintenance_logs` (filters: `vehicle_id`, `service_type`, `date_from`, `date_to`) |
-| GET | `/api/v1/maintenance/{id}` | `get_maintenance_log` |
-| PUT | `/api/v1/maintenance/{id}` | `update_maintenance_log` |
-| POST | `/api/v1/maintenance/{id}/mechanic-report` | `create_mechanic_report` |
-| GET | `/api/v1/maintenance/upcoming` | `list_upcoming` |
-| GET | `/api/v1/maintenance/overdue` | `list_overdue` |
+| Method | Path | Handler | Roles allowed | Row-level filter |
+|---|---|---|---|---|
+| POST | `/api/v1/maintenance` | `create_maintenance_log` | `admin`, `mechanic` | — |
+| GET | `/api/v1/maintenance` | `list_maintenance_logs` (filters: `vehicle_id`, `service_type`, `date_from`, `date_to`) | `admin`, `fleet_manager`, `mechanic` | `mechanic` restricted to "own jobs" — **see §6 open item, no reliable filter key exists yet** |
+| GET | `/api/v1/maintenance/{id}` | `get_maintenance_log` | `admin`, `fleet_manager`, `mechanic` | same open item |
+| PUT | `/api/v1/maintenance/{id}` | `update_maintenance_log` | `admin`, `mechanic` | same open item |
+| POST | `/api/v1/maintenance/{id}/mechanic-report` | `create_mechanic_report` | `admin`, `mechanic` | same open item |
+| GET | `/api/v1/maintenance/upcoming` | `list_upcoming` | `admin`, `fleet_manager` | fleet-wide, no row filter |
+| GET | `/api/v1/maintenance/overdue` | `list_overdue` | `admin`, `fleet_manager` | fleet-wide, no row filter |
+
+`driver` has no access to any route in this router.
 
 ### `app/api/compliance.py`
 
-| Method | Path | Handler |
-|---|---|---|
-| POST | `/api/v1/compliance/rules` | `create_rule` |
-| GET | `/api/v1/compliance/rules` | `list_rules` (filters: `make`, `model`, `service_type`) |
-| PUT | `/api/v1/compliance/rules/{id}` | `update_rule` |
-| GET | `/api/v1/compliance/status` | `get_fleet_compliance_matrix` |
-| GET | `/api/v1/compliance/status/{vehicle_id}` | `get_vehicle_compliance` |
+| Method | Path | Handler | Roles allowed |
+|---|---|---|---|
+| POST | `/api/v1/compliance/rules` | `create_rule` | `admin`, `fleet_manager` |
+| GET | `/api/v1/compliance/rules` | `list_rules` (filters: `make`, `model`, `service_type`) | `admin`, `fleet_manager`, `mechanic` |
+| PUT | `/api/v1/compliance/rules/{id}` | `update_rule` | `admin`, `fleet_manager` |
+| GET | `/api/v1/compliance/status` | `get_fleet_compliance_matrix` | `admin`, `fleet_manager` |
+| GET | `/api/v1/compliance/status/{vehicle_id}` | `get_vehicle_compliance` | `admin`, `fleet_manager`, `mechanic` |
 
-Also referenced from `app/api/vehicles.py`: `GET /api/v1/vehicles/{id}/compliance` should call the same `compliance_service.get_vehicle_compliance` — don't duplicate the logic in the vehicles router.
+`driver` has no access to any route in this router.
+
+Also referenced from `app/api/vehicles.py`: `GET /api/v1/vehicles/{id}/compliance` should call the same `compliance_service.get_vehicle_compliance` — don't duplicate the logic in the vehicles router. This route is open to all four roles (matches the general "read own vehicle" access pattern), independent of the `compliance.py` router's own gating.
+
+## 5. RBAC open item — "own jobs" for `mechanic` has no filter key
+
+The permission matrix requires `mechanic: own jobs` on `MaintenanceLog`/`MechanicReport`, but per `backendPlan.md`'s Foundation layer "Open design decisions," **there is no structured `Mechanic` entity** — `MaintenanceLog.mechanic_name` is free text, not a FK to `User` or any mechanic-specific profile. This means there is currently no reliable field to filter "this mechanic's own jobs" against. Options, none yet adopted:
+
+1. Match `MaintenanceLog.mechanic_name` against `current_user.full_name` as a stopgap — fragile (typos, name changes, two mechanics sharing a name).
+2. Add a `mechanic_user_id` FK on `MaintenanceLog` pointing to `User` (role=mechanic), populated at creation from the authenticated caller — the more correct fix, but a schema change beyond what `backendPlan.md` currently specifies.
+3. Introduce a full `Mechanic` entity mirroring `Driver` — the larger version of option 2, explicitly flagged as "not yet adopted" in the plan.
+
+**This must be resolved before implementing row-level filtering for `mechanic` on this domain** — do not silently pick option 1 as a quick fix. Until resolved, `mechanic` can be scoped to role-level access only (see all logs, per the "read all"-equivalent behavior), with the row-level restriction tracked as a known gap.
 
 ---
 
-## 5. Tests
+## 6. Tests
 
 - `test_next_due_computed_on_create` — exact `next_due_km`/`next_due_date` arithmetic.
 - `test_next_due_null_when_vehicle_has_no_interval_configured`.
@@ -225,10 +240,13 @@ Also referenced from `app/api/vehicles.py`: `GET /api/v1/vehicles/{id}/complianc
 - `test_compliance_fresh_on_every_read` — advance `vehicle.current_odometer` between two calls to the same endpoint and assert the status changes without any write to a compliance table.
 - `test_rules_scoped_by_make_model_not_vehicle` — two vehicles of the same make/model share rule results; a third vehicle of a different model does not see them.
 - `test_org_scoping` across both routers.
+- `test_driver_role_forbidden_on_maintenance_and_compliance_routes` — `driver` tokens get `403` across both routers.
+- `test_mechanic_read_only_on_compliance_rules` — `mechanic` can `GET /compliance/rules` but `POST`/`PUT` return `403`.
+- `test_fleet_manager_forbidden_from_writing_maintenance_logs` — per the literal matrix reading (`fleet_manager: read all`), confirm this is the intended behavior before asserting it as a passing test, not a bug to "fix."
 
 ---
 
-## 6. Explicit non-goals
+## 7. Explicit non-goals
 
 - Semantic search / pattern detection over `MechanicReport.diagnostic_notes`/`findings` — `ai_agents` vectorizes these into Pinecone; backend only stores rich filter metadata (vehicle make, service_type, date — already available via the FK chain to `MaintenanceLog`/`Vehicle`).
 - Extracting `ComplianceRule` entries automatically from uploaded manufacturer PDFs — `ai_agents` `ComplianceMonitor` agent, reading from `Document`.

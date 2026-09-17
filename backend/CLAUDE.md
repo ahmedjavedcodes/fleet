@@ -44,6 +44,17 @@ Rules that follow from this, enforced in every service function without exceptio
 
 ---
 
+## Role-based access control — apply to every route
+
+`User.role` (`admin` / `fleet_manager` / `driver` / `mechanic`) and the full permission matrix, plus the foundational entities (`Organization`, `User`, `Driver`, `Vehicle`, `Supplier`) and their relationships, are defined in `backendPlan.md`'s **Foundation layer** section. This makes enforcement concrete for this module.
+
+- **Route-level enforcement lives in one place: `app/core/deps.py`.** A `require_role([...])` dependency reads the role claim off the JWT and rejects with 403 before the router body runs. Never check `current_user.role` inline in a router or service function — add the dependency to the route signature instead.
+- **Row-level enforcement is a service-layer filter, applied on top of org-scoping.** Where the permission matrix says "own only" or "own jobs" (drivers on `FuelLog`/`TripLog`/`DriverReport`, mechanics on `MaintenanceLog`/`MechanicReport`), the service function adds a filter on the authenticated user's own driver/creator identity, alongside the standard `organization_id` filter. This is not a frontend-only concern — the API itself must never return another driver's records.
+- **`Driver` and `User` are separate models, linked by a nullable `user_id`.** A driver can exist with no login (a fleet manager enters their trips on their behalf), so never assume `current_user.driver_profile` exists without checking — `role = driver` implies a matching `Driver` row, but the reverse isn't guaranteed.
+- **The `Driver` ↔ `Vehicle` relationship has no foreign key.** It's expressed entirely through `TripLog` rows (many-to-many: a driver drives many vehicles over time, a vehicle is driven by many drivers). Don't add a `Driver.vehicle_id` or `Vehicle.driver_id` column to force a one-to-one — that contradicts the plan's explicit design. If a "currently assigned vehicle" lookup becomes necessary, re-read the Foundation layer's "Open design decisions" first — it's a flagged, not-yet-adopted addition, not an oversight to silently fix.
+
+---
+
 ## Computed fields: write-time vs. read-time — pick deliberately
 
 This is the single most important pattern in the domain layer and the plan draws the line precisely in each problem. Follow it exactly; getting this backwards silently breaks the product's core value proposition.
@@ -83,7 +94,7 @@ Threshold/anomaly alerts (low stock, cost-per-km deviation) are **return values 
 backend/
 ├── app/
 │   ├── api/          # FastAPI routers — one file per domain (fuel.py, maintenance.py, compliance.py, inventory.py, suppliers.py, purchase_orders.py, trips.py, driver_reports.py, incidents.py, dashboard.py, documents.py, vehicles.py, drivers.py, auth.py)
-│   ├── core/          # config.py, database.py, security.py — no domain logic here
+│   ├── core/          # config.py, database.py, security.py, deps.py (require_role, get_current_user) — no domain logic here
 │   ├── models/         # SQLAlchemy models — mixins.py holds AuditMixin/OrgScopedMixin, one file per domain otherwise
 │   ├── schemas/       # Pydantic v2 request/response schemas, mirroring app/api/ file-for-file
 │   └── services/       # All computation and side-effect logic lives here, never in routers
