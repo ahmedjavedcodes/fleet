@@ -211,7 +211,7 @@ def list_fuel_logs(
         stmt = stmt.where(FuelLog.date >= date_from)
     if date_to is not None:
         stmt = stmt.where(FuelLog.date <= date_to)
-    stmt = stmt.order_by(FuelLog.date.desc(), FuelLog.odometer_reading.desc()).offset(skip).limit(limit)
+    stmt = stmt.order_by(FuelLog.date.asc(), FuelLog.created_at.asc()).offset(skip).limit(limit)
     return list(db.execute(stmt).scalars())
 
 

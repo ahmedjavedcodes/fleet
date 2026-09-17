@@ -341,27 +341,59 @@ def test_list_cross_tenant_isolation(client: TestClient, admin, vehicle, db_sess
     assert filtered.json() == []
 
 
+def test_list_returns_logs_in_ascending_chronological_order(client: TestClient, admin, vehicle) -> None:
+    """GET /fuel sorts oldest-first: FuelLog.date ascending, tie-broken by
+    FuelLog.created_at ascending (not the odometer-based ordering used
+    internally for the cost_per_km neighbor lookup)."""
+    third = client.post(
+        "/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE + timedelta(days=20)), odometer_reading=1200), headers=auth_headers(admin)
+    ).json()
+    first = client.post(
+        "/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE), odometer_reading=1000), headers=auth_headers(admin)
+    ).json()
+    second = client.post(
+        "/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE + timedelta(days=10)), odometer_reading=1100), headers=auth_headers(admin)
+    ).json()
+
+    response = client.get("/api/v1/fuel", headers=auth_headers(admin))
+    assert response.status_code == 200
+    ordered_ids = [log["id"] for log in response.json()]
+    assert ordered_ids == [first["id"], second["id"], third["id"]]
+
+
+def test_list_same_date_logs_tie_broken_by_created_at_ascending(client: TestClient, admin, vehicle) -> None:
+    earlier = client.post(
+        "/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE), odometer_reading=1000), headers=auth_headers(admin)
+    ).json()
+    later = client.post(
+        "/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE), odometer_reading=1100), headers=auth_headers(admin)
+    ).json()
+
+    response = client.get("/api/v1/fuel", headers=auth_headers(admin))
+    ordered_ids = [log["id"] for log in response.json()]
+    assert ordered_ids == [earlier["id"], later["id"]]
+
+
 def test_list_pagination_skip_and_limit(client: TestClient, admin, vehicle) -> None:
-    for i in range(5):
+    created = [
         client.post(
             "/api/v1/fuel",
             json=_fuel_payload(vehicle.id, date=str(BASE_DATE + timedelta(days=i * 10)), odometer_reading=1000 + i * 100),
             headers=auth_headers(admin),
-        )
+        ).json()
+        for i in range(5)
+    ]
+    expected_order = [log["id"] for log in created]  # already ascending by construction
 
     first_page = client.get("/api/v1/fuel?limit=2", headers=auth_headers(admin))
     assert first_page.status_code == 200
-    assert len(first_page.json()) == 2
+    assert [log["id"] for log in first_page.json()] == expected_order[0:2]
 
     second_page = client.get("/api/v1/fuel?skip=2&limit=2", headers=auth_headers(admin))
-    assert len(second_page.json()) == 2
-
-    first_ids = {log["id"] for log in first_page.json()}
-    second_ids = {log["id"] for log in second_page.json()}
-    assert first_ids.isdisjoint(second_ids)
+    assert [log["id"] for log in second_page.json()] == expected_order[2:4]
 
     remainder = client.get("/api/v1/fuel?skip=4&limit=2", headers=auth_headers(admin))
-    assert len(remainder.json()) == 1
+    assert [log["id"] for log in remainder.json()] == expected_order[4:5]
 
 
 def test_list_pagination_bounds_validated(client: TestClient, admin) -> None:
