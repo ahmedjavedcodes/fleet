@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://fleet:fleet@localhost:5432/fleet"
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 60
+    upload_dir: str = "uploads"
 
 
 @lru_cache
