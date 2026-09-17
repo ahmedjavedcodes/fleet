@@ -59,6 +59,8 @@ def list_fuel_logs(
     driver_id: uuid.UUID | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
     current_user: User = Depends(require_role(*_READ_ROLES)),
     driver_profile: Driver | None = Depends(get_current_driver_profile),
     db: Session = Depends(get_db),
@@ -71,6 +73,8 @@ def list_fuel_logs(
         date_from=date_from,
         date_to=date_to,
         driver_id_filter=_driver_row_filter(current_user, driver_profile),
+        skip=skip,
+        limit=limit,
     )
     return [FuelLogResponse.model_validate(log) for log in logs]
 

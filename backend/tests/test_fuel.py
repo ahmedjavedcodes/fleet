@@ -293,6 +293,83 @@ def test_org_scoping(client: TestClient, admin, vehicle, db_session: Session) ->
     assert summary_resp.json()["total_cost"] == "0"
 
 
+# --- GET /fuel listing: all-org fetch, vehicle_id isolation, pagination, tenant isolation ---
+
+
+def test_list_all_organization_logs_returns_200(client: TestClient, admin, vehicle, db_session: Session, organization: Organization) -> None:
+    other_vehicle = make_vehicle(db_session, organization)
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, odometer_reading=1000), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(other_vehicle.id, odometer_reading=500), headers=auth_headers(admin))
+
+    response = client.get("/api/v1/fuel", headers=auth_headers(admin))
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 2
+    assert {r["vehicle_id"] for r in results} == {str(vehicle.id), str(other_vehicle.id)}
+
+
+def test_list_filtering_by_vehicle_id_isolates_correct_logs(client: TestClient, admin, vehicle, db_session: Session, organization: Organization) -> None:
+    other_vehicle = make_vehicle(db_session, organization)
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, odometer_reading=1000), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date=str(BASE_DATE + timedelta(days=10)), odometer_reading=1100), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(other_vehicle.id, odometer_reading=500), headers=auth_headers(admin))
+
+    response = client.get(f"/api/v1/fuel?vehicle_id={vehicle.id}", headers=auth_headers(admin))
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 2
+    assert all(r["vehicle_id"] == str(vehicle.id) for r in results)
+
+
+def test_list_cross_tenant_isolation(client: TestClient, admin, vehicle, db_session: Session, organization: Organization) -> None:
+    """A second organization must never see the first organization's fuel logs,
+    even when explicitly filtering by the first org's own vehicle_id."""
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id), headers=auth_headers(admin))
+
+    other_org = Organization(id=uuid.uuid4(), name="Tenant B", slug=f"tenant-b-{uuid.uuid4().hex[:8]}")
+    db_session.add(other_org)
+    db_session.commit()
+    other_admin = make_user(db_session, other_org, role=UserRole.admin)
+
+    unfiltered = client.get("/api/v1/fuel", headers=auth_headers(other_admin))
+    assert unfiltered.status_code == 200
+    assert unfiltered.json() == []
+
+    # Even naming the other org's real vehicle_id explicitly must not leak it.
+    filtered = client.get(f"/api/v1/fuel?vehicle_id={vehicle.id}", headers=auth_headers(other_admin))
+    assert filtered.status_code == 200
+    assert filtered.json() == []
+
+
+def test_list_pagination_skip_and_limit(client: TestClient, admin, vehicle) -> None:
+    for i in range(5):
+        client.post(
+            "/api/v1/fuel",
+            json=_fuel_payload(vehicle.id, date=str(BASE_DATE + timedelta(days=i * 10)), odometer_reading=1000 + i * 100),
+            headers=auth_headers(admin),
+        )
+
+    first_page = client.get("/api/v1/fuel?limit=2", headers=auth_headers(admin))
+    assert first_page.status_code == 200
+    assert len(first_page.json()) == 2
+
+    second_page = client.get("/api/v1/fuel?skip=2&limit=2", headers=auth_headers(admin))
+    assert len(second_page.json()) == 2
+
+    first_ids = {log["id"] for log in first_page.json()}
+    second_ids = {log["id"] for log in second_page.json()}
+    assert first_ids.isdisjoint(second_ids)
+
+    remainder = client.get("/api/v1/fuel?skip=4&limit=2", headers=auth_headers(admin))
+    assert len(remainder.json()) == 1
+
+
+def test_list_pagination_bounds_validated(client: TestClient, admin) -> None:
+    assert client.get("/api/v1/fuel?skip=-1", headers=auth_headers(admin)).status_code == 422
+    assert client.get("/api/v1/fuel?limit=0", headers=auth_headers(admin)).status_code == 422
+    assert client.get("/api/v1/fuel?limit=501", headers=auth_headers(admin)).status_code == 422
+
+
 # --- RBAC --------------------------------------------------------------------------
 
 

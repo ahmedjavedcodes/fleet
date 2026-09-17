@@ -197,6 +197,8 @@ def list_fuel_logs(
     date_from: date_type | None = None,
     date_to: date_type | None = None,
     driver_id_filter: uuid.UUID | None = None,
+    skip: int = 0,
+    limit: int = 100,
 ) -> list[FuelLog]:
     stmt = select(FuelLog).where(FuelLog.organization_id == org_id, FuelLog.is_deleted.is_(False))
     if driver_id_filter is not None:
@@ -209,7 +211,7 @@ def list_fuel_logs(
         stmt = stmt.where(FuelLog.date >= date_from)
     if date_to is not None:
         stmt = stmt.where(FuelLog.date <= date_to)
-    stmt = stmt.order_by(FuelLog.date.desc(), FuelLog.odometer_reading.desc())
+    stmt = stmt.order_by(FuelLog.date.desc(), FuelLog.odometer_reading.desc()).offset(skip).limit(limit)
     return list(db.execute(stmt).scalars())
 
 
