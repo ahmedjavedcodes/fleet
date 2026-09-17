@@ -38,3 +38,10 @@ class FuelReceiptUploadStatus(str, enum.Enum):
     pending = "pending"
     parsed = "parsed"
     failed = "failed"
+
+
+class PurchaseOrderStatus(str, enum.Enum):
+    pending = "pending"
+    shipped = "shipped"
+    received = "received"
+    cancelled = "cancelled"

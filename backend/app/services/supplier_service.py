@@ -1,9 +1,12 @@
 import uuid
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.enums import PurchaseOrderStatus
+from app.models.inventory import PurchaseOrder
 from app.models.supplier import Supplier
 from app.schemas.supplier import SupplierCreate, SupplierUpdate
 
@@ -47,3 +50,34 @@ def update_supplier(
     db.commit()
     db.refresh(supplier)
     return supplier
+
+
+def _recalculate_reliability_score(db: Session, org_id: uuid.UUID, supplier_id: uuid.UUID) -> Decimal | None:
+    """
+    reliability_score = count(received orders where actual_delivery <= expected_delivery)
+                       / count(received orders)
+
+    Called only from purchase_order_service.receive_purchase_order, inside that
+    same transaction -- this function does not commit. It sets
+    Supplier.reliability_score on the ORM object and returns the new value;
+    the caller's own db.commit() persists it alongside the stock update.
+    """
+    total_received, on_time = db.execute(
+        select(
+            func.count(PurchaseOrder.id),
+            func.count(PurchaseOrder.id).filter(PurchaseOrder.actual_delivery <= PurchaseOrder.expected_delivery),
+        ).where(
+            PurchaseOrder.organization_id == org_id,
+            PurchaseOrder.supplier_id == supplier_id,
+            PurchaseOrder.is_deleted.is_(False),
+            PurchaseOrder.status == PurchaseOrderStatus.received,
+        )
+    ).one()
+
+    score: Decimal | None = None
+    if total_received > 0:
+        score = (Decimal(on_time) / Decimal(total_received)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+    supplier = get_supplier(db, org_id, supplier_id)
+    supplier.reliability_score = score
+    return score
