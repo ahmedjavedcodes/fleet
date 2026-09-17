@@ -74,11 +74,13 @@ class FuelLogResponse(BaseModel):
 class VehicleFuelSummary(BaseModel):
     vehicle_id: uuid.UUID
     total_cost: Decimal
+    total_liters: Decimal
     avg_cost_per_km: Decimal | None
 
 
 class FuelSummaryResponse(BaseModel):
     month: str
     total_cost: Decimal
+    total_liters: Decimal
     avg_cost_per_km: Decimal | None
     by_vehicle: list[VehicleFuelSummary]

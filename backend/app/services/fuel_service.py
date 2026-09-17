@@ -328,21 +328,25 @@ def get_monthly_summary(db: Session, org_id: uuid.UUID, month: str | None) -> Fu
     # Postgres's AVG() on a NUMERIC(10,4) column expands to a much wider scale --
     # cast back to the column's own precision so responses are consistently formatted.
     avg_expr = cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))
+    total_liters_expr = func.coalesce(func.sum(FuelLog.liters_filled), 0)
 
-    total_cost, avg_cost_per_km = db.execute(
-        select(func.coalesce(func.sum(FuelLog.total_cost), 0), avg_expr).where(*filters)
+    total_cost, total_liters, avg_cost_per_km = db.execute(
+        select(func.coalesce(func.sum(FuelLog.total_cost), 0), total_liters_expr, avg_expr).where(*filters)
     ).one()
 
     by_vehicle_rows = db.execute(
-        select(FuelLog.vehicle_id, func.sum(FuelLog.total_cost), avg_expr).where(*filters).group_by(FuelLog.vehicle_id)
+        select(FuelLog.vehicle_id, func.sum(FuelLog.total_cost), total_liters_expr, avg_expr)
+        .where(*filters)
+        .group_by(FuelLog.vehicle_id)
     ).all()
 
     return FuelSummaryResponse(
         month=month,
         total_cost=total_cost,
+        total_liters=total_liters,
         avg_cost_per_km=avg_cost_per_km,
         by_vehicle=[
-            VehicleFuelSummary(vehicle_id=vehicle_id, total_cost=vtotal, avg_cost_per_km=vavg)
-            for vehicle_id, vtotal, vavg in by_vehicle_rows
+            VehicleFuelSummary(vehicle_id=vehicle_id, total_cost=vtotal, total_liters=vliters, avg_cost_per_km=vavg)
+            for vehicle_id, vtotal, vliters, vavg in by_vehicle_rows
         ],
     )

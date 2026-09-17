@@ -244,19 +244,21 @@ def test_receipt_empty_file_rejected(client: TestClient, admin, vehicle) -> None
 
 
 def test_monthly_summary_matches_manual_aggregation(client: TestClient, admin, vehicle) -> None:
-    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-06-05", odometer_reading=1000, total_cost="1000.00"), headers=auth_headers(admin))
-    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-06-15", odometer_reading=1100, total_cost="1800.00"), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-06-05", odometer_reading=1000, liters_filled="40.00", total_cost="1000.00"), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-06-15", odometer_reading=1100, liters_filled="60.00", total_cost="1800.00"), headers=auth_headers(admin))
     # Outside the target month -- must be excluded.
-    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-07-05", odometer_reading=1200, total_cost="900.00"), headers=auth_headers(admin))
+    client.post("/api/v1/fuel", json=_fuel_payload(vehicle.id, date="2026-07-05", odometer_reading=1200, liters_filled="45.00", total_cost="900.00"), headers=auth_headers(admin))
 
     response = client.get("/api/v1/fuel/summary?month=2026-06", headers=auth_headers(admin))
     assert response.status_code == 200
     body = response.json()
     assert body["total_cost"] == "2800.00"
+    assert body["total_liters"] == "100.00"
     assert body["avg_cost_per_km"] == "18.0000"  # only the second log has a non-null cost_per_km
     assert len(body["by_vehicle"]) == 1
     assert body["by_vehicle"][0]["vehicle_id"] == str(vehicle.id)
     assert body["by_vehicle"][0]["total_cost"] == "2800.00"
+    assert body["by_vehicle"][0]["total_liters"] == "100.00"
 
 
 # --- Filtering & org scoping ------------------------------------------------------
