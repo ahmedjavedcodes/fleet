@@ -32,3 +32,9 @@ class VehicleStatus(str, enum.Enum):
     active = "active"
     maintenance = "maintenance"
     retired = "retired"
+
+
+class FuelReceiptUploadStatus(str, enum.Enum):
+    pending = "pending"
+    parsed = "parsed"
+    failed = "failed"
