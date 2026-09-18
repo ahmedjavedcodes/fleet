@@ -7,8 +7,9 @@ from app.core.database import get_db
 from app.core.deps import require_role
 from app.models.enums import UserRole
 from app.models.user import User
+from app.schemas.compliance import VehicleComplianceResponse
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
-from app.services import vehicle_service
+from app.services import compliance_service, vehicle_service
 
 router = APIRouter(prefix="/api/v1/vehicles", tags=["vehicles"])
 
@@ -64,3 +65,16 @@ def delete_vehicle(
     db: Session = Depends(get_db),
 ) -> None:
     vehicle_service.delete_vehicle(db, current_user.organization_id, vehicle_id, current_user.id)
+
+
+@router.get("/{vehicle_id}/compliance", response_model=VehicleComplianceResponse)
+def get_vehicle_compliance(
+    vehicle_id: uuid.UUID,
+    current_user: User = Depends(require_role(*_READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> VehicleComplianceResponse:
+    # Delegates to compliance_service directly -- same function as
+    # GET /compliance/status/{vehicle_id}, not duplicated here. This route is
+    # open to all four roles (matches "read own vehicle"), independent of
+    # compliance.py's own role gating (which excludes driver entirely).
+    return compliance_service.get_vehicle_compliance(db, current_user.organization_id, vehicle_id)

@@ -12,8 +12,9 @@ from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.driver import Driver
-from app.models.enums import UserRole, VehicleFuelType
+from app.models.enums import ServiceType, UserRole, VehicleFuelType
 from app.models.inventory import PartsInventory
+from app.models.maintenance import ComplianceRule, MaintenanceLog
 from app.models.organization import Organization
 from app.models.supplier import Supplier
 from app.models.user import User
@@ -173,3 +174,38 @@ def make_part(db_session: Session, org: Organization, **overrides: object) -> Pa
     db_session.commit()
     db_session.refresh(part)
     return part
+
+
+def make_compliance_rule(db_session: Session, org: Organization, **overrides: object) -> ComplianceRule:
+    defaults: dict[str, object] = dict(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        vehicle_make="Toyota",
+        vehicle_model="Hilux",
+        service_type=ServiceType.oil_change,
+        interval_km=10000,
+        interval_months=6,
+    )
+    defaults.update(overrides)
+    rule = ComplianceRule(**defaults)
+    db_session.add(rule)
+    db_session.commit()
+    db_session.refresh(rule)
+    return rule
+
+
+def make_maintenance_log(db_session: Session, org: Organization, vehicle: Vehicle, **overrides: object) -> MaintenanceLog:
+    defaults: dict[str, object] = dict(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        vehicle_id=vehicle.id,
+        date=date_type(2026, 6, 1),
+        odometer_at_service=1000,
+        service_type=ServiceType.oil_change,
+    )
+    defaults.update(overrides)
+    log = MaintenanceLog(**defaults)
+    db_session.add(log)
+    db_session.commit()
+    db_session.refresh(log)
+    return log

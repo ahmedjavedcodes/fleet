@@ -45,3 +45,18 @@ class PurchaseOrderStatus(str, enum.Enum):
     shipped = "shipped"
     received = "received"
     cancelled = "cancelled"
+
+
+class ServiceType(str, enum.Enum):
+    """Shared identically between ComplianceRule and MaintenanceLog -- the same
+    nine values in both places, never diverging."""
+
+    oil_change = "oil_change"
+    brake_service = "brake_service"
+    tire_rotation = "tire_rotation"
+    engine_repair = "engine_repair"
+    transmission = "transmission"
+    electrical = "electrical"
+    body_work = "body_work"
+    general_inspection = "general_inspection"
+    other = "other"
