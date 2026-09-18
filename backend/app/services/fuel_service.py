@@ -352,3 +352,74 @@ def get_monthly_summary(db: Session, org_id: uuid.UUID, month: str | None) -> Fu
             for vehicle_id, vtotal, vliters, vavg in by_vehicle_rows
         ],
     )
+
+
+def get_fuel_cost_trend(db: Session, org_id: uuid.UUID, months: int = 12) -> list[tuple[str, Decimal, Decimal | None]]:
+    """
+    Fleet-wide monthly totals for the trailing `months` months (oldest first,
+    ending with the current month). Every month appears even with zero fuel
+    logs (total_cost=0, avg_cost_per_km=None) -- a plain GROUP BY would
+    silently skip empty months, so the full month spine is built in Python and
+    left-merged with one aggregate query, rather than calling
+    get_monthly_summary once per month (which the Spec 05 plan explicitly says
+    to avoid, to not pay for `months` round trips).
+
+    Returns [(month, total_cost, avg_cost_per_km), ...]; used by
+    dashboard_service.get_fuel_trends, not exposed as its own route.
+    """
+    today = datetime.now(timezone.utc).date()
+    month_keys: list[str] = []
+    year, month_num = today.year, today.month
+    for _ in range(months):
+        month_keys.append(f"{year:04d}-{month_num:02d}")
+        month_num -= 1
+        if month_num == 0:
+            month_num = 12
+            year -= 1
+    month_keys.reverse()
+
+    earliest_year, earliest_month = (int(part) for part in month_keys[0].split("-"))
+    earliest_start = date_type(earliest_year, earliest_month, 1)
+
+    avg_expr = cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))
+    month_expr = func.to_char(FuelLog.date, "YYYY-MM")
+
+    rows = db.execute(
+        select(month_expr.label("month"), func.coalesce(func.sum(FuelLog.total_cost), 0), avg_expr)
+        .where(FuelLog.organization_id == org_id, FuelLog.is_deleted.is_(False), FuelLog.date >= earliest_start)
+        .group_by(month_expr)
+    ).all()
+    by_month = {month: (total_cost, avg_cost_per_km) for month, total_cost, avg_cost_per_km in rows}
+
+    return [(key, *by_month.get(key, (Decimal("0"), None))) for key in month_keys]
+
+
+def get_vehicle_cost_per_km_periods(
+    db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID, as_of: date_type | None = None
+) -> tuple[Decimal | None, Decimal | None]:
+    """
+    Returns (current_3mo_avg, prior_3mo_avg) of cost_per_km for one vehicle --
+    the trailing ROLLING_WINDOW_MONTHS vs. the ROLLING_WINDOW_MONTHS before
+    that, reusing the same window length as the anomaly-detection rolling
+    average above. Either half is None if it has no non-null cost_per_km
+    readings in that window. Used by dashboard_service's fleet-health
+    fuel-efficiency signal, not exposed as its own route.
+    """
+    if as_of is None:
+        as_of = datetime.now(timezone.utc).date()
+    current_start = _months_before(as_of, ROLLING_WINDOW_MONTHS)
+    prior_start = _months_before(current_start, ROLLING_WINDOW_MONTHS)
+
+    def _avg(start: date_type, end: date_type) -> Decimal | None:
+        return db.execute(
+            select(cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))).where(
+                FuelLog.organization_id == org_id,
+                FuelLog.vehicle_id == vehicle_id,
+                FuelLog.is_deleted.is_(False),
+                FuelLog.cost_per_km.is_not(None),
+                FuelLog.date >= start,
+                FuelLog.date < end,
+            )
+        ).scalar_one()
+
+    return _avg(current_start, as_of), _avg(prior_start, current_start)

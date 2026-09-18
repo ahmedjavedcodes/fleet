@@ -221,6 +221,44 @@ def list_upcoming(db: Session, org_id: uuid.UUID, window_km: int = 1000) -> list
                 UpcomingMaintenanceItem(
                     vehicle_id=vehicle.id,
                     plate_number=vehicle.plate_number,
+                    service_type=log.service_type,
+                    next_due_km=log.next_due_km,
+                    next_due_date=log.next_due_date,
+                    current_odometer=vehicle.current_odometer,
+                    km_remaining=km_remaining,
+                )
+            )
+    return items
+
+
+def list_upcoming_by_date(db: Session, org_id: uuid.UUID, window_days: int = 30) -> list[UpcomingMaintenanceItem]:
+    """
+    Vehicles where 0 <= (next_due_date - today).days < window_days, using
+    only the latest log per (vehicle, service_type).
+
+    This is a DIFFERENT dimension than list_upcoming's km-based window: a
+    vehicle whose interval is defined purely in months (no
+    service_interval_km configured) has next_due_km=None and is silently
+    skipped by list_upcoming, which would make it invisible on a genuinely
+    date-based calendar. Built for Spec 05's maintenance calendar, which
+    needs "due within N days", not "due within N km" -- reuses the same
+    latest-log-per-group join as list_upcoming/list_overdue rather than
+    duplicating it, but applies a distinct (date, not km) filter condition,
+    since the two aren't the same query with different constants.
+    """
+    today = datetime.now(timezone.utc).date()
+    items: list[UpcomingMaintenanceItem] = []
+    for log, vehicle in _latest_logs_joined_with_vehicle(db, org_id):
+        if log.next_due_date is None:
+            continue
+        days_remaining = (log.next_due_date - today).days
+        if 0 <= days_remaining < window_days:
+            km_remaining = log.next_due_km - vehicle.current_odometer if log.next_due_km is not None else None
+            items.append(
+                UpcomingMaintenanceItem(
+                    vehicle_id=vehicle.id,
+                    plate_number=vehicle.plate_number,
+                    service_type=log.service_type,
                     next_due_km=log.next_due_km,
                     next_due_date=log.next_due_date,
                     current_odometer=vehicle.current_odometer,
@@ -244,6 +282,7 @@ def list_overdue(db: Session, org_id: uuid.UUID) -> list[OverdueMaintenanceItem]
                 OverdueMaintenanceItem(
                     vehicle_id=vehicle.id,
                     plate_number=vehicle.plate_number,
+                    service_type=log.service_type,
                     next_due_km=log.next_due_km,
                     next_due_date=log.next_due_date,
                     current_odometer=vehicle.current_odometer,

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.compliance import router as compliance_router
+from app.api.dashboard import router as dashboard_router
 from app.api.driver_reports import router as driver_reports_router
 from app.api.drivers import router as drivers_router
 from app.api.fuel import router as fuel_router
@@ -32,3 +33,4 @@ app.include_router(compliance_router)
 app.include_router(trips_router)
 app.include_router(driver_reports_router)
 app.include_router(incidents_router)
+app.include_router(dashboard_router)
