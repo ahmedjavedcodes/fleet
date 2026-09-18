@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.assignments import router as assignments_router
 from app.api.auth import router as auth_router
 from app.api.compliance import router as compliance_router
 from app.api.dashboard import router as dashboard_router
@@ -34,3 +35,4 @@ app.include_router(trips_router)
 app.include_router(driver_reports_router)
 app.include_router(incidents_router)
 app.include_router(dashboard_router)
+app.include_router(assignments_router)

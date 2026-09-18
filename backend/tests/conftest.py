@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Generator
 from datetime import date as date_type
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,8 +12,9 @@ from app import models  # noqa: F401 -- registers all models on Base.metadata
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
+from app.models.assignment import VehicleAssignment
 from app.models.driver import Driver
-from app.models.enums import ServiceType, UserRole, VehicleFuelType
+from app.models.enums import ServiceType, UserRole, VehicleCondition, VehicleFuelType
 from app.models.inventory import PartsInventory
 from app.models.maintenance import ComplianceRule, MaintenanceLog
 from app.models.organization import Organization
@@ -209,3 +211,23 @@ def make_maintenance_log(db_session: Session, org: Organization, vehicle: Vehicl
     db_session.commit()
     db_session.refresh(log)
     return log
+
+
+def make_assignment(
+    db_session: Session, org: Organization, vehicle: Vehicle, driver: Driver, **overrides: object
+) -> VehicleAssignment:
+    defaults: dict[str, object] = dict(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        vehicle_id=vehicle.id,
+        driver_id=driver.id,
+        assigned_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        start_odometer=1000,
+        take_condition=VehicleCondition.good,
+    )
+    defaults.update(overrides)
+    assignment = VehicleAssignment(**defaults)
+    db_session.add(assignment)
+    db_session.commit()
+    db_session.refresh(assignment)
+    return assignment
