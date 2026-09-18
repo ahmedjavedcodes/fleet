@@ -7,9 +7,10 @@ from app.core.database import get_db
 from app.core.deps import require_role
 from app.models.enums import UserRole
 from app.models.user import User
+from app.schemas.accountability import TimelineResponse
 from app.schemas.compliance import VehicleComplianceResponse
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
-from app.services import compliance_service, vehicle_service
+from app.services import compliance_service, timeline_service, vehicle_service
 
 router = APIRouter(prefix="/api/v1/vehicles", tags=["vehicles"])
 
@@ -78,3 +79,14 @@ def get_vehicle_compliance(
     # open to all four roles (matches "read own vehicle"), independent of
     # compliance.py's own role gating (which excludes driver entirely).
     return compliance_service.get_vehicle_compliance(db, current_user.organization_id, vehicle_id)
+
+
+@router.get("/{vehicle_id}/timeline", response_model=TimelineResponse)
+def get_vehicle_timeline(
+    vehicle_id: uuid.UUID,
+    current_user: User = Depends(require_role(*_READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> TimelineResponse:
+    # A vehicle's timeline is visible to anyone who can read that vehicle --
+    # unlike the driver timeline, it's about the asset, not a person.
+    return timeline_service.get_vehicle_timeline(db, current_user.organization_id, vehicle_id)

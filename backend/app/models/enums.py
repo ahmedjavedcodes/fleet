@@ -60,3 +60,29 @@ class ServiceType(str, enum.Enum):
     body_work = "body_work"
     general_inspection = "general_inspection"
     other = "other"
+
+
+class VehicleCondition(str, enum.Enum):
+    good = "good"
+    fair = "fair"
+    poor = "poor"
+
+
+class IncidentType(str, enum.Enum):
+    damage = "damage"
+    violation = "violation"
+    near_miss = "near_miss"
+
+
+class IncidentSeverity(str, enum.Enum):
+    minor = "minor"
+    moderate = "moderate"
+    severe = "severe"
+    critical = "critical"
+
+
+class IncidentResolutionStatus(str, enum.Enum):
+    open = "open"
+    investigating = "investigating"
+    resolved = "resolved"
+    closed = "closed"
