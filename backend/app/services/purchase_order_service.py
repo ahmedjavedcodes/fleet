@@ -131,6 +131,12 @@ def receive_purchase_order(db: Session, org_id: uuid.UUID, po_id: uuid.UUID, rec
     order.updated_by = received_by
 
     stock_updates = inventory_service.increment_stock_for_line_items(db, org_id, order.line_items)
+
+    # The Session is autoflush=False (see app/core/database.py), so without an
+    # explicit flush here, _recalculate_reliability_score's SELECT would not
+    # see this order's own pending status/actual_delivery change, excluding
+    # the order currently being received from its own reliability computation.
+    db.flush()
     supplier_service._recalculate_reliability_score(db, org_id, order.supplier_id)
 
     db.commit()
