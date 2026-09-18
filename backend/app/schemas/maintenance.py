@@ -89,8 +89,12 @@ class MaintenanceLogResponse(BaseModel):
 
 
 class UpcomingMaintenanceItem(BaseModel):
+    # service_type added for Spec 05's maintenance calendar (which needs to
+    # say WHICH service is due, not just when) -- also just genuinely useful
+    # on this endpoint itself, which the plan's schema omitted.
     vehicle_id: uuid.UUID
     plate_number: str
+    service_type: ServiceType
     next_due_km: int | None
     next_due_date: date_type | None
     current_odometer: int
@@ -100,6 +104,7 @@ class UpcomingMaintenanceItem(BaseModel):
 class OverdueMaintenanceItem(BaseModel):
     vehicle_id: uuid.UUID
     plate_number: str
+    service_type: ServiceType
     next_due_km: int | None
     next_due_date: date_type | None
     current_odometer: int

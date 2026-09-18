@@ -1,8 +1,9 @@
 import uuid
 from datetime import date as date_type
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.accountability import IncidentLog
@@ -69,3 +70,17 @@ def update_incident_resolution(
     db.commit()
     db.refresh(incident)
     return incident
+
+
+def count_recent_incidents_for_vehicle(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID, days: int = 90) -> int:
+    """Count of incidents in the trailing `days` days for one vehicle. Used by
+    dashboard_service's fleet-health incident signal, not exposed as its own route."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date()
+    return db.execute(
+        select(func.count(IncidentLog.id)).where(
+            IncidentLog.organization_id == org_id,
+            IncidentLog.is_deleted.is_(False),
+            IncidentLog.vehicle_id == vehicle_id,
+            IncidentLog.date >= since,
+        )
+    ).scalar_one()
