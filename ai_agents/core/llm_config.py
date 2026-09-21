@@ -16,6 +16,8 @@ class LLMProvider(str, Enum):
     LOCAL_LLAMA = "local_llama"
     CLAUDE_ANTHROPIC = "claude_anthropic"
     CLAUDE_OPENROUTER = "claude_openrouter"
+    GROQ = "groq"
+    LLAMA_API = "llama_api"
 
 
 def get_chat_model(provider: LLMProvider, **overrides: Any):
@@ -50,6 +52,26 @@ def get_chat_model(provider: LLMProvider, **overrides: Any):
             base_url="https://openrouter.ai/api/v1",
             api_key=os.environ.get("OPENROUTER_API_KEY"),
             model=overrides.pop("model", "anthropic/claude-sonnet-5"),
+            **overrides,
+        )
+
+    if provider is LLMProvider.GROQ:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.environ.get("GROQ_API_KEY"),
+            model=overrides.pop("model", os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")),
+            **overrides,
+        )
+
+    if provider is LLMProvider.LLAMA_API:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            base_url=os.environ.get("LLAMA_API_BASE_URL", "https://api.llama.com/compat/v1"),
+            api_key=os.environ.get("LLAMA_API_KEY"),
+            model=overrides.pop("model", os.environ.get("LLAMA_API_MODEL", "Llama-4-Maverick-17B-128E-Instruct-FP8")),
             **overrides,
         )
 
