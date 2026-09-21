@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fleet Registry Agent — Local Test Console</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e37;
+    --text: #e6e8eb;
+    --muted: #8b909c;
+    --user-bubble: #2563eb;
+    --agent-bubble: #262a33;
+    --error: #ef4444;
+    --accent: #22c55e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---- Settings panel ---- */
+  #settings {
+    display: flex;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  #settings .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 220px;
+  }
+  #settings label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  #settings input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #settings .endpoint-note {
+    font-size: 11px;
+    color: var(--muted);
+    flex-basis: 100%;
+  }
+
+  /* ---- Chat window ---- */
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    line-height: 1.4;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user-bubble);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.agent {
+    align-self: flex-start;
+    background: var(--agent-bubble);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.error {
+    align-self: flex-start;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid var(--error);
+    color: var(--error);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.loading {
+    align-self: flex-start;
+    background: var(--agent-bubble);
+    color: var(--muted);
+    font-style: italic;
+  }
+  .msg .meta {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
+    margin-bottom: 4px;
+  }
+  .msg img.attached {
+    display: block;
+    max-width: 220px;
+    max-height: 220px;
+    border-radius: 8px;
+    margin-top: 8px;
+  }
+
+  /* ---- Input area ---- */
+  #input-area {
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  #preview-row {
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+  #preview-row.visible { display: flex; }
+  #preview-row img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  #preview-row .filename {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #preview-row button {
+    background: none;
+    border: none;
+    color: var(--error);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  #input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  #text-input {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  #file-input { display: none; }
+  #file-label, #send-btn {
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  #send-btn {
+    background: var(--accent);
+    color: #06240f;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  #send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+</head>
+<body>
+
+  <div id="settings">
+    <div class="field">
+      <label for="jwt-token">JWT Bearer Token</label>
+      <input id="jwt-token" type="text" placeholder="eyJhbGciOi...">
+    </div>
+    <div class="field">
+      <label for="org-id">Organization ID</label>
+      <input id="org-id" type="text" placeholder="ORG-123">
+    </div>
+    <div class="endpoint-note">
+      POST http://localhost:8000/api/v1/agent/chat — this route does not exist in the
+      repo yet (no chat endpoint wraps ai_agents/agents/foundation/graph.py), so Send
+      will fail until that adapter is built. See the accompanying message for details.
+    </div>
+  </div>
+
+  <div id="chat"></div>
+
+  <div id="input-area">
+    <div id="preview-row">
+      <img id="preview-img" alt="attached image preview">
+      <span class="filename" id="preview-filename"></span>
+      <button id="remove-image" type="button">Remove</button>
+    </div>
+    <div id="input-row">
+      <input id="text-input" type="text" placeholder="Type a message…" autocomplete="off">
+      <label id="file-label" for="file-input">Choose File</label>
+      <input id="file-input" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
+      <button id="send-btn" type="button">Send</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const AGENT_ENDPOINT = "http://localhost:8000/api/v1/agent/chat";
+
+  const chatEl = document.getElementById("chat");
+  const tokenEl = document.getElementById("jwt-token");
+  const orgEl = document.getElementById("org-id");
+  const textInput = document.getElementById("text-input");
+  const fileInput = document.getElementById("file-input");
+  const sendBtn = document.getElementById("send-btn");
+  const previewRow = document.getElementById("preview-row");
+  const previewImg = document.getElementById("preview-img");
+  const previewFilename = document.getElementById("preview-filename");
+  const removeImageBtn = document.getElementById("remove-image");
+
+  let attachedImageBase64 = null; // full data URL, e.g. "data:image/jpeg;base64,..."
+
+  // Persist settings locally so they survive a page reload during a test session.
+  try {
+    tokenEl.value = localStorage.getItem("fra_jwt") || "";
+    orgEl.value = localStorage.getItem("fra_org") || "";
+  } catch (_) { /* private browsing / blocked storage: ignore */ }
+  tokenEl.addEventListener("input", () => {
+    try { localStorage.setItem("fra_jwt", tokenEl.value); } catch (_) {}
+  });
+  orgEl.addEventListener("input", () => {
+    try { localStorage.setItem("fra_org", orgEl.value); } catch (_) {}
+  });
+
+  function appendMessage({ role, text, imageDataUrl }) {
+    const bubble = document.createElement("div");
+    bubble.className = "msg " + role;
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = role === "user" ? "User" : role === "error" ? "Error" : "Agent";
+    bubble.appendChild(meta);
+
+    const body = document.createElement("span");
+    body.textContent = text;
+    bubble.appendChild(body);
+
+    if (imageDataUrl) {
+      const img = document.createElement("img");
+      img.className = "attached";
+      img.src = imageDataUrl;
+      bubble.appendChild(img);
+    }
+
+    chatEl.appendChild(bubble);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return bubble;
+  }
+
+  function clearAttachedImage() {
+    attachedImageBase64 = null;
+    fileInput.value = "";
+    previewRow.classList.remove("visible");
+    previewImg.src = "";
+    previewFilename.textContent = "";
+  }
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    // Belt-and-suspenders: the Fleet Registry Agent's vision skills only
+    // accept JPEG/PNG (see ai_agents/tools/file_parsers.py), so reject
+    // anything else client-side too, even if the OS file picker let it through.
+    if (file.type !== "image/jpeg" && file.type !== "image/png") {
+      appendMessage({ role: "error", text: "Only JPEG/PNG images are supported. Please choose a .jpg or .png file." });
+      fileInput.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      attachedImageBase64 = reader.result; // data:image/...;base64,...
+      previewImg.src = attachedImageBase64;
+      previewFilename.textContent = file.name;
+      previewRow.classList.add("visible");
+    };
+    reader.onerror = () => {
+      appendMessage({ role: "error", text: "Could not read the selected file." });
+    };
+    reader.readAsDataURL(file);
+  });
+
+  removeImageBtn.addEventListener("click", clearAttachedImage);
+
+  function extractAgentText(data) {
+    // The real /api/v1/agent/chat response shape isn't defined anywhere in
+    // the repo yet -- this checks the field names an endpoint would most
+    // plausibly use, and falls back to the raw JSON so nothing is hidden.
+    if (typeof data === "string") return data;
+    if (data && typeof data === "object") {
+      for (const key of ["reply", "message", "response", "text", "answer"]) {
+        if (typeof data[key] === "string") return data[key];
+      }
+    }
+    return JSON.stringify(data, null, 2);
+  }
+
+  async function sendMessage() {
+    const text = textInput.value.trim();
+    if (!text && !attachedImageBase64) return;
+
+    const token = tokenEl.value.trim();
+    const organizationId = orgEl.value.trim();
+
+    appendMessage({ role: "user", text: text || "(image only)", imageDataUrl: attachedImageBase64 });
+
+    const payload = {
+      message: text,
+      image_base64: attachedImageBase64 || null,
+      organization_id: organizationId,
+    };
+
+    textInput.value = "";
+    clearAttachedImage();
+    sendBtn.disabled = true;
+
+    const loadingBubble = appendMessage({ role: "loading", text: "Agent is thinking…" });
+
+    try {
+      const response = await fetch(AGENT_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      loadingBubble.remove();
+
+      let body;
+      const raw = await response.text();
+      try { body = raw ? JSON.parse(raw) : {}; } catch (_) { body = raw; }
+
+      if (!response.ok) {
+        const reason =
+          response.status === 401 ? "Unauthorized — the JWT is missing, malformed, or expired." :
+          response.status === 403 ? "Forbidden — this role isn't permitted for that action." :
+          response.status === 409 ? "Conflict — a matching record already exists." :
+          response.status >= 500 ? "Server error." :
+          "Request failed.";
+        appendMessage({ role: "error", text: `HTTP ${response.status}: ${reason}\n${extractAgentText(body)}` });
+        return;
+      }
+
+      appendMessage({ role: "agent", text: extractAgentText(body) });
+    } catch (err) {
+      loadingBubble.remove();
+      appendMessage({
+        role: "error",
+        text: "Network error — could not reach " + AGENT_ENDPOINT + ".\n" +
+              "Is the agent HTTP server running on localhost:8000?\n" + err.message,
+      });
+    } finally {
+      sendBtn.disabled = false;
+      textInput.focus();
+    }
+  }
+
+  sendBtn.addEventListener("click", sendMessage);
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendMessage();
+  });
+})();
+</script>
+</body>
+</html>
