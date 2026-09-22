@@ -273,3 +273,40 @@ class IncidentCreateInput(BaseModel):
     description: str
     location_description: str | None = None
     estimated_cost: Decimal | None = None
+
+
+# ---- Assignment Agent: mirrors backend/app/models/enums.py VehicleCondition
+# exactly. ----
+
+
+class VehicleCondition(str, Enum):
+    good = "good"
+    fair = "fair"
+    poor = "poor"
+
+
+# ---- Assignment Agent: create-tool inputs ----
+# Field names match backend/app/schemas/assignment.py's VehicleAssignRequest
+# and VehicleReleaseRequest exactly. Both are vehicle-scoped in the real
+# backend (POST /api/v1/vehicles/{vehicle_id}/assign|release) -- vehicle_id
+# is a path parameter, not a body field, which is why neither model
+# includes it; see mcp_server/assignment_tools.py.
+
+
+class AssignmentCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str
+    assigned_at: datetime
+    start_odometer: int
+    take_condition: VehicleCondition
+    take_notes: str | None = None
+
+
+class AssignmentTerminateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    released_at: datetime
+    end_odometer: int
+    leave_condition: VehicleCondition
+    leave_notes: str | None = None
