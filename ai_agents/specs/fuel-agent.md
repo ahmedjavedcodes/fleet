@@ -1,6 +1,6 @@
 # Spec: Fuel Vision & Leakage Auditor Agent
 
-*Source plan: [`ai_agents/plans/Fuel_Agent.md`](../plans/Fuel_Agent.md). Corrections below are against the real backend (`backend/app/api/fuel.py`, `trips.py`, `dashboard.py`, `backend/app/schemas/fuel.py`, `accountability.py`) — the plan's endpoint paths, write-role list, and receipt schema don't match what's actually deployed.*
+*Source plan: [`ai_agents/Plans/Fuel_Agent.md`](../Plans/Fuel_Agent.md). Corrections below are against the real backend (`backend/app/api/fuel.py`, `trips.py`, `dashboard.py`, `backend/app/schemas/fuel.py`, `accountability.py`) — the plan's endpoint paths, write-role list, and receipt schema don't match what's actually deployed.*
 
 ## Problem Statement
 
