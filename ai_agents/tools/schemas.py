@@ -9,7 +9,8 @@ input and the other validates tool input.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
@@ -84,3 +85,49 @@ class SupplierDocExtraction(BaseModel):
     name: str | None = None
     contact_email: str | None = None
     phone: str | None = None
+
+
+# ---- Fuel Agent: create-tool inputs ----
+# Field names match backend/app/schemas/fuel.py's FuelLogCreate and
+# backend/app/schemas/accountability.py's TripLogCreate exactly -- see
+# fuel-agent.md FR 3's extraction -> backend field-name bridge
+# (liters -> liters_filled, odometer -> odometer_reading, receipt_date ->
+# date, plus a derived price_per_liter the extraction schema never produces).
+
+
+class FuelLogCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_id: str
+    driver_id: str | None = None
+    date: date
+    odometer_reading: int
+    liters_filled: Decimal
+    price_per_liter: Decimal
+    total_cost: Decimal
+    notes: str | None = None
+
+
+class TripLogCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str
+    vehicle_id: str
+    start_time: datetime
+    end_time: datetime
+    start_odometer: int
+    end_odometer: int
+    fuel_consumed: Decimal | None = None
+    notes: str | None = None
+
+
+# ---- Fuel Agent: vision extraction output ----
+
+
+class FuelReceiptExtraction(BaseModel):
+    station_name: str | None = None
+    receipt_date: date | None = None
+    liters: float | None = None
+    total_cost: float | None = None
+    odometer: int | None = None
+    plate_number: str | None = None

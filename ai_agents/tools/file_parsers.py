@@ -14,7 +14,7 @@ from io import StringIO
 from typing import Any
 
 from core.llm_config import LLMProvider, get_chat_model
-from tools.schemas import LicenseExtraction, SupplierDocExtraction, VehicleDocExtraction
+from tools.schemas import FuelReceiptExtraction, LicenseExtraction, SupplierDocExtraction, VehicleDocExtraction
 
 _SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
 
@@ -127,3 +127,21 @@ def extract_supplier_doc(image_bytes: bytes, mime_type: str = "image/jpeg") -> S
         "Leave any field you cannot clearly read as null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, SupplierDocExtraction, document_label="supplier document")
+
+
+def extract_fuel_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> FuelReceiptExtraction:
+    """Parse a photographed fuel receipt.
+
+    Output schema: station_name, receipt_date, liters, total_cost, odometer,
+    plate_number -- per fuel-agent.md FR 1. price_per_liter is deliberately
+    not part of this schema (rarely printed as its own line); the graph
+    derives it from total_cost / liters instead of asking the model for it.
+    """
+    instruction = (
+        "Read this fuel receipt photo and extract: the fuel station's name, "
+        "the receipt date (as YYYY-MM-DD), liters filled, total cost paid, "
+        "the vehicle's odometer reading if shown, and the vehicle's plate "
+        "number if shown. Leave any field you cannot clearly read as null "
+        "-- never guess."
+    )
+    return _extract(image_bytes, mime_type, instruction, FuelReceiptExtraction, document_label="fuel receipt")
