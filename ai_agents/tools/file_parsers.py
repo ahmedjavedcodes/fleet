@@ -14,7 +14,14 @@ from io import StringIO
 from typing import Any
 
 from core.llm_config import LLMProvider, get_chat_model
-from tools.schemas import FuelReceiptExtraction, LicenseExtraction, SupplierDocExtraction, VehicleDocExtraction
+from tools.schemas import (
+    FuelReceiptExtraction,
+    LicenseExtraction,
+    PartsInvoiceExtraction,
+    SupplierDocExtraction,
+    VehicleDocExtraction,
+    WorkOrderExtraction,
+)
 
 _SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
 
@@ -71,6 +78,27 @@ def _extract(image_bytes: bytes, mime_type: str, instruction: str, schema: type,
     content = _vision_message(image_bytes, mime_type, instruction)
     message = HumanMessage(content=content)
     model = get_chat_model(LLMProvider.GROQ).with_structured_output(schema)
+
+    try:
+        result = model.invoke([message])
+    except Exception as exc:  # noqa: BLE001 -- any provider/parsing failure is a read failure here
+        raise ExtractionFailedError(f"Could not read the {document_label}: {exc}") from exc
+
+    return result
+
+
+def _extract_text(text: str, instruction: str, schema: type, *, document_label: str):
+    """Text-only counterpart to _extract -- no image, no mime-type check.
+
+    Per maintenance-inventory-agent.md's Constraints: typed mechanic notes
+    don't need a vision call at all. Uses the same GROQ provider as the
+    vision path (extraction is extraction, image or not); LLAMA_API is
+    reserved for router/reasoning use elsewhere.
+    """
+    from langchain_core.messages import HumanMessage
+
+    model = get_chat_model(LLMProvider.GROQ).with_structured_output(schema)
+    message = HumanMessage(content=f"{instruction}\n\n---\n{text}")
 
     try:
         result = model.invoke([message])
@@ -145,3 +173,60 @@ def extract_fuel_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> F
         "-- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, FuelReceiptExtraction, document_label="fuel receipt")
+
+
+_WORK_ORDER_INSTRUCTION = (
+    "Read this mechanic's work order / repair note and extract: the issue "
+    "description, the service type (one of: oil_change, brake_service, "
+    "tire_rotation, engine_repair, transmission, electrical, body_work, "
+    "general_inspection, other), the parts used (each as a name or SKU plus "
+    "quantity), labor hours, total cost, the vehicle's plate number, and "
+    "the odometer reading if shown. Leave any field you cannot clearly "
+    "determine as null -- never guess."
+)
+
+_PARTS_INVOICE_INSTRUCTION = (
+    "Read this supplier delivery slip / parts invoice and extract every line "
+    "item: part number and/or name, quantity received, and unit cost. Leave "
+    "any field you cannot clearly determine as null -- never guess."
+)
+
+
+def extract_work_order(
+    image_bytes: bytes | None = None, mime_type: str = "image/jpeg", *, text: str | None = None
+) -> WorkOrderExtraction:
+    """Parse a photographed work order/repair note, or typed mechanic-note text.
+
+    Output schema: issue_description, service_type, parts_used (name/SKU +
+    qty, unresolved), labor_hours, cost, vehicle_plate, odometer. Exactly
+    one of image_bytes or text must be given -- per
+    maintenance-inventory-agent.md FR 1, parts_used and vehicle_plate are
+    raw and must still be resolved against get_inventory_tool/
+    get_vehicles_tool before submission; labor_hours has no backend field
+    and is folded into description at the bridging step, not submitted as-is.
+    """
+    if text is not None:
+        return _extract_text(text, _WORK_ORDER_INSTRUCTION, WorkOrderExtraction, document_label="work order")
+    if image_bytes is not None:
+        return _extract(image_bytes, mime_type, _WORK_ORDER_INSTRUCTION, WorkOrderExtraction, document_label="work order")
+    raise ValueError("extract_work_order requires either image_bytes or text")
+
+
+def extract_parts_invoice(
+    image_bytes: bytes | None = None, mime_type: str = "image/jpeg", *, text: str | None = None
+) -> PartsInvoiceExtraction:
+    """Parse a photographed or typed supplier delivery slip / parts invoice.
+
+    Output schema: line_items, each with part_number/name, qty_received,
+    unit_cost -- per maintenance-inventory-agent.md FR 2. Every line item
+    must still be resolved against get_inventory_tool before
+    update_inventory_tool can be called. Exactly one of image_bytes or text
+    must be given.
+    """
+    if text is not None:
+        return _extract_text(text, _PARTS_INVOICE_INSTRUCTION, PartsInvoiceExtraction, document_label="parts invoice")
+    if image_bytes is not None:
+        return _extract(
+            image_bytes, mime_type, _PARTS_INVOICE_INSTRUCTION, PartsInvoiceExtraction, document_label="parts invoice"
+        )
+    raise ValueError("extract_parts_invoice requires either image_bytes or text")

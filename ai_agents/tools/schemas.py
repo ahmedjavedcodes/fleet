@@ -13,7 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VehicleFuelType(str, Enum):
@@ -131,3 +131,91 @@ class FuelReceiptExtraction(BaseModel):
     total_cost: float | None = None
     odometer: int | None = None
     plate_number: str | None = None
+
+
+# ---- Maintenance & Parts Inventory Agent: mirrors backend/app/models/enums.py
+# ServiceType exactly. ----
+
+
+class ServiceType(str, Enum):
+    oil_change = "oil_change"
+    brake_service = "brake_service"
+    tire_rotation = "tire_rotation"
+    engine_repair = "engine_repair"
+    transmission = "transmission"
+    electrical = "electrical"
+    body_work = "body_work"
+    general_inspection = "general_inspection"
+    other = "other"
+
+
+# ---- Maintenance Agent: vision/text extraction output ----
+
+
+class PartLineItem(BaseModel):
+    """Raw, human-readable line item -- name_or_sku is resolved against
+    get_inventory_tool into a real part_id before it can be submitted
+    anywhere (see ResolvedPartUsed)."""
+
+    name_or_sku: str | None = None
+    qty: int | None = None
+
+
+class WorkOrderExtraction(BaseModel):
+    issue_description: str | None = None
+    service_type: str | None = None
+    parts_used: list[PartLineItem] = Field(default_factory=list)
+    labor_hours: float | None = None
+    cost: float | None = None
+    vehicle_plate: str | None = None
+    odometer: int | None = None
+
+
+class InvoiceLineItem(BaseModel):
+    part_number: str | None = None
+    name: str | None = None
+    qty_received: int | None = None
+    unit_cost: float | None = None
+
+
+class PartsInvoiceExtraction(BaseModel):
+    line_items: list[InvoiceLineItem] = Field(default_factory=list)
+
+
+# ---- Maintenance Agent: create-tool inputs ----
+# Field names match backend/app/schemas/maintenance.py's MaintenanceLogCreate
+# and MechanicReportCreate, and backend/app/schemas/inventory.py's
+# PartsInventoryUpdate, exactly.
+
+
+class MaintenanceLogCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_id: str
+    date: date
+    odometer_at_service: int
+    service_type: ServiceType
+    description: str | None = None
+    cost: Decimal | None = None
+    mechanic_name: str | None = None
+
+
+class ResolvedPartUsed(BaseModel):
+    part_id: str
+    qty: int
+
+
+class MechanicReportCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    diagnostic_notes: str | None = None
+    findings: str | None = None
+    actions_taken: str | None = None
+    parts_used: list[ResolvedPartUsed] = Field(default_factory=list)
+    recommendations: str | None = None
+
+
+class InventoryUpdateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qty_on_hand: int
