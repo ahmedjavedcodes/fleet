@@ -219,3 +219,57 @@ class InventoryUpdateInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     qty_on_hand: int
+
+
+# ---- Driver Accountability Agent: mirrors backend/app/models/enums.py
+# IncidentType and IncidentSeverity exactly. ----
+
+
+class IncidentType(str, Enum):
+    damage = "damage"
+    violation = "violation"
+    near_miss = "near_miss"
+
+
+class IncidentSeverity(str, Enum):
+    minor = "minor"
+    moderate = "moderate"
+    severe = "severe"
+    critical = "critical"
+
+
+# ---- Driver Accountability Agent: vision/text extraction output ----
+
+
+class IncidentExtraction(BaseModel):
+    incident_date: date | None = None
+    location: str | None = None
+    severity: str | None = None
+    # Not in the plan's extraction targets, but IncidentLogCreate.incident_type
+    # is required and has no default -- the model must classify it too (see
+    # driver-accountability-agent.md FR 1's correction).
+    incident_type: str | None = None
+    vehicle_plate: str | None = None
+    driver_name: str | None = None
+    damage_description: str | None = None
+
+
+# ---- Driver Accountability Agent: create-tool input ----
+# Field names match backend/app/schemas/accountability.py's IncidentLogCreate
+# exactly. driver_id is optional at the schema level -- an incident can be
+# filed with no driver attached -- but the graph still resolves and fills it
+# from driver_name when possible, and always overrides it to the caller's
+# own Driver.id for a driver-role caller (see graph.py).
+
+
+class IncidentCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str | None = None
+    vehicle_id: str
+    incident_type: IncidentType
+    date: date
+    severity: IncidentSeverity
+    description: str
+    location_description: str | None = None
+    estimated_cost: Decimal | None = None

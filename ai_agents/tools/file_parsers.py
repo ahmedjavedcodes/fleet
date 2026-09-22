@@ -16,6 +16,7 @@ from typing import Any
 from core.llm_config import LLMProvider, get_chat_model
 from tools.schemas import (
     FuelReceiptExtraction,
+    IncidentExtraction,
     LicenseExtraction,
     PartsInvoiceExtraction,
     SupplierDocExtraction,
@@ -230,3 +231,33 @@ def extract_parts_invoice(
             image_bytes, mime_type, _PARTS_INVOICE_INSTRUCTION, PartsInvoiceExtraction, document_label="parts invoice"
         )
     raise ValueError("extract_parts_invoice requires either image_bytes or text")
+
+
+_INCIDENT_REPORT_INSTRUCTION = (
+    "Read this accident/safety incident report (a police report, driver "
+    "statement, or note) and extract: the incident date (as YYYY-MM-DD), "
+    "location, severity (one of: minor, moderate, severe, critical), "
+    "incident type (one of: damage, violation, near_miss), the vehicle's "
+    "plate number, the driver's name, and a description of any damage. "
+    "Leave any field you cannot clearly determine as null -- never guess."
+)
+
+
+def extract_incident_report(
+    image_bytes: bytes | None = None, mime_type: str = "image/jpeg", *, text: str | None = None
+) -> IncidentExtraction:
+    """Parse a photographed police report/accident document, or typed driver statement text.
+
+    Output schema: incident_date, location, severity, incident_type,
+    vehicle_plate, driver_name, damage_description -- per
+    driver-accountability-agent.md FR 1. vehicle_plate and driver_name are
+    raw and must still be resolved against get_vehicles_tool/get_drivers_tool
+    before submission. Exactly one of image_bytes or text must be given.
+    """
+    if text is not None:
+        return _extract_text(text, _INCIDENT_REPORT_INSTRUCTION, IncidentExtraction, document_label="incident report")
+    if image_bytes is not None:
+        return _extract(
+            image_bytes, mime_type, _INCIDENT_REPORT_INSTRUCTION, IncidentExtraction, document_label="incident report"
+        )
+    raise ValueError("extract_incident_report requires either image_bytes or text")
