@@ -19,6 +19,7 @@ unbounded loop against a live LLM is a real cost/availability risk.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -26,6 +27,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, StateGraph
 
 from core.llm_config import LLMProvider, get_chat_model
+from orchestrator.callbacks import FleetLiveObserver
 from orchestrator.registry import SUB_AGENT_REGISTRY
 from orchestrator.retry import MAX_RETRIES, ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
@@ -72,6 +74,22 @@ class OrchestratorDeps:
 
     llm: Any = field(default_factory=_default_llm)
     runner: SubAgentRunner = field(default_factory=SubAgentRunner)
+    # Optional per fleet-live-observer.md -- None means no telemetry/UI
+    # streaming at all, which is how every pre-existing test still runs
+    # unchanged. OrchestratorSession is responsible for constructing one
+    # and calling observer.start_turn() per user turn (FR 4).
+    observer: FleetLiveObserver | None = None
+
+
+def _llm_usage(response: Any) -> tuple[int, int]:
+    """Best-effort token extraction -- providers disagree on where this
+    lives (AIMessage.usage_metadata vs. response_metadata['token_usage']),
+    and neither is guaranteed present (e.g. a scripted test LLM)."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        return usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+    usage = (getattr(response, "response_metadata", None) or {}).get("token_usage") or {}
+    return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
 def _history_to_messages(state: OrchestratorState) -> list[BaseMessage]:
@@ -97,8 +115,21 @@ def _make_plan_node(deps: OrchestratorDeps):
                 "active_tool_calls": [],
             }
 
+        if deps.observer is not None:
+            deps.observer.record_node("plan")
+
         bound = deps.llm.bind_tools(build_llm_tools())
+        start = time.monotonic()
         response = bound.invoke(_history_to_messages(state))
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        if deps.observer is not None:
+            prompt_tokens, completion_tokens = _llm_usage(response)
+            deps.observer.record_llm(
+                model_name=getattr(deps.llm, "model_name", "unknown"),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, latency_ms=latency_ms,
+            )
+
         tool_calls = getattr(response, "tool_calls", None) or []
 
         return {**state, "active_tool_calls": tool_calls, "stage": "planning"}
@@ -116,9 +147,19 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
 
         for call in state.get("active_tool_calls") or []:
             agent_name = call["name"]
+            call_id = call.get("id") or f"hop-{hop}-{agent_name}"
+            call_args = call.get("args", {})
+
+            if deps.observer is not None:
+                deps.observer.start_tool_call(call_id, agent_name, call_args)
+
             if agent_name not in SUB_AGENT_REGISTRY:
                 observation = f"Unknown tool {agent_name!r}."
-                scratchpad.append({"hop": hop, "tool": agent_name, "args": call.get("args", {}), "observation": observation})
+                scratchpad.append({"hop": hop, "tool": agent_name, "args": call_args, "observation": observation})
+                if deps.observer is not None:
+                    deps.observer.record_tool_result(
+                        call_id, agent_name, call_args, attempt=1, status="halted", observation_text=observation
+                    )
                 continue
 
             # attempt is 1-indexed and counts consecutive validation failures
@@ -128,8 +169,17 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             # never reach retries_exhausted.
             attempt = retry_counts.get(agent_name, 0) + 1
             try:
-                validated = validate_tool_args(TOOL_SCHEMAS[agent_name], call.get("args", {}), attempt=attempt)
+                validated = validate_tool_args(TOOL_SCHEMAS[agent_name], call_args, attempt=attempt)
             except ToolValidationError as exc:
+                # FR 8: every schema_error attempt gets its own trace (same
+                # trace_id, incrementing attempt) whether or not this is the
+                # one that ultimately exhausts retries -- billing sums all
+                # attempts even though the turn as a whole may hard-fault.
+                if deps.observer is not None:
+                    deps.observer.record_tool_result(
+                        call_id, agent_name, call_args, attempt=attempt, status="schema_error",
+                        observation_text=exc.observation,
+                    )
                 if exc.retries_exhausted:
                     return {
                         **state,
@@ -139,7 +189,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         "halt_reason": exc.observation,
                     }
                 retry_counts[agent_name] = attempt
-                scratchpad.append({"hop": hop, "tool": agent_name, "args": call.get("args", {}), "observation": exc.observation})
+                scratchpad.append({"hop": hop, "tool": agent_name, "args": call_args, "observation": exc.observation})
                 continue
 
             retry_counts[agent_name] = 0
@@ -155,6 +205,12 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             result = deps.runner.run(agent_name, sub_state)
 
             if result.status == "awaiting_approval":
+                if deps.observer is not None:
+                    deps.observer.record_tool_result(
+                        call_id, agent_name, call_args, attempt=attempt, status="awaiting_approval",
+                        observation_text="Paused for approval.", raw_result=result.state,
+                    )
+                    deps.observer.record_hitl_pause()
                 return {
                     **state,
                     "scratchpad": scratchpad,
@@ -171,7 +227,12 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 }
 
             observation = _format_observation(agent_name, result)
-            scratchpad.append({"hop": hop, "tool": agent_name, "args": call.get("args", {}), "observation": observation})
+            scratchpad.append({"hop": hop, "tool": agent_name, "args": call_args, "observation": observation})
+            if deps.observer is not None:
+                deps.observer.record_tool_result(
+                    call_id, agent_name, call_args, attempt=attempt, status=result.status,
+                    observation_text=observation, raw_result=result.state,
+                )
 
         return {**state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning", "_tool_retry_counts": retry_counts}
 
@@ -189,8 +250,21 @@ def _format_observation(agent_name: str, result: RunResult) -> str:
 
 def _make_synthesize_node(deps: OrchestratorDeps):
     def synthesize(state: OrchestratorState) -> OrchestratorState:
+        if deps.observer is not None:
+            deps.observer.record_node("synthesize")
+
         messages = _history_to_messages(state) + [HumanMessage(content=_SYNTHESIS_PROMPT)]
+        start = time.monotonic()
         response = deps.llm.invoke(messages)
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        if deps.observer is not None:
+            prompt_tokens, completion_tokens = _llm_usage(response)
+            deps.observer.record_llm(
+                model_name=getattr(deps.llm, "model_name", "unknown"),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, latency_ms=latency_ms,
+            )
+
         final_stage = "halted" if state.get("stage") == "halted" else "done"
         return {**state, "final_response": response.content, "stage": final_stage}
 

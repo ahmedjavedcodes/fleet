@@ -57,6 +57,9 @@ class OrchestratorSession:
         }
 
     def run(self, message: str, *, image_bytes: bytes | None = None, mime_type: str | None = None) -> TurnResult:
+        if self.deps.observer is not None:
+            self.deps.observer.start_turn()  # FR 4: a fresh trace_id per session turn
+
         chat_history = list(self.state.get("chat_history") or []) + [{"role": "user", "content": message}]
         input_state = {
             **self.state,
@@ -89,11 +92,20 @@ class OrchestratorSession:
 
         if rejected:
             observation = f"{hitl['agent_name']} aborted by the user before the write was made."
+            trace_status = "halted"
+            raw_result = None
         else:
             result = self.deps.runner.resume(hitl["agent_name"], hitl["thread_id"], updates=updates)
             observation = _format_observation(hitl["agent_name"], result)
+            trace_status = result.status
+            raw_result = result.state
 
         scratchpad.append({"hop": hop, "tool": hitl["agent_name"], "args": updates or {}, "observation": observation})
+        if self.deps.observer is not None:
+            self.deps.observer.record_tool_result(
+                hitl["thread_id"], hitl["agent_name"], updates or {}, attempt=1, status=trace_status,
+                observation_text=observation, raw_result=raw_result,
+            )
 
         input_state = {**self.state, "scratchpad": scratchpad, "hop_count": hop, "hitl_state": None, "final_response": None}
         return self._settle(self._graph.invoke(input_state))
