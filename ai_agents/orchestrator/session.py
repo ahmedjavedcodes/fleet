@@ -90,6 +90,11 @@ class OrchestratorSession:
             "final_response": None,
             "_pending_image_bytes": image_bytes,
             "_pending_mime_type": mime_type,
+            # Fresh per user turn, same reasoning as hop_count above -- a
+            # prior turn's fact-check retry count must not carry over and
+            # silently disable the guardrail on this turn (execution-post_hooks.md §4).
+            "_fact_check_retries": 0,
+            "_fact_check_warning": None,
         }
         return self._settle(self._graph.invoke(input_state))
 

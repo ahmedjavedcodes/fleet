@@ -25,6 +25,14 @@ Two real infrastructure gaps, resolved rather than faked:
    Tier 2 at all. NullSemanticCacheBackend is an honest, always-miss no-op;
    SemanticCacheBackend is a real Protocol ready for whoever wires up an
    embedding provider.
+
+Extended per execution-post_hooks.md §2 ("Fresh Data" hook) with tag-based
+invalidation: every stored entry is tagged with its own (tool_name, org_id)
+namespace, and invalidate_namespace() additionally always purges the
+`insights` namespace for that org, since Insights aggregates fleet-wide
+data touching every other agent's writes -- matching AC 1's own example
+("flushes all cached fuel AND insights queries") generalized to every
+agent, not just fuel.
 """
 
 from __future__ import annotations
@@ -32,7 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -52,14 +60,24 @@ def _cache_key(tool_name: str, validated_args: dict[str, Any], organization_id: 
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _namespace(tool_name: str, organization_id: str) -> str:
+    return f"{tool_name}:{organization_id}"
+
+
 @dataclass
 class _CacheEntry:
     observation: str
     expires_at: float
+    namespace: str = ""
 
 
 class ExactCacheBackend:
-    """In-process dict + TTL -- see module docstring point 1."""
+    """In-process dict + TTL -- see module docstring point 1.
+
+    Each entry is tagged with its (tool_name, org_id) namespace so a write
+    can purge every read cached under that namespace without knowing their
+    SHA-256 keys -- see invalidate_namespace, execution-post_hooks.md §2.
+    """
 
     def __init__(self) -> None:
         self._store: dict[str, _CacheEntry] = {}
@@ -73,8 +91,14 @@ class ExactCacheBackend:
             return None
         return entry.observation
 
-    def set(self, key: str, observation: str, *, ttl_seconds: int) -> None:
-        self._store[key] = _CacheEntry(observation=observation, expires_at=time.monotonic() + ttl_seconds)
+    def set(self, key: str, observation: str, *, ttl_seconds: int, namespace: str = "") -> None:
+        self._store[key] = _CacheEntry(
+            observation=observation, expires_at=time.monotonic() + ttl_seconds, namespace=namespace
+        )
+
+    def invalidate_namespace(self, namespace: str) -> None:
+        for key in [k for k, entry in self._store.items() if entry.namespace == namespace]:
+            del self._store[key]
 
 
 class SemanticCacheBackend(Protocol):
@@ -127,7 +151,7 @@ class ExecutionCache:
         if hit is not None:
             # Promote a semantic hit into Tier 1 too, so an identical repeat
             # of THIS exact call is a Tier-1 hit next time.
-            self.exact.set(key, hit, ttl_seconds=self.config.ttl_seconds)
+            self.exact.set(key, hit, ttl_seconds=self.config.ttl_seconds, namespace=_namespace(tool_name, organization_id))
         return hit
 
     def store(
@@ -142,5 +166,18 @@ class ExecutionCache:
         if tool_name not in self.config.enabled_tools:
             return
         key = _cache_key(tool_name, validated_args, organization_id)
-        self.exact.set(key, observation, ttl_seconds=self.config.ttl_seconds)
+        self.exact.set(key, observation, ttl_seconds=self.config.ttl_seconds, namespace=_namespace(tool_name, organization_id))
         self.semantic.store(tool_name, raw_args or validated_args, organization_id, observation)
+
+    def invalidate_namespace(self, tool_name: str, organization_id: str) -> None:
+        """Write-aware invalidation, per execution-post_hooks.md §2.
+
+        Purges the writing tool's own namespace, plus `insights` for the
+        same org -- Insights aggregates fleet-wide data touching every
+        other agent's writes, matching AC 1's example ("flushes all cached
+        fuel AND insights queries") generalized to every agent, not just
+        fuel. A no-op if `insights` itself was never cache-enabled/queried.
+        """
+        self.exact.invalidate_namespace(_namespace(tool_name, organization_id))
+        if tool_name != "insights":
+            self.exact.invalidate_namespace(_namespace("insights", organization_id))

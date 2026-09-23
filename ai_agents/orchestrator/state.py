@@ -52,3 +52,5 @@ class OrchestratorState(TypedDict, total=False):
     _tool_retry_counts: dict[str, int]
     _pending_image_bytes: bytes | None
     _pending_mime_type: str | None
+    _fact_check_retries: int
+    _fact_check_warning: str | None

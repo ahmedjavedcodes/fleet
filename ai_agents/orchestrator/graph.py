@@ -29,6 +29,7 @@ from langgraph.graph import END, StateGraph
 from core.llm_config import LLMProvider, get_chat_model
 from orchestrator.cache import ExecutionCache
 from orchestrator.callbacks import FleetLiveObserver
+from orchestrator.fact_check import MAX_FACT_CHECK_RETRIES, check_response_against_scratchpad, _scratchpad_to_text
 from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
 from orchestrator.retry import MAX_RETRIES, ToolValidationError, validate_tool_args
@@ -36,6 +37,7 @@ from orchestrator.runner import RunResult, SubAgentRunner
 from orchestrator.state import OrchestratorState
 from orchestrator.tool_schemas import TOOL_SCHEMAS
 from orchestrator.tools import build_llm_tools
+from orchestrator.webhooks import AlertDispatcher
 
 MAX_HOPS = 8
 
@@ -84,6 +86,16 @@ class OrchestratorDeps:
     # Optional per execution-pre_hooks.md -- None means no caching at all,
     # which is how every pre-existing test still runs unchanged.
     cache: ExecutionCache | None = None
+    # Optional per execution-post_hooks.md §3 -- None means no alert
+    # evaluation at all, same additive-injection convention as observer/cache.
+    webhooks: AlertDispatcher | None = None
+    # Optional per execution-post_hooks.md §4 -- None means the fact_check
+    # node passes state through unchanged (no secondary LLM call), which is
+    # how every pre-existing test still runs unchanged. Deliberately NOT
+    # constructed via default_factory the way `llm` is: a fact-checker
+    # should be an explicit opt-in, not a silent extra LLM call/cost on
+    # every turn just because OrchestratorDeps() was default-constructed.
+    fact_checker_llm: Any = None
 
 
 def _llm_usage(response: Any) -> tuple[int, int]:
@@ -208,7 +220,8 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             # Cache pre-hook (execution-pre_hooks.md §4): only ever checked
             # for a read-only call on an agent the cache config enables --
             # a mutating call always reaches runner.run, never a cache.
-            cache_eligible = deps.cache is not None and _is_read_only_call(agent_name, validated_dict)
+            is_read_only = _is_read_only_call(agent_name, validated_dict)
+            cache_eligible = deps.cache is not None and is_read_only
             if cache_eligible:
                 cached = deps.cache.check(
                     agent_name, validated_dict, auth_context.get("organization_id") or "", raw_args=normalized_args
@@ -266,6 +279,20 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             if cache_eligible and result.status == "done":
                 deps.cache.store(agent_name, validated_dict, auth_context.get("organization_id") or "", observation, raw_args=normalized_args)
 
+            # "Fresh Data" post-hook (execution-post_hooks.md §2): a
+            # successful WRITE purges its own agent's cached reads (plus
+            # insights, which aggregates everyone's writes) so the very next
+            # read reflects this write instead of serving a stale cache hit.
+            if deps.cache is not None and result.status == "done" and not is_read_only:
+                deps.cache.invalidate_namespace(agent_name, auth_context.get("organization_id") or "")
+
+            # "Real-World Alert" post-hook (execution-post_hooks.md §3): rule
+            # evaluation over the raw sub-agent result, zero LLM cost. Runs
+            # regardless of read/write -- e.g. a low-stock query result
+            # deserves the same alert a restock write would trigger.
+            if deps.webhooks is not None and result.status == "done":
+                deps.webhooks.evaluate_and_queue(agent_name, result.state, auth_context.get("organization_id") or "")
+
         return {**state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning", "_tool_retry_counts": retry_counts}
 
     return execute_tool
@@ -304,7 +331,19 @@ def _make_synthesize_node(deps: OrchestratorDeps):
         if deps.observer is not None:
             deps.observer.record_node("synthesize")
 
-        messages = _history_to_messages(state) + [HumanMessage(content=_SYNTHESIS_PROMPT)]
+        prompt = _SYNTHESIS_PROMPT
+        warning = state.get("_fact_check_warning")
+        if warning:
+            # Fail-safe correction pass (execution-post_hooks.md §4): a
+            # prior draft was flagged as containing numbers/IDs/proper nouns
+            # absent from the scratchpad -- ask for a strictly grounded rewrite.
+            prompt = (
+                f"{_SYNTHESIS_PROMPT} Your previous draft was flagged: {warning} "
+                "Rewrite it using ONLY facts that literally appear in the tool "
+                "observations above -- do not invent or guess any number, ID, or name."
+            )
+
+        messages = _history_to_messages(state) + [HumanMessage(content=prompt)]
         start = time.monotonic()
         response = deps.llm.invoke(messages)
         latency_ms = int((time.monotonic() - start) * 1000)
@@ -317,9 +356,39 @@ def _make_synthesize_node(deps: OrchestratorDeps):
             )
 
         final_stage = "halted" if state.get("stage") == "halted" else "done"
-        return {**state, "final_response": response.content, "stage": final_stage}
+        return {**state, "final_response": response.content, "stage": final_stage, "_fact_check_warning": None}
 
     return synthesize
+
+
+def _make_fact_check_node(deps: OrchestratorDeps):
+    def fact_check(state: OrchestratorState) -> OrchestratorState:
+        # No fact-checker LLM injected -- pass through unchanged. This is
+        # how every pre-existing test (fact_checker_llm defaults to None)
+        # keeps running exactly as before.
+        if deps.fact_checker_llm is None:
+            return state
+        # A halted turn's "final_response" is a halt explanation, not a
+        # synthesis of tool data -- nothing to fact-check against.
+        if state.get("stage") == "halted":
+            return state
+
+        retries = state.get("_fact_check_retries", 0)
+        if retries >= MAX_FACT_CHECK_RETRIES:
+            return state
+
+        scratchpad_text = _scratchpad_to_text(state.get("scratchpad") or [])
+        hallucinated = check_response_against_scratchpad(deps.fact_checker_llm, scratchpad_text, state.get("final_response") or "")
+        if not hallucinated:
+            return state
+
+        return {
+            **state,
+            "_fact_check_retries": retries + 1,
+            "_fact_check_warning": "it contained details not present in the tool observations.",
+        }
+
+    return fact_check
 
 
 def _route_after_plan(state: OrchestratorState) -> str:
@@ -336,6 +405,10 @@ def _route_after_execute(state: OrchestratorState) -> str:
     return "plan"
 
 
+def _route_after_fact_check(state: OrchestratorState) -> str:
+    return "synthesize" if state.get("_fact_check_warning") else "end"
+
+
 def build_orchestrator_graph(deps: OrchestratorDeps | None = None) -> StateGraph:
     deps = deps or OrchestratorDeps()
     graph = StateGraph(OrchestratorState)
@@ -343,11 +416,13 @@ def build_orchestrator_graph(deps: OrchestratorDeps | None = None) -> StateGraph
     graph.add_node("plan", _make_plan_node(deps))
     graph.add_node("execute_tool", _make_execute_tool_node(deps))
     graph.add_node("synthesize", _make_synthesize_node(deps))
+    graph.add_node("fact_check", _make_fact_check_node(deps))
 
     graph.set_entry_point("plan")
     graph.add_conditional_edges("plan", _route_after_plan, {"execute_tool": "execute_tool", "synthesize": "synthesize"})
     graph.add_conditional_edges("execute_tool", _route_after_execute, {"plan": "plan", "synthesize": "synthesize", "end": END})
-    graph.add_edge("synthesize", END)
+    graph.add_edge("synthesize", "fact_check")
+    graph.add_conditional_edges("fact_check", _route_after_fact_check, {"synthesize": "synthesize", "end": END})
 
     return graph
 

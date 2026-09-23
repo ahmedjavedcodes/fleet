@@ -89,3 +89,42 @@ def test_semantic_hit_is_promoted_to_exact_tier() -> None:
     second = cache.check("insights", args, "org-1")
     assert second == "semantic hit"
     assert semantic.query_calls == 1
+
+
+# ---- execution-post_hooks.md §2: invalidate_namespace ----
+
+
+def test_exact_backend_invalidate_namespace_purges_only_tagged_entries() -> None:
+    backend = ExactCacheBackend()
+    backend.set("k1", "obs1", ttl_seconds=60, namespace="fuel:org-1")
+    backend.set("k2", "obs2", ttl_seconds=60, namespace="insights:org-1")
+    backend.set("k3", "obs3", ttl_seconds=60, namespace="fuel:org-2")
+
+    backend.invalidate_namespace("fuel:org-1")
+
+    assert backend.get("k1") is None
+    assert backend.get("k2") == "obs2"
+    assert backend.get("k3") == "obs3"
+
+
+def test_ac1_invalidate_namespace_purges_own_tool_and_insights_for_same_org() -> None:
+    cache = ExecutionCache()
+    cache.store("insights", {"query_entity": "dashboard_summary"}, "org-1", "dashboard for org-1")
+    cache.store("assignment", {"query_target": "vehicle-1"}, "org-1", "assignment history for org-1")
+    cache.store("insights", {"query_entity": "dashboard_summary"}, "org-2", "dashboard for org-2")
+
+    cache.invalidate_namespace("assignment", "org-1")
+
+    assert cache.check("insights", {"query_entity": "dashboard_summary"}, "org-1") is None
+    assert cache.check("assignment", {"query_target": "vehicle-1"}, "org-1") is None
+    # a different org's cache is untouched
+    assert cache.check("insights", {"query_entity": "dashboard_summary"}, "org-2") == "dashboard for org-2"
+
+
+def test_invalidate_namespace_on_insights_itself_does_not_double_purge_unrelated_data() -> None:
+    cache = ExecutionCache()
+    cache.store("fuel", {"query_entity": "fuel_trends"}, "org-1", "fuel data")
+
+    cache.invalidate_namespace("insights", "org-1")  # a write funnelled through insights (none exist, but defensively)
+
+    assert cache.check("fuel", {"query_entity": "fuel_trends"}, "org-1") == "fuel data"
