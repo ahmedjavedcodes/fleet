@@ -27,7 +27,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, StateGraph
 
 from core.llm_config import LLMProvider, get_chat_model
+from orchestrator.cache import ExecutionCache
 from orchestrator.callbacks import FleetLiveObserver
+from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
 from orchestrator.retry import MAX_RETRIES, ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
@@ -79,6 +81,9 @@ class OrchestratorDeps:
     # unchanged. OrchestratorSession is responsible for constructing one
     # and calling observer.start_turn() per user turn (FR 4).
     observer: FleetLiveObserver | None = None
+    # Optional per execution-pre_hooks.md -- None means no caching at all,
+    # which is how every pre-existing test still runs unchanged.
+    cache: ExecutionCache | None = None
 
 
 def _llm_usage(response: Any) -> tuple[int, int]:
@@ -162,6 +167,11 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                     )
                 continue
 
+            # Normalization pre-hook (execution-pre_hooks.md §3): deterministic
+            # cleanup keyed by field name, applied before validation. Zero-failure
+            # tolerance is normalize_tool_args' own job -- this call cannot raise.
+            normalized_args = normalize_tool_args(agent_name, call_args)
+
             # attempt is 1-indexed and counts consecutive validation failures
             # for THIS tool across hops -- a fresh call after any success (or
             # a different tool) starts back at 1. This is what actually
@@ -169,7 +179,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             # never reach retries_exhausted.
             attempt = retry_counts.get(agent_name, 0) + 1
             try:
-                validated = validate_tool_args(TOOL_SCHEMAS[agent_name], call_args, attempt=attempt)
+                validated = validate_tool_args(TOOL_SCHEMAS[agent_name], normalized_args, attempt=attempt)
             except ToolValidationError as exc:
                 # FR 8: every schema_error attempt gets its own trace (same
                 # trace_id, incrementing attempt) whether or not this is the
@@ -177,7 +187,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 # attempts even though the turn as a whole may hard-fault.
                 if deps.observer is not None:
                     deps.observer.record_tool_result(
-                        call_id, agent_name, call_args, attempt=attempt, status="schema_error",
+                        call_id, agent_name, normalized_args, attempt=attempt, status="schema_error",
                         observation_text=exc.observation,
                     )
                 if exc.retries_exhausted:
@@ -189,14 +199,31 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         "halt_reason": exc.observation,
                     }
                 retry_counts[agent_name] = attempt
-                scratchpad.append({"hop": hop, "tool": agent_name, "args": call_args, "observation": exc.observation})
+                scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": exc.observation})
                 continue
 
             retry_counts[agent_name] = 0
+            validated_dict = validated.model_dump(exclude_none=True)
+
+            # Cache pre-hook (execution-pre_hooks.md §4): only ever checked
+            # for a read-only call on an agent the cache config enables --
+            # a mutating call always reaches runner.run, never a cache.
+            cache_eligible = deps.cache is not None and _is_read_only_call(agent_name, validated_dict)
+            if cache_eligible:
+                cached = deps.cache.check(
+                    agent_name, validated_dict, auth_context.get("organization_id") or "", raw_args=normalized_args
+                )
+                if cached is not None:
+                    scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": cached})
+                    if deps.observer is not None:
+                        deps.observer.record_tool_result(
+                            call_id, agent_name, normalized_args, attempt=attempt, status="done", observation_text=cached
+                        )
+                    continue  # sub-agent runner is entirely bypassed on a cache hit
 
             sub_state: dict[str, Any] = {
                 "token": auth_context.get("token"),
-                **validated.model_dump(exclude_none=True),
+                **validated_dict,
             }
             if sub_state.get("document_type") and state.get("_pending_image_bytes") is not None:
                 sub_state["image_bytes"] = state["_pending_image_bytes"]
@@ -207,7 +234,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             if result.status == "awaiting_approval":
                 if deps.observer is not None:
                     deps.observer.record_tool_result(
-                        call_id, agent_name, call_args, attempt=attempt, status="awaiting_approval",
+                        call_id, agent_name, normalized_args, attempt=attempt, status="awaiting_approval",
                         observation_text="Paused for approval.", raw_result=result.state,
                     )
                     deps.observer.record_hitl_pause()
@@ -227,16 +254,40 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 }
 
             observation = _format_observation(agent_name, result)
-            scratchpad.append({"hop": hop, "tool": agent_name, "args": call_args, "observation": observation})
+            scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": observation})
             if deps.observer is not None:
                 deps.observer.record_tool_result(
-                    call_id, agent_name, call_args, attempt=attempt, status=result.status,
+                    call_id, agent_name, normalized_args, attempt=attempt, status=result.status,
                     observation_text=observation, raw_result=result.state,
                 )
+            # Only successful reads are cached -- a "halted" result (e.g. a
+            # transient backend timeout) staying cached for ttl_seconds would
+            # keep returning stale failures after the underlying issue clears.
+            if cache_eligible and result.status == "done":
+                deps.cache.store(agent_name, validated_dict, auth_context.get("organization_id") or "", observation, raw_args=normalized_args)
 
         return {**state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning", "_tool_retry_counts": retry_counts}
 
     return execute_tool
+
+
+# Populated only on a WRITE-triggering call for that agent (see each
+# agent's own classify_intent for the authoritative structural routing);
+# insights is omitted entirely since it has no mutating nodes at all and
+# is therefore always read-only regardless of which fields are set.
+_WRITE_INDICATOR_FIELDS = frozenset({
+    "assign_request", "terminate_request",  # assignment
+    "document_type", "document_text",  # foundation / fuel / maintenance / accountability onboarding
+    "trip_fields",  # fuel
+    "provided_fields",  # foundation follow-up write
+})
+
+
+def _is_read_only_call(agent_name: str, validated_args: dict[str, Any]) -> bool:
+    spec = SUB_AGENT_REGISTRY.get(agent_name)
+    if spec is not None and not spec.mutating_nodes:
+        return True  # e.g. insights -- never writes, regardless of args
+    return not any(validated_args.get(field) for field in _WRITE_INDICATOR_FIELDS)
 
 
 def _format_observation(agent_name: str, result: RunResult) -> str:

@@ -18,12 +18,16 @@ hop or synthesize).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
+from orchestrator.security import DEFAULT_SECURITY_CONFIG, SecurityConfig, scan_user_input
 from orchestrator.state import OrchestratorState
 from tools.auth_context import build_context
+
+logger = logging.getLogger("fleet.security")
 
 
 @dataclass
@@ -35,9 +39,12 @@ class TurnResult:
 
 
 class OrchestratorSession:
-    def __init__(self, token: str, *, deps: OrchestratorDeps | None = None):
+    def __init__(
+        self, token: str, *, deps: OrchestratorDeps | None = None, security_config: SecurityConfig = DEFAULT_SECURITY_CONFIG
+    ):
         context = build_context(token)
         self.deps = deps or OrchestratorDeps()
+        self.security_config = security_config
         self._graph = get_compiled_orchestrator_graph(self.deps)
         self.state: OrchestratorState = {
             "auth_context": {
@@ -59,6 +66,19 @@ class OrchestratorSession:
     def run(self, message: str, *, image_bytes: bytes | None = None, mime_type: str | None = None) -> TurnResult:
         if self.deps.observer is not None:
             self.deps.observer.start_turn()  # FR 4: a fresh trace_id per session turn
+
+        # Security pre-hook (execution-pre_hooks.md §2): a violation halts
+        # BEFORE build_orchestrator_graph is ever invoked -- no LLM call,
+        # no state mutation beyond appending the rejected turn to history.
+        violation = scan_user_input(message, config=self.security_config)
+        if violation is not None:
+            logger.warning("Security pre-hook rejected input: %s", violation.reason)
+            chat_history = list(self.state.get("chat_history") or []) + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": violation.rejection_message},
+            ]
+            self.state = {**self.state, "chat_history": chat_history}
+            return TurnResult(status="halted", final_response=violation.rejection_message, hitl_state=None, state=self.state)
 
         chat_history = list(self.state.get("chat_history") or []) + [{"role": "user", "content": message}]
         input_state = {
