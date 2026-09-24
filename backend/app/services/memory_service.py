@@ -37,6 +37,7 @@ from app.services.vector_jobs import execute_job, get_vector_runner
 from app.services.vector_store import (
     VectorSecurityViolation,
     build_rbac_filter,
+    get_document_store,
     get_namespace,
     get_vector_store,
     memory_id_from_vector_id,
@@ -528,7 +529,9 @@ def retry_failed_vector_job(db: Session, organization_id: uuid.UUID, job_id: uui
     ).scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Failed job not found")
-    store = get_vector_store()
+    # Jobs are tagged with the index they belong to; replaying a document
+    # upsert against the memory index would write into the wrong corpus.
+    store = get_document_store() if job.payload.get("store") == "documents" else get_vector_store()
     if store is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vector store is not configured")
     try:

@@ -1,4 +1,4 @@
-"""One-off, idempotent: create the dedicated agent-memory Pinecone index.
+"""One-off, idempotent: create the agent-memory and document-RAG Pinecone indexes.
 
     python scripts/create_pinecone_index.py
 
@@ -21,23 +21,29 @@ from app.core.config import get_settings  # noqa: E402
 from app.models.memory import EMBEDDING_DIM  # noqa: E402
 
 
+def _ensure(pc: Pinecone, name: str, metric: str, purpose: str, settings) -> None:
+    if pc.has_index(name):
+        print(f"Index {name!r} already exists -- nothing to do.")
+        return
+    pc.create_index(
+        name=name,
+        dimension=EMBEDDING_DIM,
+        metric=metric,
+        spec=ServerlessSpec(cloud=settings.pinecone_cloud, region=settings.pinecone_region),
+        tags={"app": "fleet-saas", "purpose": purpose},
+    )
+    print(f"Created index {name!r} ({EMBEDDING_DIM}-dim, {metric}).")
+
+
 def main() -> int:
     settings = get_settings()
     if not settings.pinecone_api_key:
         print("PINECONE_API_KEY is not set in backend/.env", file=sys.stderr)
         return 1
     pc = Pinecone(api_key=settings.pinecone_api_key)
-    if pc.has_index(settings.pinecone_index):
-        print(f"Index {settings.pinecone_index!r} already exists -- nothing to do.")
-        return 0
-    pc.create_index(
-        name=settings.pinecone_index,
-        dimension=EMBEDDING_DIM,
-        metric="cosine",
-        spec=ServerlessSpec(cloud=settings.pinecone_cloud, region=settings.pinecone_region),
-        tags={"app": "fleet-saas", "purpose": "agent-memory"},
-    )
-    print(f"Created index {settings.pinecone_index!r} ({EMBEDDING_DIM}-dim, cosine).")
+    _ensure(pc, settings.pinecone_index, "cosine", "agent-memory", settings)
+    # Hybrid dense+sparse queries are only supported on dotproduct indexes.
+    _ensure(pc, settings.pinecone_documents_index, "dotproduct", "document-rag", settings)
     return 0
 
 

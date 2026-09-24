@@ -44,14 +44,23 @@ def _no_live_vector_store() -> Generator[None, None, None]:
     """Pinecone_Migration_Hardened.md §6: no test reaches Pinecone unless it
     opts in (tests/test_pinecone_live.py). Even with PINECONE_API_KEY in
     backend/.env, the default for every test is "no vector store"."""
+    from app.services import document_service
+    from app.services.rag_inference import set_rag_inference
     from app.services.vector_jobs import set_vector_runner
-    from app.services.vector_store import set_vector_store
+    from app.services.vector_store import set_document_store, set_vector_store
 
-    set_vector_store(None)
-    set_vector_runner(None)
+    def _reset() -> None:
+        set_vector_store(None)
+        set_document_store(None)
+        set_rag_inference(None)
+        set_vector_runner(None)
+        document_service.set_document_runner(None)
+        document_service.set_ingest_session_factory(None)
+        document_service.search_cache = document_service.DocumentSearchCache()
+
+    _reset()
     yield
-    set_vector_store(None)
-    set_vector_runner(None)
+    _reset()
 
 
 @pytest.fixture()

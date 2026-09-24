@@ -96,7 +96,9 @@ class VectorStore(Protocol):
     means writing another class with these methods -- memory_service never
     imports a vendor SDK."""
 
-    def query(self, vector: list[float], top_k: int, filters: dict[str, Any], namespace: str) -> list[dict[str, Any]]: ...
+    def query(
+        self, vector: list[float], top_k: int, filters: dict[str, Any], namespace: str, *, sparse_vector: dict | None = None
+    ) -> list[dict[str, Any]]: ...
     def upsert(self, vectors: list[dict[str, Any]], namespace: str) -> None: ...
     def update_metadata(self, filters: dict[str, Any], set_metadata: dict[str, Any], namespace: str) -> None: ...
     def delete(self, filters: dict[str, Any], namespace: str) -> None: ...
@@ -120,9 +122,11 @@ class OrgScopeGuard:
             self._refuse(operation, "filter is not pinned to an organization_id")
         return pinned
 
-    def query(self, vector, top_k, filters, namespace):
+    def query(self, vector, top_k, filters, namespace, *, sparse_vector=None):
         self._require_pinned("query", filters)
-        return self.inner.query(vector, top_k, filters, namespace)
+        if sparse_vector is None:
+            return self.inner.query(vector, top_k, filters, namespace)
+        return self.inner.query(vector, top_k, filters, namespace, sparse_vector=sparse_vector)
 
     def upsert(self, vectors, namespace):
         for item in vectors:
@@ -163,9 +167,11 @@ class PineconeVectorStore:
     def __init__(self, index: Any) -> None:
         self.index = index
 
-    def query(self, vector, top_k, filters, namespace):
+    def query(self, vector, top_k, filters, namespace, *, sparse_vector=None):
+        # sparse_vector (hybrid search) requires a dotproduct index.
         response = self.index.query(
-            vector=vector, top_k=top_k, filter=filters, namespace=namespace, include_metadata=True
+            vector=vector, top_k=top_k, filter=filters, namespace=namespace, include_metadata=True,
+            **({"sparse_vector": sparse_vector} if sparse_vector is not None else {}),
         )
         return [{"id": m.id, "score": float(m.score), "metadata": dict(m.metadata or {})} for m in response.matches]
 
@@ -194,42 +200,64 @@ class PineconeVectorStore:
         return found
 
 
-_store: VectorStore | None = None
-_store_initialized = False
+_stores: dict[str, VectorStore | None] = {}
+
+
+def _build_guarded_store(index_name: str) -> VectorStore | None:
+    """If Pinecone can't be reached while building (describe_index needs the
+    network), return None for this call and retry on the next one -- a
+    request must never 500 because Pinecone is unreachable."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if not settings.pinecone_api_key:
+        _stores[index_name] = None
+        return None
+    try:
+        from pinecone import Pinecone
+
+        client = Pinecone(api_key=settings.pinecone_api_key)
+        index = client.Index(host=client.describe_index(index_name).host)
+    except Exception:  # noqa: BLE001
+        logger.warning("Pinecone index %r unreachable while initializing; degrading for now", index_name, exc_info=True)
+        return None
+    _stores[index_name] = OrgScopeGuard(PineconeVectorStore(index))
+    return _stores[index_name]
 
 
 def get_vector_store() -> VectorStore | None:
-    """The guarded Pinecone store, or None when PINECONE_API_KEY is unset
-    (memory then runs Postgres-only). Built lazily, once per process.
+    """The guarded agent-memory store (cosine index), or None when
+    PINECONE_API_KEY is unset (memory then runs Postgres-only)."""
+    from app.core.config import get_settings
 
-    If Pinecone can't be reached while building (describe_index needs the
-    network), this request degrades to Postgres-only and the next call tries
-    again -- a memory write must never 500 because Pinecone is unreachable."""
-    global _store, _store_initialized
-    if not _store_initialized:
-        from app.core.config import get_settings
+    name = get_settings().pinecone_index
+    return _stores[name] if name in _stores else _build_guarded_store(name)
 
-        settings = get_settings()
-        if settings.pinecone_api_key:
-            try:
-                from pinecone import Pinecone
 
-                client = Pinecone(api_key=settings.pinecone_api_key)
-                index = client.Index(host=client.describe_index(settings.pinecone_index).host)
-            except Exception:  # noqa: BLE001
-                logger.warning("Pinecone unreachable while initializing; memory running Postgres-only for now", exc_info=True)
-                return None
-            _store = OrgScopeGuard(PineconeVectorStore(index))
-        _store_initialized = True
-    return _store
+def get_document_store() -> VectorStore | None:
+    """The guarded document-RAG store (dotproduct index, for hybrid search)."""
+    from app.core.config import get_settings
+
+    name = get_settings().pinecone_documents_index
+    return _stores[name] if name in _stores else _build_guarded_store(name)
+
+
+def _set(index_name: str, store: VectorStore | None) -> None:
+    """Test/ops hook. Any store set here is wrapped in the guard -- tests
+    exercise the same enforcement production does."""
+    _stores[index_name] = OrgScopeGuard(store) if store is not None and not isinstance(store, OrgScopeGuard) else store
 
 
 def set_vector_store(store: VectorStore | None) -> None:
-    """Test/ops hook. Any store set here is wrapped in the guard -- tests
-    exercise the same enforcement production does."""
-    global _store, _store_initialized
-    _store = OrgScopeGuard(store) if store is not None and not isinstance(store, OrgScopeGuard) else store
-    _store_initialized = True
+    from app.core.config import get_settings
+
+    _set(get_settings().pinecone_index, store)
+
+
+def set_document_store(store: VectorStore | None) -> None:
+    from app.core.config import get_settings
+
+    _set(get_settings().pinecone_documents_index, store)
 
 
 def get_namespace() -> str:

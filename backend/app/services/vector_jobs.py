@@ -61,6 +61,13 @@ class VectorJobRunner:
             return None
         return self.executor.submit(self._run, str(organization_id), job)
 
+    def run_sync(self, organization_id: uuid.UUID | str, job: dict[str, Any]) -> bool:
+        """Same retry + dead-letter policy, on the caller's thread -- for work
+        that is already running in the background (document ingestion)."""
+        if self.store_provider() is None:
+            return False
+        return self._run(str(organization_id), job)
+
     def _run(self, organization_id: str, job: dict[str, Any]) -> bool:
         last_error: Exception | None = None
         for delay in self.delays:

@@ -134,3 +134,35 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 - Retry + DLQ as specced (attempts at 0/1/4 s, then `failed_vector_jobs`, ERROR-level `ALERT` with DLQ depth). Jobs are plain JSON, so admins can list (`GET /memory/vector-jobs/failed`) and replay (`POST …/{id}/retry`) them; a job is removed only once its replay succeeds. Dedupe now keeps the **newest** copy (the Pinecone spec's rule), reversing agent-memory's oldest-kept rule. No scheduler exists here, so the monthly job is `python -m app.jobs.memory_maintenance`, meant for cron or Task Scheduler.
 - Tests (spec §6): an autouse fixture makes every backend test run with "no vector store" even though the key is now in `backend/.env`. Store-dependent tests opt into an in-memory fake implementing Pinecone's filter semantics, sitting behind the real guard. The Pinecone client is mocked with `unittest.mock` for the adapter and runner. Backend: 54 new tests. The full run on local Postgres 18 was 343 passed, 4 skipped (the opt-in live suite) and 2 failed, the same pre-existing hardcoded-date purchase-order tests. Live suite: 4/4 passing with `PINECONE_LIVE_TESTS=1`. `ai_agents/`: 396 passing (3 new Pinecone embedder tests); the unused legacy `memory/vector_store.py` was removed. Live end-to-end ran against a migrated `fleet_test` and an `e2e_*` namespace, both cleaned up afterwards; `fleet-memory` was left empty.
 - **Process mistake, disclosed to the user:** while checking that the key existed, my redaction pattern assumed `KEY=value`, but the file has `KEY = 'value'`. The pattern didn't match and the full key was printed into the session transcript. Recommended rotating it.
+
+## 2026-09-24 — Hybrid document RAG pipeline: calibrated live, three security fixes to the spec
+
+- Executed `ai_agents/specs/hybrid-document-rag-pipeline.md` on branch `document-rag` (off `pinecone-migration`). **Same boundary as agent memory:** the backend owns ingestion and retrieval (`/api/v1/documents/*`), Postgres is the system of record (`documents`, `document_chunks`, `document_ingest_failures`, migration `e5b2c9d4f6a8`), and Pinecone holds only vectors plus filter metadata, not the spec's `chunk_text`. Every hit is re-checked against Postgres (org, the role's allowed types, `ready`, current version). `ai_agents/` gets one new orchestrator tool, `search_documents`.
+- **None of the spec's assumed infrastructure exists here:** Redis, torch, `pinecone-text`, `langchain_experimental`, a local `bge-reranker-base`. A read-only probe of the Pinecone account showed the hosted models cover every role, so each gap was replaced with a real, tested equivalent rather than a stub:
+  - `llama-text-embed-v2` at 768 dims (dense)
+  - `pinecone-sparse-english-v0` (the SPLADE/BM25 role)
+  - `bge-reranker-v2-m3` (the cross-encoder)
+  - a Postgres row lease with 300 s expiry and a 429 (the Redis lock)
+  - an in-process semantic cache (the Redis cache tier)
+  - a ~40-line percentile-breakpoint chunker, the same algorithm as `SemanticChunker`
+
+  Hybrid dense+sparse queries need a **dotproduct** index, so a separate `fleet-documents` index was created; `fleet-memory` (cosine) and the unrelated `digisinc` index were untouched.
+- **The spec's reranker threshold would have broken retrieval.** Before building, I scored six probe queries on the hosted rerankers. With `bge-reranker-v2-m3`, correct passages scored 0.576–0.997 and wrong ones ≤ 0.010. The spec's 0.65 (set for `bge-reranker-base`) would have discarded "How often should brake pads be changed?" (0.576), and the later live end-to-end run produced a second case at 0.541. The threshold is 0.30 (configurable) with the calibration table recorded in the spec. `pinecone-rerank-v0` separated worse; Cohere isn't enabled on the project.
+- **Three security bugs in the spec, fixed:**
+  1. The semantic cache key had no tenant or role component, so a fleet manager's cached invoice answer would have been served to a driver or another org. The key is now (org, allowed types).
+  2. `document_id = sha256(filename + type)` collides across tenants. The hash now includes the org.
+  3. XML "sandboxing" by wrapping alone lets a chunk containing `</untrusted_document_context>` escape the tag. Chunk text and attributes are now XML-escaped, and a test disables the heuristic scan to prove escaping holds on its own.
+- **Two more real bugs, caught while designing tests rather than after shipping:**
+  1. Caching **empty** results would hide a freshly uploaded document for the whole TTL, because Pinecone is eventually consistent right after an upsert. Empty results are no longer cached.
+  2. The shared vector DLQ's replay endpoint always used the memory index, so replaying a dead-lettered document upsert would have written document vectors into agent memory. Jobs are now tagged with their `store`.
+- Other spec corrections:
+  - PDF coordinates are points, not pixels (60 pt expansion).
+  - The mechanic's "assigned vehicle_id" filter can't be evaluated because mechanics have no vehicle assignment in this data model. Incident reports are withheld from mechanics rather than leaked unfiltered.
+  - Table chunks embed the **summary** but store and return summary plus the exact table, so figures stay citable.
+  - Mid-search failures return 503, never unreranked results.
+  - Vector ids carry the document version, so a late-finishing stale ingestion can never surface.
+- Found against the existing pre-hooks: the domain allowlist rejected "What does the manual say…?" and "Summarize our overtime policy"; document vocabulary was added.
+- Tests:
+  - Backend: 46 new (15 pipeline units including real PyMuPDF table extraction, 31 API: role matrix, org isolation, lease/429, versioning, cache scoping and invalidation, stale-version rejection, pre-purge failure, summary DLQ, vector DLQ replay to the right index, 503 paths). The full suite is 389 passed, 4 skipped and 2 failed (the known pre-existing date bug).
+  - `ai_agents`: 25 new (injection signatures positive and negative, escaping, null result, the orchestrator tool end-to-end, outage handling, invalid args through the retry wrapper, triad sampling, thresholds, judge failure, session hook); 421 total.
+  - Live (opt-in, `PINECONE_LIVE_TESTS=1`): a real PDF with a table plus a policy and an invoice. Found by meaning, reranked at 0.541, null payload for an off-topic question, the invoice visible to the manager but never the driver. The namespace was deleted after.

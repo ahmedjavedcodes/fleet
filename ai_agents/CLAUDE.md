@@ -101,6 +101,7 @@ building on top of it:
 | `agents/fleet_copilot.py` | **Scaffolded.** A one-node LangGraph graph (`respond`) that passes state through unchanged. No LLM call, no tool binding, no routing logic yet. |
 | `core/llm_config.py` | **Implemented.** `get_chat_model()` returns a configured LangChain chat model for `local_llama`, `claude_anthropic`, or `claude_openrouter`, with lazy provider imports. |
 | `memory/` | **Implemented.** `AgentMemory` (`service.py`), embedders (`embeddings.py`: none/pinecone/ollama/nomic), background summarizer, staleness extraction. Talks only to the backend's `/api/v1/memory/*` — never to Pinecone storage directly. |
+| `orchestrator/document_context.py`, `orchestrator/rag_eval.py`, `mcp_server/document_tools.py` | **Implemented.** The `search_documents` orchestrator tool (document RAG; ingestion and retrieval live in the backend's `/api/v1/documents/*`), injection pre-scan + escaped XML sandboxing, and sampled RAG-triad evaluation. |
 | `tools/file_parsers.py` | **Present, not yet reviewed here** — check the file directly before assuming a parser exists for a given format. |
 | MCP tool catalog (§5 table) | **Design target, not yet implemented.** Only `query_fleet_data` exists today. Treat the table below as the spec to build against, not a description of current code. |
 

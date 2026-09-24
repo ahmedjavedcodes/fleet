@@ -288,8 +288,7 @@ def test_unreachable_pinecone_at_init_degrades_instead_of_raising(monkeypatch) -
 
     monkeypatch.setattr("app.core.config.get_settings", lambda: _Settings())
     monkeypatch.setattr("pinecone.Pinecone", _Down)
-    monkeypatch.setattr(vs, "_store_initialized", False)
-    monkeypatch.setattr(vs, "_store", None)
+    monkeypatch.setattr(vs, "_stores", {})
 
     assert vs.get_vector_store() is None
-    assert vs._store_initialized is False  # next call retries
+    assert "fleet-memory" not in vs._stores  # not cached as "absent": the next call retries

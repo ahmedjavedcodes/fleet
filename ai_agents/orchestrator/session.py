@@ -27,7 +27,7 @@ from pydantic import ValidationError
 from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
 from orchestrator.security import DEFAULT_SECURITY_CONFIG, SecurityConfig, scan_user_input
 from orchestrator.state import OrchestratorState
-from orchestrator.tool_schemas import MEMORY_TOOL_NAME, UpdateMemoryInput
+from orchestrator.tool_schemas import DOCUMENT_TOOL_NAME, MEMORY_TOOL_NAME, UpdateMemoryInput
 from tools.api_client import BackendAPIError
 from tools.auth_context import build_context
 
@@ -199,6 +199,21 @@ class OrchestratorSession:
             return "update_memory not saved: the memory service is unavailable.", "halted"
         return f"update_memory saved ({saved.get('scope', request.scope)} scope): {request.content}", "done"
 
+    def _maybe_evaluate_rag(self, state: OrchestratorState) -> None:
+        """RAG triad sampling (hybrid-document-rag-pipeline.md §4.2) -- only
+        for turns that actually consulted documents. Background, fail-open."""
+        evaluator = self.deps.rag_evaluator
+        if evaluator is None:
+            return
+        contexts = [e["observation"] for e in state.get("scratchpad") or [] if e["tool"] == DOCUMENT_TOOL_NAME]
+        if not contexts:
+            return
+        question = next((t["content"] for t in reversed(state.get("chat_history") or []) if t["role"] == "user"), "")
+        try:
+            evaluator.maybe_evaluate(self._context.organization_id, question, contexts, state.get("final_response") or "")
+        except Exception:  # noqa: BLE001
+            memory_logger.warning("RAG triad sampling failed to dispatch", exc_info=True)
+
     def _settle(self, result_state: OrchestratorState) -> TurnResult:
         if result_state.get("stage") == "awaiting_approval":
             self.state = result_state
@@ -211,6 +226,7 @@ class OrchestratorSession:
             ]
             result_state = {**result_state, "chat_history": chat_history}
             self._record("assistant", result_state["final_response"])
+            self._maybe_evaluate_rag(result_state)
 
         self.state = result_state
         return TurnResult(status=status, final_response=result_state.get("final_response"), hitl_state=None, state=result_state)

@@ -62,6 +62,8 @@ _DOMAIN_KEYWORDS = frozenset({
     # agent-memory.md: stating a preference ("Always use PKR") must reach
     # the orchestrator so it can propose a HITL-gated update_memory.
     "remember", "forget", "prefer", "currency", "amount",
+    # hybrid-document-rag-pipeline.md: questions about uploaded documents.
+    "manual", "policy", "policies", "document", "procedure", "guideline", "handbook", "warranty",
 })
 
 

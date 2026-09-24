@@ -5,6 +5,7 @@ from app.api.assignments import router as assignments_router
 from app.api.auth import router as auth_router
 from app.api.compliance import router as compliance_router
 from app.api.dashboard import router as dashboard_router
+from app.api.documents import router as documents_router
 from app.api.driver_reports import router as driver_reports_router
 from app.api.drivers import router as drivers_router
 from app.api.fuel import router as fuel_router
@@ -47,3 +48,4 @@ app.include_router(incidents_router)
 app.include_router(dashboard_router)
 app.include_router(assignments_router)
 app.include_router(memory_router)
+app.include_router(documents_router)
