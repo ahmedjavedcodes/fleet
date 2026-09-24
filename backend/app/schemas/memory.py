@@ -150,3 +150,23 @@ class SemanticMemorySupersedeResponse(BaseModel):
 class SemanticMemoryDedupeResponse(BaseModel):
     deactivated_ids: list[uuid.UUID]
     similarity_threshold: float
+
+
+class VectorPruneResponse(BaseModel):
+    """Pinecone doesn't report how many vectors a filtered delete removed, so
+    this reports what was scheduled, not a count."""
+
+    scheduled: bool
+    cutoff: datetime | None
+
+
+class FailedVectorJobResponse(BaseModel):
+    """payload is summarized (op + namespace) -- the raw job can carry 768-float
+    vectors that are useless in an admin listing."""
+
+    id: uuid.UUID
+    op: str
+    namespace: str
+    error_message: str
+    attempts: int
+    created_at: datetime

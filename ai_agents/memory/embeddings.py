@@ -1,9 +1,9 @@
 """Embedding providers for agent memory (agent-memory.md §2B).
 
-The spec fixes the model -- nomic-embed-text-v1.5, 768 dimensions, explicitly
-not OpenAI -- but nothing in this project runs it yet (no Ollama install, no
-Nomic key, and Groq serves no embedding models). So the provider is chosen by
-MEMORY_EMBEDDER and defaults to "none": memory still works end to end
+All providers produce 768-dim vectors (the Pinecone index's dimension):
+nomic-embed-text-v1.5 via Ollama or Nomic's API, or llama-text-embed-v2 via
+Pinecone Inference (same key as the vector index; explicitly not OpenAI). The
+provider is chosen by MEMORY_EMBEDDER and defaults to "none": memory still works end to end
 (sessions, summaries, HITL-gated facts, scope-filtered and keyword recall),
 only similarity ranking and similarity-based staleness are skipped until a
 provider is configured. No fake embedding is ever produced -- a made-up
@@ -91,8 +91,40 @@ class NomicAPIEmbedder:
         return _check_dim(embeddings[0])
 
 
+class PineconeInferenceEmbedder:
+    """Pinecone-hosted llama-text-embed-v2, requested at 768 dims so it's a
+    drop-in for nomic-embed-text-v1.5 (same dimension, same index). Pinecone
+    takes the task as input_type: passage for stored facts, query for lookups."""
+
+    _INPUT_TYPE = {"search_document": "passage", "search_query": "query"}
+
+    def __init__(self, *, api_key: str, model: str = "llama-text-embed-v2", client=None):
+        if client is None:
+            from pinecone import Pinecone
+
+            client = Pinecone(api_key=api_key)
+        self.client = client
+        self.model = model
+
+    def embed(self, text: str, *, task: TaskType) -> list[float] | None:
+        result = self.client.inference.embed(
+            model=self.model,
+            inputs=[text],
+            parameters={"input_type": self._INPUT_TYPE[task], "dimension": EMBEDDING_DIM, "truncate": "END"},
+        )
+        embeddings = list(result)
+        if not embeddings:
+            raise EmbeddingError("Pinecone inference returned no embeddings")
+        return _check_dim(list(embeddings[0].values))
+
+
 def get_default_embedder() -> Embedder:
     provider = os.environ.get("MEMORY_EMBEDDER", "none").strip().lower()
+    if provider == "pinecone":
+        api_key = os.environ.get("PINECONE_API_KEY")
+        if not api_key:
+            raise EmbeddingError("MEMORY_EMBEDDER=pinecone requires PINECONE_API_KEY")
+        return PineconeInferenceEmbedder(api_key=api_key)
     if provider == "ollama":
         return OllamaEmbedder(base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
     if provider == "nomic":
@@ -102,4 +134,4 @@ def get_default_embedder() -> Embedder:
         return NomicAPIEmbedder(api_key=api_key)
     if provider in ("", "none"):
         return NullEmbedder()
-    raise EmbeddingError(f"Unknown MEMORY_EMBEDDER {provider!r} (expected none, ollama, or nomic)")
+    raise EmbeddingError(f"Unknown MEMORY_EMBEDDER {provider!r} (expected none, ollama, nomic, or pinecone)")

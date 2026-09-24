@@ -76,7 +76,7 @@ ai_agents/
 │               # no direct DB or HTTP calls; call tools/ instead
 ├── core/       # LLM provider config (core/llm_config.py), prompt templates
 ├── mcp/        # MCP server exposing read-only SQL + backend-API-backed tools
-├── memory/     # Pinecone vector pipelines (memory/vector_store.py) + buffer memory
+├── memory/     # Agent memory client: embedders, summarizer, AgentMemory (storage is in backend/)
 ├── tools/      # Custom tools: file parsers, HTTP client to backend, safety hooks
 ├── tests/      # pytest agent evaluations and execution tests
 └── .env.example
@@ -100,7 +100,7 @@ building on top of it:
 | `mcp/server.py` | **Scaffolded.** Registers one tool (`query_fleet_data`) that runs SQL through the safety hook, but execution against a real read-only session is not wired up yet (see the `NOTE` in that file re: package-name collision with the installed `mcp` SDK — resolve before shipping). |
 | `agents/fleet_copilot.py` | **Scaffolded.** A one-node LangGraph graph (`respond`) that passes state through unchanged. No LLM call, no tool binding, no routing logic yet. |
 | `core/llm_config.py` | **Implemented.** `get_chat_model()` returns a configured LangChain chat model for `local_llama`, `claude_anthropic`, or `claude_openrouter`, with lazy provider imports. |
-| `memory/vector_store.py` | **Implemented (thin wrapper).** `get_pinecone_index`, `upsert_memory`, `query_memory` — no chunking/embedding pipeline yet; callers must supply pre-computed embeddings. |
+| `memory/` | **Implemented.** `AgentMemory` (`service.py`), embedders (`embeddings.py`: none/pinecone/ollama/nomic), background summarizer, staleness extraction. Talks only to the backend's `/api/v1/memory/*` — never to Pinecone storage directly. |
 | `tools/file_parsers.py` | **Present, not yet reviewed here** — check the file directly before assuming a parser exists for a given format. |
 | MCP tool catalog (§5 table) | **Design target, not yet implemented.** Only `query_fleet_data` exists today. Treat the table below as the spec to build against, not a description of current code. |
 
@@ -190,23 +190,23 @@ execution. Concretely:
 
 ## 7. Agent Memory
 
-Grand Orchestrator memory follows `specs/agent-memory.md` and is **stored in the
-backend** (Postgres + pgvector, `backend/app/models/memory.py`), reached only via
-`/api/v1/memory/*` — `ai_agents/` still never touches Postgres directly.
+Grand Orchestrator memory follows `specs/agent-memory.md` and
+`specs/Pinecone_Migration_Hardened.md`. **Storage is owned by the backend**:
+Postgres is the system of record (`backend/app/models/memory.py`), Pinecone holds
+the vectors (`backend/app/services/vector_store.py`), and `ai_agents/` reaches both
+only via `/api/v1/memory/*` — it never touches Postgres or the Pinecone index.
 
 - **Short-term:** `agent_sessions` / `agent_messages` with a running summary kept
   bounded by `memory/summarizer.py` (background, never on the hot path).
 - **Long-term:** `semantic_memories`, scoped `personal | organization | entity`; the
-  backend enforces who may read/write each scope. LLM-proposed facts are saved only
-  through the HITL-gated `update_memory` tool.
-- **Embeddings:** `memory/embeddings.py`, `nomic-embed-text-v1.5` (768-dim) via
-  `MEMORY_EMBEDDER=none|ollama|nomic`. With `none`, recall falls back to scope +
-  keyword matching — never generate placeholder vectors.
+  backend enforces who may read/write each scope, pins every Pinecone call to the
+  caller's org, and re-checks every vector hit against Postgres. LLM-proposed facts
+  are saved only through the HITL-gated `update_memory` tool.
+- **Embeddings:** `memory/embeddings.py`, 768-dim, via
+  `MEMORY_EMBEDDER=none|pinecone|ollama|nomic`. With `none`, recall falls back to
+  scope + keyword matching — never generate placeholder vectors.
 - **Entry point:** `memory/service.py`'s `AgentMemory`, injected as
   `OrchestratorDeps.memory` (default `None` = memory off).
-- `memory/vector_store.py` (Pinecone) is the older thin wrapper and is not used by
-  the orchestrator; if you revive it, filter by organization ID in `metadata` on
-  every upsert/query, since Pinecone has no row-level scoping.
 
 ---
 

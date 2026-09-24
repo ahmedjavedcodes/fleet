@@ -16,10 +16,9 @@ Two real infrastructure gaps, resolved rather than faked:
    via the same get/set interface without touching graph.py.
 
 2. Tier 2 (semantic match via embeddings + Pinecone/FAISS): there is no
-   embedding-generation pipeline anywhere in this codebase --
-   memory/vector_store.py's upsert_memory/query_memory both require a
-   pre-computed `embedding: list[float]` to be passed in; nothing computes
-   one, and no embedding provider is configured. Faking "semantic
+   embedding-generation pipeline wired into this cache (agent memory's
+   embedders live in memory/embeddings.py and target the backend's
+   Pinecone-backed memory vault, not tool-call caching). Faking "semantic
    similarity" with a crude token-overlap heuristic would risk a false
    cache hit across two DIFFERENT vehicles/drivers, which is worse than no
    Tier 2 at all. NullSemanticCacheBackend is an honest, always-miss no-op;

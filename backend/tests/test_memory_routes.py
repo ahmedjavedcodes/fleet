@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.enums import UserRole
 from app.models.organization import Organization
 from tests.conftest import auth_headers, make_user, make_vehicle
+from tests.vector_fixtures import vectors  # noqa: F401 -- fixture
 
 DIM = 768
 
@@ -222,7 +223,7 @@ def test_personal_memories_are_invisible_to_other_users(
     assert "Company currency is PKR" in driver_view
 
 
-def test_other_organizations_memories_are_never_returned(
+def test_other_organizations_memories_are_never_returned(vectors, 
     client: TestClient, db_session: Session, other_org: Organization, manager
 ) -> None:
     outsider = make_user(db_session, other_org, role=UserRole.fleet_manager)
@@ -232,7 +233,7 @@ def test_other_organizations_memories_are_never_returned(
     assert all(r["content"] != "Outsider secret policy" for r in results)
 
 
-def test_vector_search_ranks_by_cosine_distance(client: TestClient, manager) -> None:
+def test_vector_search_ranks_by_cosine_distance(vectors, client: TestClient, manager) -> None:
     _store(client, manager, scope="organization", content="near", embedding=_vec(0))
     _store(client, manager, scope="organization", content="middle", embedding=_vec(0, 1))
     _store(client, manager, scope="organization", content="far", embedding=_vec(5))
@@ -262,7 +263,7 @@ def test_keyword_fallback_ignores_like_wildcards(client: TestClient, manager) ->
 # --- Staleness, deactivation, retention --------------------------------------------
 
 
-def test_supersede_deactivates_similar_facts_about_same_entity_only(
+def test_supersede_deactivates_similar_facts_about_same_entity_only(vectors, 
     client: TestClient, db_session: Session, organization: Organization, mechanic
 ) -> None:
     vehicle = make_vehicle(db_session, organization)
@@ -326,20 +327,29 @@ def test_cannot_deactivate_another_users_personal_memory(client: TestClient, man
     assert client.post(f"/api/v1/memory/memories/{own_fact['id']}/deactivate", headers=auth_headers(manager)).status_code == 404
 
 
-def test_dedupe_keeps_oldest_and_deactivates_near_duplicates(client: TestClient, admin, manager) -> None:
-    original = _store(client, manager, scope="organization", content="Currency is PKR", embedding=_vec(0))
-    duplicate = _store(client, manager, scope="organization", content="The currency is PKR", embedding=_vec(0))
+def test_dedupe_keeps_newest_and_deactivates_older_near_duplicates(vectors, client: TestClient, admin, manager) -> None:
+    older = _store(client, manager, scope="organization", content="Currency is PKR", embedding=_vec(0))
+    newer = _store(client, manager, scope="organization", content="The currency is PKR", embedding=_vec(0))
     distinct = _store(client, manager, scope="organization", content="Weekly briefing Mondays", embedding=_vec(3))
 
     response = client.post("/api/v1/memory/memories/dedupe", headers=auth_headers(admin))
     assert response.status_code == 200
-    assert response.json()["deactivated_ids"] == [duplicate["id"]]
+    # Pinecone_Migration_Hardened.md §2: the NEWEST copy is kept.
+    assert response.json()["deactivated_ids"] == [older["id"]]
 
     active = {m["id"] for m in _search(client, manager, top_k=20)}
-    assert original["id"] in active and distinct["id"] in active
+    assert newer["id"] in active and distinct["id"] in active and older["id"] not in active
+    # ...and the duplicate's vector is hard-deleted from the index.
+    assert all(older["id"] not in vid for vid in vectors.records("agent-memory"))
 
 
-def test_dedupe_does_not_merge_across_scopes(client: TestClient, admin, manager) -> None:
+def test_dedupe_without_vector_store_is_a_noop(client: TestClient, admin, manager) -> None:
+    _store(client, manager, scope="organization", content="Currency is PKR", embedding=_vec(0))
+    _store(client, manager, scope="organization", content="Currency is PKR", embedding=_vec(0))
+    assert client.post("/api/v1/memory/memories/dedupe", headers=auth_headers(admin)).json()["deactivated_ids"] == []
+
+
+def test_dedupe_does_not_merge_across_scopes(vectors, client: TestClient, admin, manager) -> None:
     _store(client, manager, scope="organization", content="Currency is PKR", embedding=_vec(0))
     _store(client, manager, scope="personal", content="Currency is PKR", embedding=_vec(0))
     assert client.post("/api/v1/memory/memories/dedupe", headers=auth_headers(admin)).json()["deactivated_ids"] == []

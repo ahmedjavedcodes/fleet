@@ -299,6 +299,7 @@ def test_fetch_context_uses_embedding_when_available() -> None:
     payload = tools.of("search")[0]
     assert len(payload["embedding"]) == EMBEDDING_DIM
     assert "query_text" not in payload
+    assert payload["max_distance"] == 0.75
 
 
 def test_fetch_context_falls_back_to_keywords_when_embedder_fails() -> None:
@@ -368,3 +369,53 @@ def test_on_write_ignores_writes_without_entity_facts() -> None:
     tools = FakeMemoryTools()
     assert _memory(tools).on_write("fuel", {"created_record": {"id": "f1"}}, CTX) is None
     assert tools.calls == []
+
+
+# ---- Pinecone Inference embedder ----
+
+
+class _FakeInference:
+    def __init__(self, dim=EMBEDDING_DIM):
+        self.dim = dim
+        self.calls = []
+
+    def embed(self, model, inputs, parameters):
+        self.calls.append({"model": model, "inputs": inputs, "parameters": parameters})
+
+        class _E:
+            values = [0.1] * self.dim
+
+        return [_E()]
+
+
+class _FakePineconeClient:
+    def __init__(self, dim=EMBEDDING_DIM):
+        self.inference = _FakeInference(dim)
+
+
+def test_pinecone_embedder_maps_tasks_and_requests_768_dims() -> None:
+    from memory.embeddings import PineconeInferenceEmbedder
+
+    client = _FakePineconeClient()
+    embedder = PineconeInferenceEmbedder(api_key="k", client=client)
+    assert len(embedder.embed("Transmission replaced", task="search_document")) == EMBEDDING_DIM
+    embedder.embed("what broke?", task="search_query")
+
+    first, second = client.inference.calls
+    assert first["model"] == "llama-text-embed-v2"
+    assert first["parameters"] == {"input_type": "passage", "dimension": 768, "truncate": "END"}
+    assert second["parameters"]["input_type"] == "query"
+
+
+def test_pinecone_embedder_rejects_wrong_dimension() -> None:
+    from memory.embeddings import PineconeInferenceEmbedder
+
+    with pytest.raises(EmbeddingError):
+        PineconeInferenceEmbedder(api_key="k", client=_FakePineconeClient(dim=1024)).embed("x", task="search_query")
+
+
+def test_pinecone_embedder_requires_key(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORY_EMBEDDER", "pinecone")
+    monkeypatch.delenv("PINECONE_API_KEY", raising=False)
+    with pytest.raises(EmbeddingError):
+        get_default_embedder()

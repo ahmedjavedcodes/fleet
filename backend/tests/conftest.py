@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import models  # noqa: F401 -- registers all models on Base.metadata
@@ -25,8 +25,7 @@ from app.models.vehicle import Vehicle
 
 # Dedicated test database -- never the dev 'fleet' database a developer might be
 # inspecting in pgAdmin4. Created once via `CREATE DATABASE fleet_test OWNER fleet;`.
-# Overridable so the suite can target a pgvector-enabled server (e.g. the
-# pgvector/pgvector docker image) when the local Postgres lacks the extension.
+# Overridable so the suite can target another server (e.g. a throwaway container).
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_test")
 
 engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
@@ -34,14 +33,25 @@ engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema() -> Generator[None, None, None]:
-    # semantic_memories.embedding is a pgvector column -- the extension must
-    # exist before create_all, same requirement as the alembic migration.
-    with engine.begin() as connection:
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_vector_store() -> Generator[None, None, None]:
+    """Pinecone_Migration_Hardened.md §6: no test reaches Pinecone unless it
+    opts in (tests/test_pinecone_live.py). Even with PINECONE_API_KEY in
+    backend/.env, the default for every test is "no vector store"."""
+    from app.services.vector_jobs import set_vector_runner
+    from app.services.vector_store import set_vector_store
+
+    set_vector_store(None)
+    set_vector_runner(None)
+    yield
+    set_vector_store(None)
+    set_vector_runner(None)
 
 
 @pytest.fixture()

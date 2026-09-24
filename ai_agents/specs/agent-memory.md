@@ -6,6 +6,11 @@ the module-boundary rule); each was resolved by an explicit user decision
 recorded below, not silently worked around. Corrections are marked inline;
 the original intent of every section is kept.*
 
+> **Superseded in part (2026-09-24) by `Pinecone_Migration_Hardened.md`:** vectors
+> moved from pgvector to Pinecone, owned by the backend. pgvector is no longer
+> required anywhere; the "Require pgvector everywhere" decision below is historical.
+> Dedupe now keeps the **newest** copy (the Pinecone spec's rule), not the oldest.
+
 ## Decisions taken before implementation (2026-09-24)
 
 | Question | Decision |

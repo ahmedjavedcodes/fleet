@@ -27,6 +27,11 @@ logger = logging.getLogger("fleet.memory")
 
 FETCH_TIMEOUT_SECONDS = 0.5
 RECENT_MESSAGE_LIMIT = 6
+# Cosine-distance cutoff for recall. Calibrated live against Pinecone's
+# llama-text-embed-v2: a correct paraphrase match ("what currency should I
+# show expenses in?" -> "User prefers ... PKR") scored 0.675, above the
+# backend's generic 0.5 default; an unrelated fact scored > 0.8.
+MAX_RECALL_DISTANCE = 0.75
 
 
 class AgentMemory:
@@ -39,6 +44,7 @@ class AgentMemory:
         background: Executor | None = None,
         fetch_timeout_s: float = FETCH_TIMEOUT_SECONDS,
         top_k: int = 5,
+        max_distance: float = MAX_RECALL_DISTANCE,
     ) -> None:
         self.embedder = embedder or get_default_embedder()
         self.summarizer = summarizer or SessionSummarizer()
@@ -47,6 +53,7 @@ class AgentMemory:
         self.background = background or ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-memory")
         self.fetch_timeout_s = fetch_timeout_s
         self.top_k = top_k
+        self.max_distance = max_distance
 
     def _embed(self, text: str, *, task: str) -> list[float] | None:
         """Embedding failure degrades to scope/keyword recall -- never an error."""
@@ -92,6 +99,7 @@ class AgentMemory:
         payload: dict[str, Any] = {"top_k": self.top_k}
         if embedding is not None:
             payload["embedding"] = embedding
+            payload["max_distance"] = self.max_distance
         elif query_text:
             payload["query_text"] = query_text
         facts = self.tools.search_memories_tool(context, payload, timeout=self.fetch_timeout_s)

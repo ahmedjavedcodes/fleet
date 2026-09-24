@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     # surfacing as a generic "could not reach the server" network error.
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Agent-memory vector search (Pinecone_Migration_Hardened.md). Unset key =
+    # memory runs Postgres-only (scope + keyword recall, no similarity).
+    pinecone_api_key: str | None = None
+    pinecone_index: str = "fleet-memory"
+    pinecone_namespace: str = "agent-memory"
+    pinecone_cloud: str = "aws"
+    pinecone_region: str = "us-east-1"
+
 
 @lru_cache
 def get_settings() -> Settings:

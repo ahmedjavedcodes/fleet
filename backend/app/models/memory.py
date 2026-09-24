@@ -1,17 +1,17 @@
 import uuid
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.models.enums import AgentMessageRole, MemoryEntityType, MemoryScope
 from app.models.mixins import OrgScopedMixin
 
-# nomic-embed-text-v1.5's output dimension -- the embedding model is chosen
-# and run by ai_agents/, the backend only stores and compares vectors.
+# Embedding dimension shared by every supported model (nomic-embed-text-v1.5,
+# Pinecone-hosted llama-text-embed-v2 at 768). Vectors are computed by
+# ai_agents/ and stored in Pinecone -- never in Postgres.
 EMBEDDING_DIM = 768
 
 
@@ -50,10 +50,15 @@ class AgentMessage(Base):
 
 
 class SemanticMemory(Base, OrgScopedMixin):
-    """Long-term vault. `scope` decides who may see a fact: personal -> only
-    user_id; organization -> everyone in the org; entity -> everyone in the org,
-    attached to one vehicle/driver. The check constraints make an ill-scoped
-    row (e.g. a personal fact with no owner) unrepresentable."""
+    """Long-term vault -- the system of record. `scope` decides who may see a
+    fact: personal -> only user_id; organization -> everyone in the org;
+    entity -> everyone in the org, attached to one vehicle/driver. The check
+    constraints make an ill-scoped row unrepresentable.
+
+    The vector itself lives in Pinecone (id "<organization_id>#<id>"), carrying
+    only filter metadata -- never `content`. Every Pinecone hit is re-checked
+    against this table before it is returned, so Postgres stays the authority
+    on visibility and is_active even while Pinecone is eventually consistent."""
 
     __tablename__ = "semantic_memories"
     __table_args__ = (
@@ -64,12 +69,6 @@ class SemanticMemory(Base, OrgScopedMixin):
         ),
         Index("ix_semantic_memories_scope_lookup", "organization_id", "scope", "is_active"),
         Index("ix_semantic_memories_entity", "entity_id"),
-        Index(
-            "ix_semantic_memories_embedding_hnsw",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -81,14 +80,28 @@ class SemanticMemory(Base, OrgScopedMixin):
         SAEnum(MemoryEntityType, name="memory_entity_type"), nullable=True
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # Nullable: ai_agents may have no embedding provider configured, in which
-    # case facts are still stored and recalled by scope/keyword, just not by similarity.
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    # True once a vector was sent to Pinecone for this row. False when
+    # ai_agents had no embedding provider: still recalled by scope/keyword.
+    has_vector: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    # clock_timestamp, not now(): dedupe keeps the OLDEST copy, which needs
+    # clock_timestamp, not now(): dedupe keeps the NEWEST copy, which needs
     # distinct timestamps even for rows inserted in one transaction.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FailedVectorJob(Base, OrgScopedMixin):
+    """Dead-letter queue: a Pinecone write that failed all retries. `payload`
+    is the complete, replayable job (op + filters/vectors + namespace), so an
+    admin can retry it verbatim once Pinecone is reachable again."""
+
+    __tablename__ = "failed_vector_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
