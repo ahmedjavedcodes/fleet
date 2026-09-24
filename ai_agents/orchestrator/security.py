@@ -59,6 +59,9 @@ _DOMAIN_KEYWORDS = frozenset({
     "dashboard", "summary", "insight", "insights", "health", "trend", "trends",
     "cost", "expense", "report", "budget",
     "hr", "human resources", "logistics", "shift", "roster", "employee", "staff",
+    # agent-memory.md: stating a preference ("Always use PKR") must reach
+    # the orchestrator so it can propose a HITL-gated update_memory.
+    "remember", "forget", "prefer", "currency", "amount",
 })
 
 

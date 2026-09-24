@@ -31,6 +31,7 @@ class HitlState(TypedDict, total=False):
     tool_name: str
     pending_node: str
     state: dict[str, Any]  # the paused sub-agent's own state, for the frontend to render
+    approval_prompt: str  # human-readable question for the approval UI (update_memory)
 
 
 class OrchestratorState(TypedDict, total=False):
@@ -54,3 +55,7 @@ class OrchestratorState(TypedDict, total=False):
     _pending_mime_type: str | None
     _fact_check_retries: int
     _fact_check_warning: str | None
+    # agent-memory.md: backend session id for short-term memory, and the
+    # memory block fetch_memory assembled for this turn's Mega-Prompt.
+    memory_session_id: str | None
+    memory_context: str | None

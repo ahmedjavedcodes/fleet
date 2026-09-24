@@ -1,3 +1,4 @@
+import os
 import uuid
 from collections.abc import Generator
 from datetime import date as date_type
@@ -5,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import models  # noqa: F401 -- registers all models on Base.metadata
@@ -24,13 +25,19 @@ from app.models.vehicle import Vehicle
 
 # Dedicated test database -- never the dev 'fleet' database a developer might be
 # inspecting in pgAdmin4. Created once via `CREATE DATABASE fleet_test OWNER fleet;`.
-TEST_DATABASE_URL = "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_test"
+# Overridable so the suite can target a pgvector-enabled server (e.g. the
+# pgvector/pgvector docker image) when the local Postgres lacks the extension.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_test")
 
 engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema() -> Generator[None, None, None]:
+    # semantic_memories.embedding is a pgvector column -- the extension must
+    # exist before create_all, same requirement as the alembic migration.
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield

@@ -62,3 +62,18 @@ def test_custom_config_blocked_phrases() -> None:
     config = SecurityConfig(blocked_phrases=frozenset({"secret keyword"}))
     assert scan_user_input("this contains the secret keyword", config=config) is not None
     assert scan_user_input("show me vehicles", config=config) is None
+
+
+
+@pytest.mark.parametrize("text", ["Remember that I prefer amounts in PKR.", "Please forget my old currency setting."])
+def test_memory_preference_statements_pass(text: str) -> None:
+    # agent-memory.md: a stated preference must reach the orchestrator so it
+    # can propose a HITL-gated update_memory.
+    assert scan_user_input(text) is None
+
+
+def test_bare_preference_without_any_keyword_is_still_rejected() -> None:
+    # Known trade-off of the keyword allowlist: allowlisting "always"/"use"
+    # would make the domain filter meaningless, so a bare "Always use PKR."
+    # still needs a memory/fleet word ("Remember...", "...amounts...").
+    assert scan_user_input("Always use PKR.") is not None

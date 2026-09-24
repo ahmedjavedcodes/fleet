@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16
+    # pgvector-enabled build of Postgres 16 -- required by the agent memory
+    # tables (semantic_memories.embedding is a vector(768) column).
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: fleet

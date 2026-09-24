@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class FoundationToolInput(BaseModel):
@@ -112,6 +112,37 @@ class AssignmentToolInput(BaseModel):
     query_target_date: str | None = None
 
 
+MEMORY_TOOL_NAME = "update_memory"
+
+
+class UpdateMemoryInput(BaseModel):
+    """Remember a durable fact for future conversations. ALWAYS pauses for the
+    user's explicit approval before anything is saved. Use scope="personal"
+    for the user's own preferences (e.g. "User prefers amounts in PKR"),
+    "organization" for company-wide policy, and "entity" (with entity_id +
+    entity_type) for a fact about one specific vehicle or driver -- entity_id
+    must be a real ID from a prior tool observation. Do not store things the
+    backend already records (logs, incidents, assignments)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=500)
+    scope: Literal["personal", "organization", "entity"] = "personal"
+    entity_id: str | None = None
+    entity_type: Literal["vehicle", "driver"] | None = None
+
+    @model_validator(mode="after")
+    def _entity_fields_match_scope(self) -> "UpdateMemoryInput":
+        if self.scope == "entity":
+            if not self.entity_id or not self.entity_type:
+                raise ValueError("scope='entity' requires entity_id and entity_type")
+        elif self.entity_id or self.entity_type:
+            raise ValueError("entity_id/entity_type are only allowed with scope='entity'")
+        return self
+
+
+# Sub-agent tools only -- update_memory isn't a sub-agent graph, so it lives
+# outside this map (and outside SUB_AGENT_REGISTRY).
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "foundation": FoundationToolInput,
     "fuel": FuelToolInput,

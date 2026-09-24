@@ -16,18 +16,30 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 
 from orchestrator.registry import SUB_AGENT_REGISTRY
-from orchestrator.tool_schemas import TOOL_SCHEMAS
+from orchestrator.tool_schemas import MEMORY_TOOL_NAME, TOOL_SCHEMAS, UpdateMemoryInput
 
 
 def _undispatched(**kwargs: Any) -> None:
     raise NotImplementedError("Tool calls are intercepted and dispatched by the orchestrator graph, never invoked directly.")
 
 
-def build_llm_tools() -> list[StructuredTool]:
+def build_llm_tools(*, include_memory: bool = False) -> list[StructuredTool]:
+    """include_memory adds update_memory -- only offered when the session
+    actually has agent memory configured, so the LLM never proposes a save
+    that has nowhere to go."""
     tools = []
     for name, spec in SUB_AGENT_REGISTRY.items():
         schema = TOOL_SCHEMAS[name]
         field_guidance = (schema.__doc__ or "").strip()
         description = f"{spec.description}\n\n{field_guidance}" if field_guidance else spec.description
         tools.append(StructuredTool.from_function(func=_undispatched, name=name, description=description, args_schema=schema))
+    if include_memory:
+        tools.append(
+            StructuredTool.from_function(
+                func=_undispatched,
+                name=MEMORY_TOOL_NAME,
+                description=(UpdateMemoryInput.__doc__ or "").strip(),
+                args_schema=UpdateMemoryInput,
+            )
+        )
     return tools

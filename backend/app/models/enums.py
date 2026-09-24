@@ -86,3 +86,19 @@ class IncidentResolutionStatus(str, enum.Enum):
     investigating = "investigating"
     resolved = "resolved"
     closed = "closed"
+
+
+class AgentMessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+
+
+class MemoryScope(str, enum.Enum):
+    personal = "personal"
+    organization = "organization"
+    entity = "entity"
+
+
+class MemoryEntityType(str, enum.Enum):
+    vehicle = "vehicle"
+    driver = "driver"

@@ -190,20 +190,23 @@ execution. Concretely:
 
 ## 7. Agent Memory
 
-- **Short-term:** conversational buffer memory, scoped to a single chat/session.
-  Wire this into the LangGraph state (`FleetCopilotState.messages` in
-  `agents/fleet_copilot.py` already accumulates messages via `add_messages`).
-- **Long-term:** Pinecone vector memory (`memory/vector_store.py`), for matching new
-  issues against historical patterns — e.g. embedding mechanic notes and incident
-  descriptions so a new breakdown report can be matched against similar past ones.
-  `upsert_memory`/`query_memory` take pre-computed embeddings; the embedding step
-  (and any chunking) is not implemented yet and needs an explicit provider choice
-  (don't assume a default without checking `core/llm_config.py` for an existing
-  embeddings client first).
-- Namespace/filter Pinecone records by organization ID in `metadata` on every upsert —
-  the multi-tenancy boundary enforced by `OrgScopedMixin` on the backend must be
-  reproduced manually here, since Pinecone has no equivalent of Postgres row-level
-  scoping built in.
+Grand Orchestrator memory follows `specs/agent-memory.md` and is **stored in the
+backend** (Postgres + pgvector, `backend/app/models/memory.py`), reached only via
+`/api/v1/memory/*` — `ai_agents/` still never touches Postgres directly.
+
+- **Short-term:** `agent_sessions` / `agent_messages` with a running summary kept
+  bounded by `memory/summarizer.py` (background, never on the hot path).
+- **Long-term:** `semantic_memories`, scoped `personal | organization | entity`; the
+  backend enforces who may read/write each scope. LLM-proposed facts are saved only
+  through the HITL-gated `update_memory` tool.
+- **Embeddings:** `memory/embeddings.py`, `nomic-embed-text-v1.5` (768-dim) via
+  `MEMORY_EMBEDDER=none|ollama|nomic`. With `none`, recall falls back to scope +
+  keyword matching — never generate placeholder vectors.
+- **Entry point:** `memory/service.py`'s `AgentMemory`, injected as
+  `OrchestratorDeps.memory` (default `None` = memory off).
+- `memory/vector_store.py` (Pinecone) is the older thin wrapper and is not used by
+  the orchestrator; if you revive it, filter by organization ID in `metadata` on
+  every upsert/query, since Pinecone has no row-level scoping.
 
 ---
 
