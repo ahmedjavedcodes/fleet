@@ -1,0 +1,300 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/*
+ * FleetOps design tokens — the single source of truth (CLAUDE.md §1.2).
+ * Light values are measured from reference 1 (plans/assets/fleetyo-vehicle-detail.png)
+ * unless marked "adjusted" (darkened for WCAG AA) or "derived" (not in the reference).
+ * Components use semantic utilities only; no raw colors outside this file.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* Typography (next/font variables are set on <html> in app/layout.tsx) */
+  --font-sans: var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  /* shadcn semantic colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* FleetOps extensions */
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-soft: var(--primary-soft);
+  --color-panel: var(--panel);
+  --color-table-head: var(--table-head);
+  --color-success: var(--success);
+  --color-success-strong: var(--success-strong);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-strong: var(--warning-strong);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+  --color-warning-icon: var(--warning-icon);
+  --color-info: var(--info);
+  --color-info-strong: var(--info-strong);
+  --color-info-soft: var(--info-soft);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-sev-minor: var(--sev-minor);
+  --color-sev-moderate: var(--sev-moderate);
+  --color-sev-severe: var(--sev-severe);
+  --color-sev-critical: var(--sev-critical);
+  --color-tile-green: var(--tile-green);
+  --color-tile-blue: var(--tile-blue);
+  --color-tile-amber: var(--tile-amber);
+  --color-tile-purple: var(--tile-purple);
+  --color-tile-foreground: var(--tile-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-grid: var(--chart-grid);
+  --color-gauge-start: var(--gauge-start);
+  --color-gauge-end: var(--gauge-end);
+  --color-gauge-track: var(--gauge-track);
+
+  /* Radius: lg = 12px (inner cards, rows, controls), xl = 16px (outer cards, panels) */
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Elevation: the reference is flat (border-only); hover and popover shadows are derived */
+  --shadow-card: var(--elevation-card);
+  --shadow-card-hover: var(--elevation-card-hover);
+  --shadow-popover: var(--elevation-popover);
+}
+
+@theme {
+  /* Type scale (CLAUDE.md §1.2) */
+  --text-display: 2.5rem;
+  --text-display--line-height: 3rem;
+  --text-display--font-weight: 700;
+  --text-h1: 2rem;
+  --text-h1--line-height: 2.5rem;
+  --text-h1--font-weight: 600;
+  --text-h2: 1.25rem;
+  --text-h2--line-height: 1.75rem;
+  --text-h2--font-weight: 600;
+  --text-h3: 1rem;
+  --text-h3--line-height: 1.5rem;
+  --text-h3--font-weight: 600;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.375rem;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.125rem;
+
+  /* Motion (derived) */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root {
+  --radius: 0.75rem;
+
+  /* Brand */
+  --primary: #f5781e; /* measured; non-text only (2.77:1) */
+  --primary-strong: #b05616; /* adjusted: AA text, default button bg */
+  --primary-foreground: #ffffff; /* on primary-strong: 5.01:1 */
+  --primary-soft: #fff2ee; /* measured: active nav bg */
+  --ring: #ea731d; /* adjusted: 3.01:1 focus indicator */
+
+  /* Surfaces */
+  --background: #ffffff;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --panel: #f7f7f7; /* measured: outer grey panel */
+  --muted: #f7f7f7;
+  --table-head: #f5f5f5; /* measured */
+  --secondary: #f7f7f7;
+  --secondary-foreground: #111111;
+  --accent: #f7f7f7;
+  --accent-foreground: #111111;
+
+  /* Text */
+  --foreground: #111111; /* 18.9:1 */
+  --muted-foreground: #5d5d5d; /* 6.58:1 on white, 6.15:1 on panel */
+
+  /* Borders */
+  --border: #ececec;
+  --input: #ececec;
+
+  /* Status */
+  --success: #36941a;
+  --success-strong: #2f8117; /* adjusted: 4.53:1 on success-soft */
+  --success-soft: #f0f8ef;
+  --warning: #f8ae0e;
+  --warning-strong: #a46038; /* adjusted: AA text */
+  --warning-soft: #fffbf3;
+  --warning-border: #e5c597;
+  --warning-icon: #e1844d;
+  --info: #2987db;
+  --info-strong: #1f68a8; /* adjusted: 5.30:1 on info-soft */
+  --info-soft: #eef5fc; /* derived */
+  --destructive: #c8281e; /* derived: 5.56:1 */
+  --destructive-soft: #fdf0ef; /* derived: destructive on it 5.00:1 */
+
+  /* Severity (derived; always paired with a label) */
+  --sev-minor: var(--info);
+  --sev-moderate: var(--warning);
+  --sev-severe: var(--primary);
+  --sev-critical: var(--destructive);
+
+  /* KPI tiles (measured; glyphs on them are decorative) */
+  --tile-green: #21b52e;
+  --tile-blue: #2987db;
+  --tile-amber: #f8ae0e;
+  --tile-purple: #8d1bff;
+  --tile-foreground: #ffffff; /* glyphs on tiles, both themes */
+
+  /* Charts (reference hues adjusted to >= 3:1 on card) */
+  --chart-1: #ea731d;
+  --chart-2: #2987db;
+  --chart-3: #1fac2c;
+  --chart-4: #c4890b;
+  --chart-5: #8d1bff;
+  --chart-grid: #ececec;
+
+  /* Gauge (measured) */
+  --gauge-start: #ebf3a8;
+  --gauge-end: #80d765;
+  --gauge-track: #efefef;
+
+  /* Sidebar */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111111;
+  --sidebar-primary: #b05616;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fff2ee;
+  --sidebar-accent-foreground: #b05616;
+  --sidebar-border: #ececec;
+  --sidebar-ring: #ea731d;
+
+  /* Elevation */
+  --elevation-card: none;
+  --elevation-card-hover: 0 1px 2px rgb(17 17 17 / 0.06);
+  --elevation-popover: 0 8px 24px rgb(17 17 17 / 0.1);
+
+  /* Motion durations (used as duration-150 / duration-200 utilities) */
+  --duration-hover: 150ms;
+  --duration-overlay: 200ms;
+}
+
+/* Dark set — derived (the reference is light-only). Contrast re-verified; see CLAUDE.md §1.2. */
+.dark {
+  --primary: #f5781e; /* 6.46:1 on card */
+  --primary-strong: #fb9a4f; /* 8.38:1 on card */
+  --primary-foreground: #111111; /* on primary-strong: 8.85:1 */
+  --primary-soft: #2a1a10;
+  --ring: #f5781e;
+
+  --background: #0f0f10;
+  --card: #17171a;
+  --card-foreground: #f2f2f2;
+  --popover: #17171a;
+  --popover-foreground: #f2f2f2;
+  --panel: #1c1c20;
+  --muted: #1c1c20;
+  --table-head: #1c1c20;
+  --secondary: #1c1c20;
+  --secondary-foreground: #f2f2f2;
+  --accent: #1c1c20;
+  --accent-foreground: #f2f2f2;
+
+  --foreground: #f2f2f2;
+  --muted-foreground: #a1a1aa;
+
+  --border: #2f2f35;
+  --input: #2f2f35;
+
+  --success: #4ade80;
+  --success-strong: #4ade80;
+  --success-soft: #132016;
+  --warning: #fbbf24;
+  --warning-strong: #fbbf24;
+  --warning-soft: #221a0a;
+  --warning-border: #5c4410;
+  --warning-icon: #fb9a4f;
+  --info: #60a5fa;
+  --info-strong: #60a5fa;
+  --info-soft: #131c2a;
+  --destructive: #f87171;
+  --destructive-soft: #2a1414;
+
+  --chart-1: #f5781e;
+  --chart-2: #60a5fa;
+  --chart-3: #4ade80;
+  --chart-4: #fbbf24;
+  --chart-5: #c084fc;
+  --chart-grid: #2f2f35;
+
+  --gauge-track: #2f2f35;
+
+  --sidebar: #0f0f10;
+  --sidebar-foreground: #f2f2f2;
+  --sidebar-primary: #fb9a4f;
+  --sidebar-primary-foreground: #111111;
+  --sidebar-accent: #2a1a10;
+  --sidebar-accent-foreground: #fb9a4f;
+  --sidebar-border: #2f2f35;
+  --sidebar-ring: #f5781e;
+
+  --elevation-card-hover: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elevation-popover: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-body text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Reduced motion: no pulse/glow, no transitions (CLAUDE.md §1.3) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
