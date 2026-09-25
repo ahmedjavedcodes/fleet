@@ -1,3 +1,4 @@
+import os
 import uuid
 from collections.abc import Generator
 from datetime import date as date_type
@@ -24,7 +25,8 @@ from app.models.vehicle import Vehicle
 
 # Dedicated test database -- never the dev 'fleet' database a developer might be
 # inspecting in pgAdmin4. Created once via `CREATE DATABASE fleet_test OWNER fleet;`.
-TEST_DATABASE_URL = "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_test"
+# Overridable so the suite can target another server (e.g. a throwaway container).
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_test")
 
 engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 
@@ -35,6 +37,30 @@ def _schema() -> Generator[None, None, None]:
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_vector_store() -> Generator[None, None, None]:
+    """Pinecone_Migration_Hardened.md §6: no test reaches Pinecone unless it
+    opts in (tests/test_pinecone_live.py). Even with PINECONE_API_KEY in
+    backend/.env, the default for every test is "no vector store"."""
+    from app.services import document_service
+    from app.services.rag_inference import set_rag_inference
+    from app.services.vector_jobs import set_vector_runner
+    from app.services.vector_store import set_document_store, set_vector_store
+
+    def _reset() -> None:
+        set_vector_store(None)
+        set_document_store(None)
+        set_rag_inference(None)
+        set_vector_runner(None)
+        document_service.set_document_runner(None)
+        document_service.set_ingest_session_factory(None)
+        document_service.search_cache = document_service.DocumentSearchCache()
+
+    _reset()
+    yield
+    _reset()
 
 
 @pytest.fixture()

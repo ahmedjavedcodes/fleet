@@ -86,3 +86,33 @@ class IncidentResolutionStatus(str, enum.Enum):
     investigating = "investigating"
     resolved = "resolved"
     closed = "closed"
+
+
+class AgentMessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+
+
+class MemoryScope(str, enum.Enum):
+    personal = "personal"
+    organization = "organization"
+    entity = "entity"
+
+
+class MemoryEntityType(str, enum.Enum):
+    vehicle = "vehicle"
+    driver = "driver"
+
+
+class DocumentType(str, enum.Enum):
+    manual = "manual"
+    policy = "policy"
+    supplier_invoice = "supplier_invoice"
+    incident_report = "incident_report"
+    legal = "legal"
+
+
+class DocumentStatus(str, enum.Enum):
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
