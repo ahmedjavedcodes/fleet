@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import type { UserRole } from "@/lib/schemas/enums"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { SidebarNav } from "./sidebar-nav"
+import { SidebarNav } from "@/components/layout/sidebar-nav"
 
 const mockUseCurrentUser = vi.fn()
 vi.mock("@/lib/auth/use-current-user", () => ({

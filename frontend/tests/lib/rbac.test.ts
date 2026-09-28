@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { UserRole } from "@/lib/schemas/enums"
-import { can, routeAccess, routeAllowedRoles, visibleDocumentTypes, type RbacAction } from "./rbac"
+import { can, routeAccess, routeAllowedRoles, visibleDocumentTypes, type RbacAction } from "@/lib/rbac"
 
 const ROLES: UserRole[] = ["admin", "fleet_manager", "mechanic", "driver"]
 

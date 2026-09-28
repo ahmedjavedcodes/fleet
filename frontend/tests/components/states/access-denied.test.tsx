@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
-import { AccessDenied } from "./access-denied"
+import { AccessDenied } from "@/components/states/access-denied"
 
 describe("AccessDenied", () => {
   it("names the area and links back to the dashboard", () => {

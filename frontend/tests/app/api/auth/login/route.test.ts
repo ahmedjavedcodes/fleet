@@ -47,7 +47,7 @@ describe("POST /api/auth/login", () => {
       })
     )
 
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/auth/login/route")
     const response = await POST(loginRequest({ org_slug: "acme", email: "a@acme.dev", password: "secret123" }))
     const body: unknown = await response.json()
 
@@ -62,7 +62,7 @@ describe("POST /api/auth/login", () => {
   it("passes a backend 401 through unchanged and sets no cookie", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ detail: "Invalid credentials" }), { status: 401 }))
 
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/auth/login/route")
     const response = await POST(loginRequest({ org_slug: "acme", email: "a@acme.dev", password: "wrong" }))
 
     expect(response.status).toBe(401)
@@ -71,7 +71,7 @@ describe("POST /api/auth/login", () => {
   })
 
   it("returns a local 422 without calling the backend when the body fails validation", async () => {
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/auth/login/route")
     const response = await POST(loginRequest({ org_slug: "Not Valid!", email: "not-an-email", password: "" }))
 
     expect(response.status).toBe(422)
@@ -82,7 +82,7 @@ describe("POST /api/auth/login", () => {
 
   it("returns 503 when the backend is unreachable", async () => {
     fetchMock.mockRejectedValue(new TypeError("fetch failed"))
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/auth/login/route")
     const response = await POST(loginRequest({ org_slug: "acme", email: "a@acme.dev", password: "secret123" }))
     expect(response.status).toBe(503)
   })

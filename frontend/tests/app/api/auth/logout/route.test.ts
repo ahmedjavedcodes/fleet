@@ -28,7 +28,7 @@ describe("POST /api/auth/logout", () => {
   })
 
   it("clears the session cookie and returns 204 (the backend has no logout endpoint to call)", async () => {
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/auth/logout/route")
     const response = await POST()
     expect(response.status).toBe(204)
     expect(cookieStore.has("fleet_session")).toBe(false)

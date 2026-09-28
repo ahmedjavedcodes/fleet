@@ -56,7 +56,7 @@ npx shadcn@latest add card badge dialog dropdown-menu sheet tabs table tooltip h
 - **Forms:** use the `field` components, which replaced shadcn's older `form`.
 - **Toasts:** `sonner` was customized to drop `next-themes` (there is no theme toggle).
 - **After adding a component:** strip any arbitrary values (`ring-[3px]` → `ring-3`, etc.).
-  `src/app/globals.test.ts` fails the build on raw hex or arbitrary px/rem values in any
+  `tests/app/globals.test.ts` fails the build on raw hex or arbitrary px/rem values in any
   `.tsx`.
 
 | Script | Command |
@@ -316,6 +316,8 @@ src/
 │   │                                #   also routeAllowedRoles() for AccessDenied's role-aware hint
 │   └── schemas/                    # zod schemas mirroring backend Pydantic models; enums.ts, common.ts + one file/domain
 └── middleware.ts                   # redirect unauthenticated users to /login
+
+tests/                               # mirrors src/ path-for-path — see §7's Tests bullet
 ```
 
 - `@/*` → `src/*`. Always import via `@/...`.
@@ -679,6 +681,11 @@ region handles all five states:
 - **No dead UI:** no placeholder buttons that do nothing, no lorem ipsum in committed
   code, no commented-out JSX.
 - **Tests** (Vitest + Testing Library):
+  - Live under `tests/`, mirroring `src/`'s structure path-for-path (e.g.
+    `src/lib/rbac.ts` → `tests/lib/rbac.test.ts`; `src/app/(auth)/login/page.tsx` →
+    `tests/app/(auth)/login/page.test.tsx`), not co-located with the source file. Import
+    the module under test via `@/...`, never a relative `./...` (that only resolved to a
+    sibling when the test lived next to it).
   - every `lib/api` function (schema parsing, error mapping incl. 403/429);
   - `rbac.ts` (the full matrix);
   - query-key factories;

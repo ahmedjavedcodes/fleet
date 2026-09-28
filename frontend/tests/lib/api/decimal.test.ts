@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatInt, formatMoney, formatNumber, parseDecimal } from "./decimal"
+import { formatInt, formatMoney, formatNumber, parseDecimal } from "@/lib/api/decimal"
 
 describe("parseDecimal", () => {
   it("parses a backend decimal string into a number", () => {

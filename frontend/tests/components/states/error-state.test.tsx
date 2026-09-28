@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import type { ApiError } from "@/lib/api/errors"
-import { ErrorState } from "./error-state"
+import { ErrorState } from "@/components/states/error-state"
 
 describe("ErrorState", () => {
   it("renders per-kind copy from the §5.3 mapper", () => {

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { login } from "@/lib/api/auth"
-import LoginPage from "./page"
+import LoginPage from "@/app/(auth)/login/page"
 
 let mockSearch = ""
 const replace = vi.fn()

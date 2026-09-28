@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
-import { QueryRegion } from "./query-boundary"
+import { QueryRegion } from "@/components/states/query-boundary"
 
 function fakeQuery<T>(overrides: Partial<{ data: T; isPending: boolean; error: unknown; refetch: () => unknown }>) {
   return { data: undefined as T | undefined, isPending: false, error: null, refetch: vi.fn(), ...overrides }

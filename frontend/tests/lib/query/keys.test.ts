@@ -13,7 +13,7 @@ import {
   supplierKeys,
   tripKeys,
   vehicleKeys,
-} from "./keys"
+} from "@/lib/query/keys"
 
 describe("key hierarchy (every detail/sub-key starts with its domain's .all)", () => {
   it("vehicleKeys", () => {

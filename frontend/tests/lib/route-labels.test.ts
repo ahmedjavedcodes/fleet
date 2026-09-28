@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { routeLabel } from "./route-labels"
+import { routeLabel } from "@/lib/route-labels"
 
 describe("routeLabel", () => {
   it("matches CLAUDE.md §3's sidebar labels", () => {

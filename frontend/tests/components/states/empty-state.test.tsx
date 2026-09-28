@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import { Fuel } from "lucide-react"
 import { describe, expect, it } from "vitest"
-import { EmptyState } from "./empty-state"
+import { EmptyState } from "@/components/states/empty-state"
 
 describe("EmptyState", () => {
   it("renders the title and description", () => {

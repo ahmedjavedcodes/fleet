@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { longestPrefixMatch } from "./longest-prefix-match"
+import { longestPrefixMatch } from "@/lib/longest-prefix-match"
 
 const entries = [
   { prefix: "/foundation", value: "loose" },

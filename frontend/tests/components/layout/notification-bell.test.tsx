@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
-import { NotificationBell } from "./notification-bell"
+import { NotificationBell } from "@/components/layout/notification-bell"
 
 describe("NotificationBell", () => {
   it("renders no badge or count — the notifications API doesn't exist yet (CLAUDE.md §3, §5.5)", () => {

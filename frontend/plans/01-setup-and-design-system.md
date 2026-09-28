@@ -140,5 +140,5 @@ Edit the copied source in `src/components/ui/` directly; never wrap it with over
       badges, a card and a table in both themes. Compare it against the PNG side by side, then
       **delete the page** (no dead UI in committed code).
 - [x] Contrast ratios are recorded in CLAUDE.md §1.2; no pair fails AA.
-- [x] No raw hex or arbitrary values outside `globals.css` (enforced by `src/app/globals.test.ts`):
+- [x] No raw hex or arbitrary values outside `globals.css` (enforced by `tests/app/globals.test.ts`):
       `grep -rE "#[0-9a-fA-F]{3,6}|\[[0-9]+px\]" src --include=*.tsx` returns nothing.

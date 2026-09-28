@@ -2,7 +2,11 @@ import { readdirSync, readFileSync, statSync } from "fs"
 import path from "path"
 import { describe, expect, it } from "vitest"
 
-const SRC = path.resolve(__dirname, "..")
+// Computed from cwd (vitest runs from frontend/), not from this file's own
+// location — it moved from src/app/ to tests/app/ when tests were reorganized
+// into tests/, and __dirname-relative math would have silently pointed at
+// tests/ instead of src/.
+const SRC = path.resolve(process.cwd(), "src")
 const css = readFileSync(path.join(SRC, "app/globals.css"), "utf8")
 
 function block(selector: string): string {

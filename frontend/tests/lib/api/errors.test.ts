@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { genericErrorMessage, isApiError, networkError, schemaError, toApiError } from "./errors"
+import { genericErrorMessage, isApiError, networkError, schemaError, toApiError } from "@/lib/api/errors"
 
 describe("toApiError", () => {
   it("maps 401 with no message (never leaks backend detail differences)", () => {

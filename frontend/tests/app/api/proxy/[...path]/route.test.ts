@@ -32,7 +32,7 @@ describe("proxy route", () => {
   })
 
   it("returns its own 401 with no upstream call when there's no session cookie", async () => {
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles")
     const response = await GET(request, ctx(["vehicles"]))
     expect(response.status).toBe(401)
@@ -43,7 +43,7 @@ describe("proxy route", () => {
     cookieStore.set("fleet_session", "jwt-abc")
     fetchMock.mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }))
 
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles?status=active")
     await GET(request, ctx(["vehicles"]))
 
@@ -56,7 +56,7 @@ describe("proxy route", () => {
     cookieStore.set("fleet_session", "jwt-abc")
     fetchMock.mockResolvedValue(new Response(null, { status: 201 }))
 
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -74,7 +74,7 @@ describe("proxy route", () => {
   it("attaches no body or duplex for a GET", async () => {
     cookieStore.set("fleet_session", "jwt-abc")
     fetchMock.mockResolvedValue(new Response("[]", { status: 200 }))
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles")
     await GET(request, ctx(["vehicles"]))
     const [, init] = fetchMock.mock.calls[0] as [string, { body?: unknown; duplex?: string }]
@@ -84,7 +84,7 @@ describe("proxy route", () => {
 
   it("rejects a '..' path segment without calling upstream (can't become an open proxy)", async () => {
     cookieStore.set("fleet_session", "jwt-abc")
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles/..")
     const response = await GET(request, ctx(["vehicles", ".."]))
     expect(response.status).toBe(400)
@@ -93,7 +93,7 @@ describe("proxy route", () => {
 
   it("rejects a state-changing request whose Origin doesn't match this app", async () => {
     cookieStore.set("fleet_session", "jwt-abc")
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles", {
       method: "POST",
       headers: { origin: "https://evil.example.com" },
@@ -107,7 +107,7 @@ describe("proxy route", () => {
   it("allows a state-changing request whose Origin matches this app", async () => {
     cookieStore.set("fleet_session", "jwt-abc")
     fetchMock.mockResolvedValue(new Response(null, { status: 201 }))
-    const { POST } = await import("./route")
+    const { POST } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles", {
       method: "POST",
       headers: { origin: "http://localhost:3000" },
@@ -129,7 +129,7 @@ describe("proxy route", () => {
         },
       })
     )
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles")
     const response = await GET(request, ctx(["vehicles"]))
     expect(response.headers.get("set-cookie")).toBeNull()
@@ -140,7 +140,7 @@ describe("proxy route", () => {
   it("returns 503 when the backend is unreachable", async () => {
     cookieStore.set("fleet_session", "jwt-abc")
     fetchMock.mockRejectedValue(new TypeError("fetch failed"))
-    const { GET } = await import("./route")
+    const { GET } = await import("@/app/api/proxy/[...path]/route")
     const request = new NextRequest("http://localhost:3000/api/proxy/vehicles")
     const response = await GET(request, ctx(["vehicles"]))
     expect(response.status).toBe(503)

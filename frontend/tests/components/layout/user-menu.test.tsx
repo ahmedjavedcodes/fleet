@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { logout } from "@/lib/api/auth"
-import { UserMenu } from "./user-menu"
+import { UserMenu } from "@/components/layout/user-menu"
 
 const mockUseCurrentUser = vi.fn()
 vi.mock("@/lib/auth/use-current-user", () => ({
