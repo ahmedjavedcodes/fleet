@@ -19,7 +19,7 @@ are in [00-design-analysis.md](00-design-analysis.md). Read that first.
 | --- | --- | --- | --- | --- |
 | 00 | [Design analysis](00-design-analysis.md) | Reference | — | Done |
 | 01 | [Setup & design system](01-setup-and-design-system.md) | Detailed | 00 | ✅ Done (2026-09-25) |
-| 02 | [Auth (BFF) & API layer](02-auth-bff-and-api-layer.md) | Detailed | 01 | ☐ Not started |
+| 02 | [Auth (BFF) & API layer](02-auth-bff-and-api-layer.md) | Detailed | 01 | ✅ Done (2026-09-28) |
 | 03 | [App shell & page states](03-app-shell-and-states.md) | Detailed | 01, 02 | ☐ Not started |
 | 04 | [Dashboard](04-dashboard.md) | Detailed | 03 | ☐ Not started |
 | 05 | [Foundation & vehicle detail](05-foundation-and-vehicle-detail.md) | Detailed | 03 | ☐ Not started |

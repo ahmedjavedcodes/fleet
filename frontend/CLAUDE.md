@@ -265,14 +265,17 @@ compose those dashboards from endpoints the role can actually read:
 ```
 src/
 ├── app/
-│   ├── (auth)/login/page.tsx
+│   ├── (auth)/login/page.tsx, loading.tsx, error.tsx
 │   ├── (app)/                      # authenticated shell: sidebar + topbar (§3)
 │   │   ├── layout.tsx
 │   │   ├── dashboard/  chat/  fuel/  maintenance/
 │   │   ├── foundation/{vehicles,vehicles/[id],drivers,drivers/[id],suppliers}/
 │   │   ├── accountability/  assignment/  insights/  documents/  notifications/
 │   │   │     each: page.tsx, loading.tsx, error.tsx (+ _components/ for page-local UI)
-│   ├── api/                        # BFF route handlers (auth cookie + proxy, §5.2)
+│   ├── api/
+│   │   ├── auth/login/route.ts     # BFF: sets the httpOnly session cookie; never returns the token
+│   │   ├── auth/logout/route.ts    # BFF: clears the cookie (backend has no logout endpoint)
+│   │   └── proxy/[...path]/route.ts  # attaches Bearer server-side; streams SSE/multipart through
 │   ├── layout.tsx                  # <html>, fonts (Urbanist, JetBrains Mono), metadata, <Providers>
 │   ├── providers.tsx               # "use client": QueryClientProvider, devtools (dev only), Toaster
 │   └── globals.css                 # design tokens (§1.2) — the only CSS file
@@ -284,9 +287,22 @@ src/
 ├── lib/
 │   ├── brand.ts                    # APP_NAME = "FleetOps" — the only place the name lives
 │   ├── utils.ts                    # cn() (shadcn)
-│   ├── api/                        # typed client + one module per domain (vehicles.ts, fuel.ts, documents.ts, …)
-│   ├── query/                      # QueryClient factory, query-key factories
-│   ├── auth/                       # session, role guards, useCurrentUser
+│   ├── env.ts                      # zod-validated env, lazy (see note below)
+│   ├── api/
+│   │   ├── client.ts               # browser fetch → /api/proxy, zod-validates every response
+│   │   ├── server-client.ts        # server-only twin: Server Component prefetch, talks to the backend directly
+│   │   ├── errors.ts               # ApiError union + toApiError() — every page's ErrorState switches on `.kind`
+│   │   ├── decimal.ts              # parseDecimal/formatMoney/formatNumber/formatInt (Decimal fields are strings)
+│   │   └── auth.ts, vehicles.ts, drivers.ts, fuel.ts, …  # one module per domain: plain functions + co-located hooks
+│   ├── query/
+│   │   ├── client.ts               # QueryClient factory (retry policy, 401 → redirect)
+│   │   └── keys.ts                 # query-key factories, one per domain
+│   ├── auth/
+│   │   ├── session.ts              # server-only: cookie get/set/delete, getServerMe()
+│   │   ├── token.ts                # server-only: getServerToken() (split out to avoid a session.ts ⇄ server-client.ts cycle)
+│   │   ├── safe-next-path.ts       # shared by middleware.ts and the login page — open-redirect guard on ?next=
+│   │   ├── use-current-user.ts     # "use client": the one source of the signed-in user/role/org
+│   │   └── role-labels.ts          # UserRole → display label
 │   ├── rbac.ts                     # route/action → roles matrix (mirrors §2.1)
 │   └── schemas/                    # zod schemas mirroring backend Pydantic models
 └── middleware.ts                   # redirect unauthenticated users to /login
@@ -295,6 +311,18 @@ src/
 - `@/*` → `src/*`. Always import via `@/...`.
 - Page-specific components live in `_components/` next to the page. Promote one to
   `src/components/` only once a second page needs it.
+- **Hooks are co-located in the domain module** (`lib/api/vehicles.ts` exports both
+  `listVehicles()`/`getVehicle()`/… and `useVehicles()`/`useVehicle()`/…), not split into a
+  separate `lib/hooks/` tree — the whole domain lives in one file (plans/02 §7).
+- **`lib/env.ts` validates lazily**, on first property access, not at module-import time.
+  `next build` imports route handler modules to collect their metadata without any real env
+  vars set; an eager `parse()` at import time would crash the build itself. Access still
+  fails on the very first real request middleware ever sees.
+- **`server-only`-guarded modules under test:** the `server-only` package's guard is a
+  build-time export-condition trick Vitest doesn't implement, so it always throws under
+  Vitest regardless of environment. `vitest.setup.mts` mocks it globally as a no-op — this
+  is standard for testing Next.js server code and isn't something a unit test should
+  re-verify (that guarantee is Next's bundler's job).
 
 ---
 

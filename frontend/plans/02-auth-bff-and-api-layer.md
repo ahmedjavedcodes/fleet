@@ -247,8 +247,18 @@ Nav/route access (`nav:*`) is derived from this table, as in the nav mapping in
 
 ## 12. Exit criteria
 
-- [ ] Log in as each of the four seeded users. `/auth/me` renders name and role (plan 03's
-      user menu, or a temporary debug line that is removed before commit).
-- [ ] The cookie is httpOnly in DevTools, and `document.cookie` does not contain it.
-- [ ] Deleting the cookie mid-session → the next query redirects to `/login?next=…`.
-- [ ] build, lint and tests pass.
+- [x] Log in as each of the four seeded users, verified live against the seeded dev backend
+      (`admin`, `fleet_manager`, `driver`, `mechanic`) — all return 200 with `{ok:true}`.
+      `/auth/me` returns the correct `user`/`organization`/`driver_profile` shape for each
+      (the seeded driver correctly shows `driver_profile: null`, per the README caveat).
+- [x] The cookie is httpOnly (confirmed via the raw `Set-Cookie` header: `HttpOnly; SameSite=lax`);
+      the response body never contains the token.
+- [x] Deleting the cookie mid-session → the next query redirects: verified both via
+      `/api/auth/logout` (clears the cookie; the next `/auth/me` call → 401) and via
+      `middleware.ts` (an unauthenticated page request → 307 to `/login?next=…`, and the
+      reverse: an authenticated request to `/login` → 307 to `/dashboard` or the sanitized
+      `next`). An absolute-URL or `//host` `next=` is rejected (open-redirect check).
+- [x] A 403 from an A/FM-only endpoint (`/dashboard/summary` as `driver`) passes through as
+      `{kind: "forbidden", message: "Not enough permissions"}`, matching the backend exactly.
+- [x] build, lint and tests (299, including the full rbac matrix and live-captured schema
+      fixtures) all pass.
