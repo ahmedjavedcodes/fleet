@@ -281,13 +281,22 @@ src/
 │   └── globals.css                 # design tokens (§1.2) — the only CSS file
 ├── components/
 │   ├── ui/                         # shadcn components (customized to tokens)
-│   ├── layout/                     # Sidebar, Topbar, NotificationBell, UserMenu
-│   ├── states/                     # PageSkeleton, EmptyState, ErrorState, AccessDenied
+│   ├── primitives/                 # design-system building blocks (plans/00 §5): IconTile, SectionPanel,
+│   │   │                           #   InnerCard, KpiTile, StatusPill, Breadcrumbs, InitialsAvatar, DataTable
+│   ├── layout/                     # Sidebar, SidebarNav, MobileSidebar, Topbar, TopbarSlotsProvider,
+│   │   │                           #   PageHeader, NotificationBell, UserMenu, RouteGuard, nav-items.ts
+│   ├── states/                     # PageSkeleton (+ Skeleton* shape helpers), EmptyState, ErrorState,
+│   │   │                           #   AccessDenied, NotAvailableYet, QueryRegion, RouteErrorBoundary,
+│   │   │                           #   RoutePlaceholder (see note below)
 │   └── ai/                         # ChatThread, AgentActivity, ApprovalCard, CitationPill
 ├── lib/
 │   ├── brand.ts                    # APP_NAME = "FleetOps" — the only place the name lives
 │   ├── utils.ts                    # cn() (shadcn)
 │   ├── env.ts                      # zod-validated env, lazy (see note below)
+│   ├── route-labels.ts             # pathname → sidebar label, for the topbar's fallback breadcrumb and
+│   │                                #   AccessDenied's "area" text
+│   ├── longest-prefix-match.ts     # shared by rbac.ts and route-labels.ts
+│   ├── use-media-query.ts          # SSR-safe window.matchMedia hook (sidebar collapse — see note below)
 │   ├── api/
 │   │   ├── client.ts               # browser fetch → /api/proxy, zod-validates every response
 │   │   ├── server-client.ts        # server-only twin: Server Component prefetch, talks to the backend directly
@@ -303,8 +312,9 @@ src/
 │   │   ├── safe-next-path.ts       # shared by middleware.ts and the login page — open-redirect guard on ?next=
 │   │   ├── use-current-user.ts     # "use client": the one source of the signed-in user/role/org
 │   │   └── role-labels.ts          # UserRole → display label
-│   ├── rbac.ts                     # route/action → roles matrix (mirrors §2.1)
-│   └── schemas/                    # zod schemas mirroring backend Pydantic models
+│   ├── rbac.ts                     # route/action → roles matrix (mirrors §2.1), verified against require_role(...);
+│   │                                #   also routeAllowedRoles() for AccessDenied's role-aware hint
+│   └── schemas/                    # zod schemas mirroring backend Pydantic models; enums.ts, common.ts + one file/domain
 └── middleware.ts                   # redirect unauthenticated users to /login
 ```
 
@@ -323,6 +333,30 @@ src/
   Vitest regardless of environment. `vitest.setup.mts` mocks it globally as a no-op — this
   is standard for testing Next.js server code and isn't something a unit test should
   re-verify (that guarantee is Next's bundler's job).
+- **PageHeader's "portal" is a Context-based slot registry, not `ReactDOM.createPortal`**
+  (`components/layout/topbar-slots.tsx`). A literal DOM portal into a
+  `document.getElementById` target has real SSR-timing and duplicate-content hazards (the
+  target doesn't exist during SSR, and the topbar has no clean way to know whether *any*
+  page has portaled content yet, so it can render its pathname-derived fallback only when
+  none has). `TopbarSlotsProvider` wraps both `<Topbar/>` and `{children}` in
+  `(app)/layout.tsx`; `PageHeader` calls its setter in an effect and renders nothing
+  itself. Same outcome as the plan's "portal" — a page's header lives next to its own data
+  hooks, no prop-drilling through the layout — without those hazards.
+- **Sidebar collapse is one JS boolean, not "CSS breakpoint for width + JS state for
+  labels."** `Sidebar` derives `collapsed` from `useMediaQuery("(min-width: 1280px)")`
+  combined with the manual toggle, and passes that single boolean to both the container's
+  width class and `SidebarNav`/`UserMenu`'s children. Driving the width by a `xl:` Tailwind
+  class while gating labels on a JS-only "manually collapsed" flag looked equivalent but
+  wasn't: between `lg` and `xl` the container CSS-shrank to icon width while the JS state
+  still said "expanded," so full label text tried to render inside an 80px column and
+  overflowed. Caught by an actual browser screenshot at 1024px, not by the test suite.
+- **`RoutePlaceholder` vs `NotAvailableYet`:** every route in §2.1 is scaffolded and kept
+  in the nav now (all of CLAUDE.md §3's sidebar, filtered by role), rather than hidden
+  until a later phase builds it. A route whose *backend* already exists but has no UI yet
+  (dashboard, foundation/*, fuel, maintenance, accountability, assignment, insights,
+  documents) renders `RoutePlaceholder` ("… is being built" — an honest state, not the
+  §5.5 copy). Only `/chat` and `/notifications`, whose backend genuinely doesn't exist,
+  render `NotAvailableYet`.
 
 ---
 

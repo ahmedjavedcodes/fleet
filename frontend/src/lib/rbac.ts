@@ -1,3 +1,4 @@
+import { longestPrefixMatch } from "@/lib/longest-prefix-match"
 import type { DocumentType, UserRole } from "@/lib/schemas/enums"
 
 // The route/action → roles matrix (CLAUDE.md §5.3, plans/02 §9), taken from
@@ -143,10 +144,14 @@ const ROUTE_ROLES: readonly { prefix: string; roles: readonly UserRole[] }[] = [
  * or intentionally ungated) are allowed — this function only *restricts*
  * routes that appear in the matrix, it never expands access beyond it. */
 export function routeAccess(role: UserRole, pathname: string): boolean {
-  const match = ROUTE_ROLES.filter((r) => pathname === r.prefix || pathname.startsWith(`${r.prefix}/`)).sort(
-    (a, b) => b.prefix.length - a.prefix.length
-  )[0]
+  const match = longestPrefixMatch(ROUTE_ROLES, pathname)
   return match ? match.roles.includes(role) : true
+}
+
+/** The roles allowed to open `pathname`, for AccessDenied's role-aware hint
+ * ("Available to Admins and Fleet Managers"). Null for an unlisted path. */
+export function routeAllowedRoles(pathname: string): readonly UserRole[] | null {
+  return longestPrefixMatch(ROUTE_ROLES, pathname)?.roles ?? null
 }
 
 // Document visibility matrix (CLAUDE.md §2.1). A UX mirror for filters only

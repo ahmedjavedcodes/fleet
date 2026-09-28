@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { UserRole } from "@/lib/schemas/enums"
-import { can, routeAccess, visibleDocumentTypes, type RbacAction } from "./rbac"
+import { can, routeAccess, routeAllowedRoles, visibleDocumentTypes, type RbacAction } from "./rbac"
 
 const ROLES: UserRole[] = ["admin", "fleet_manager", "mechanic", "driver"]
 
@@ -99,6 +99,28 @@ describe("routeAccess", () => {
 
   it("allows any role on an unlisted path (not this function's concern)", () => {
     expect(routeAccess("driver", "/some-future-page")).toBe(true)
+  })
+})
+
+describe("routeAllowedRoles", () => {
+  it("returns the matched roles for AccessDenied's role-aware hint", () => {
+    expect(routeAllowedRoles("/maintenance")).toEqual(["admin", "fleet_manager", "mechanic"])
+    expect(routeAllowedRoles("/maintenance/abc-123")).toEqual(["admin", "fleet_manager", "mechanic"])
+    expect(routeAllowedRoles("/insights")).toEqual(["admin", "fleet_manager"])
+  })
+
+  it("returns null for an unlisted path", () => {
+    expect(routeAllowedRoles("/some-future-page")).toBeNull()
+  })
+
+  it("agrees with routeAccess for every route/role combination", () => {
+    const paths = ["/dashboard", "/chat", "/foundation/vehicles", "/assignment", "/fuel", "/maintenance", "/accountability", "/documents", "/insights", "/notifications"]
+    for (const path of paths) {
+      const allowed = routeAllowedRoles(path)
+      for (const role of ROLES) {
+        expect(routeAccess(role, path)).toBe(allowed ? allowed.includes(role) : true)
+      }
+    }
   })
 })
 

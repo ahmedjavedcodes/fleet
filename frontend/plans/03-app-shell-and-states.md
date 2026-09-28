@@ -131,10 +131,26 @@ dead UI, but **keep it out of the nav** until the page has real content. The exc
 
 ## 9. Exit criteria
 
-- [ ] Log in as each role: the nav matches the matrix; opening a hidden route by URL shows
-      `AccessDenied`.
-- [ ] 1440px: matches the reference's shell (spacing, active state, user card). 1024px:
-      icon-only sidebar. 375px: Sheet drawer, no horizontal scroll.
-- [ ] Keyboard: Tab order is skip-link → nav → topbar → content; focus rings are visible;
-      Esc closes the Sheet and menus.
-- [ ] build, lint and tests pass.
+- [x] Log in as each role: the nav matches the matrix; opening a hidden route by URL shows
+      `AccessDenied`. Verified live (headless Chrome via CDP, real login against the seeded
+      dev backend, not a mock): admin sees every group; driver correctly loses Maintenance
+      and the entire Insights group (its only item), and visiting `/maintenance` directly
+      renders `AccessDenied` with "Available to Admin, Fleet Manager and Mechanic."
+- [x] 1440px: matches the reference's shell (grouped nav, active state in
+      `--primary-soft`/`--primary-strong`, user card, breadcrumbs, bell). 1024px: icon-only
+      sidebar — **this caught a real bug**: driving the sidebar's width from a `xl:`
+      Tailwind class while gating child labels on JS-only manual-toggle state meant the
+      container shrank to icon width via CSS while the labels still tried to render at full
+      width, overflowing. Fixed by deriving one `collapsed` boolean from
+      `useMediaQuery("(min-width: 1280px)")` (plus the manual override) and using it
+      everywhere — see CLAUDE.md §2.3. 375px: Sheet drawer opens and closes correctly
+      (verified with real dispatched mouse/keyboard events via CDP, not just component
+      tests), no horizontal scroll.
+- [x] Keyboard: Tab reaches the skip link first, then into the sidebar (toggle, then nav
+      links) with a visible focus ring, confirmed via a real screenshot after 3 dispatched
+      Tab keypresses. The user menu opens/closes correctly (verified with a real dispatched
+      mouse click — a plain `element.click()` doesn't open it, since Radix's trigger reacts
+      to `pointerdown`, not `click`).
+- [x] build, lint and tests (414, including the full nav-filtering matrix, ErrorState's
+      per-kind copy, AccessDenied's role-list formatting, and QueryRegion's five states)
+      all pass.
