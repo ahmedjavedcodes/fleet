@@ -28,7 +28,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
           const isMiddle = !isFirst && !isLast
 
           return (
-            <Fragment key={item.href ?? item.label}>
+            <Fragment key={`${index}-${item.label}`}>
               {!isFirst && <BreadcrumbSeparator className={isMiddle ? "hidden sm:flex" : undefined} />}
               {isMiddle && index === 1 && hasMiddle && (
                 <>
