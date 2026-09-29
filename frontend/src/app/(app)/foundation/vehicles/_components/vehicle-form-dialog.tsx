@@ -123,7 +123,7 @@ export function VehicleFormDialog({
         </DialogHeader>
         <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} noValidate className="space-y-4">
           <FieldGroup>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.plate_number)}>
                 <FieldLabel htmlFor="plate_number">Plate number</FieldLabel>
                 <Input id="plate_number" {...register("plate_number")} aria-invalid={Boolean(errors.plate_number)} />
@@ -135,7 +135,7 @@ export function VehicleFormDialog({
                 <FieldError errors={[errors.vin]} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.make)}>
                 <FieldLabel htmlFor="make">Make</FieldLabel>
                 <Input id="make" {...register("make")} aria-invalid={Boolean(errors.make)} />
@@ -147,7 +147,7 @@ export function VehicleFormDialog({
                 <FieldError errors={[errors.model]} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.year)}>
                 <FieldLabel htmlFor="year">Year</FieldLabel>
                 <Input id="year" type="number" {...register("year", { valueAsNumber: true })} aria-invalid={Boolean(errors.year)} />
@@ -164,7 +164,7 @@ export function VehicleFormDialog({
                 <FieldError errors={[errors.current_odometer]} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="fuel_type">Fuel type</FieldLabel>
                 <Select value={watch("fuel_type")} onValueChange={(v) => setValue("fuel_type", v as VehicleCreate["fuel_type"])}>
@@ -196,7 +196,7 @@ export function VehicleFormDialog({
                 </Select>
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="engine_number">Engine number</FieldLabel>
                 <Input id="engine_number" {...register("engine_number", { setValueAs: emptyToUndefined })} />
@@ -224,7 +224,7 @@ export function VehicleFormDialog({
                 </SelectContent>
               </Select>
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="service_interval_km">Service every (km)</FieldLabel>
                 <Input

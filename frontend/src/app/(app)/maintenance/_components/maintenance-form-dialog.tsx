@@ -93,7 +93,7 @@ export function MaintenanceFormDialog({
               </Select>
               <FieldError errors={[errors.vehicle_id]} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.date)}>
                 <FieldLabel htmlFor="date">Date</FieldLabel>
                 <Input id="date" type="date" {...register("date")} />
@@ -111,7 +111,7 @@ export function MaintenanceFormDialog({
                 type="multiple"
                 variant="outline"
                 size="sm"
-                className="flex-wrap"
+                className="w-full flex-wrap justify-start"
                 aria-label="Services performed"
                 value={watch("service_types") ?? []}
                 onValueChange={(v) => setValue("service_types", v as ServiceType[], { shouldValidate: true })}
@@ -124,7 +124,7 @@ export function MaintenanceFormDialog({
               </ToggleGroup>
               <FieldError errors={[errors.service_types as { message?: string } | undefined]} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="service_scale">Scale</FieldLabel>
                 <Select value={watch("service_scale")} onValueChange={(v) => setValue("service_scale", v as ServiceScale)}>
@@ -145,7 +145,7 @@ export function MaintenanceFormDialog({
                 <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.cost)}>
                 <FieldLabel htmlFor="cost">Cost (PKR)</FieldLabel>
                 <Input id="cost" type="number" step="0.01" {...register("cost", { valueAsNumber: true, setValueAs: (v) => (v === "" || Number.isNaN(v) ? undefined : v) })} />

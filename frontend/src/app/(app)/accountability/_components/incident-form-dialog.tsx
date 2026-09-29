@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { useCreateIncident } from "@/lib/api/incidents"
 import { useVehicles } from "@/lib/api/vehicles"
 import { isApiError } from "@/lib/api/errors"
+import { useCurrentUser } from "@/lib/auth/use-current-user"
 import { emptyToUndefined } from "@/lib/form-utils"
 import { DriverSelect } from "@/components/fleet/driver-select"
 import { INCIDENT_TYPE_LABELS } from "@/lib/enum-labels"
@@ -32,6 +33,12 @@ export function IncidentFormDialog({
   defaultVehicleId?: string
 }) {
   const vehiclesQuery = useVehicles()
+  // Drivers can only report as themselves, so the picker is not rendered for them at
+  // all; their own driver profile is attached on submit instead (the backend does not
+  // force driver_id on incidents, and a driver only sees incidents carrying their id).
+  const { role, driverProfile } = useCurrentUser()
+  const isDriver = role === "driver"
+  const canPickDriver = role !== null && !isDriver
   const createMutation = useCreateIncident()
   const {
     register,
@@ -61,13 +68,14 @@ export function IncidentFormDialog({
   function onSubmit(values: IncidentLogCreate) {
     // datetime-local yields a naive local time; send an absolute instant and keep
     // date (the immutable calendar-day key) consistent with it.
-    const payload: IncidentLogCreate = values.incident_time
+    const withTime: IncidentLogCreate = values.incident_time
       ? {
           ...values,
           date: values.incident_time.slice(0, 10),
           incident_time: new Date(values.incident_time).toISOString(),
         }
       : values
+    const payload: IncidentLogCreate = isDriver ? { ...withTime, driver_id: driverProfile?.id } : withTime
     createMutation.mutate(payload, {
       onSuccess: () => {
         toast.success("Incident reported")
@@ -110,7 +118,7 @@ export function IncidentFormDialog({
               </Select>
               <FieldError errors={[errors.vehicle_id]} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="incident_type">Type</FieldLabel>
                 <Select value={watch("incident_type")} onValueChange={(v) => setValue("incident_type", v as IncidentType)}>
@@ -142,11 +150,13 @@ export function IncidentFormDialog({
                 </Select>
               </Field>
             </div>
-            <Field>
-              <FieldLabel htmlFor="driver_id">Driver</FieldLabel>
-              <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
+            {canPickDriver ? (
+              <Field>
+                <FieldLabel htmlFor="driver_id">Driver</FieldLabel>
+                <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
+              </Field>
+            ) : null}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.date)}>
                 <FieldLabel htmlFor="date">Date</FieldLabel>
                 <Input id="date" type="date" {...register("date")} />

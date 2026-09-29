@@ -46,7 +46,7 @@ export default function AccountabilityPage() {
     { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "type", header: "Type", cell: (r) => INCIDENT_TYPE_LABELS[r.incident_type] },
     { key: "severity", header: "Severity", cell: (r) => <StatusPill tone={INCIDENT_SEVERITY_TONE[r.severity]}>{r.severity[0]!.toUpperCase() + r.severity.slice(1)}</StatusPill> },
-    { key: "description", header: "Description", cell: (r) => <span className="line-clamp-1">{r.description}</span> },
+    { key: "description", header: "Description", cell: (r) => <span className="block max-w-xs truncate" title={r.description}>{r.description}</span> },
     { key: "area", header: "Location", cell: (r) => r.location_area ?? r.location_description ?? "—" },
     {
       key: "attachment",

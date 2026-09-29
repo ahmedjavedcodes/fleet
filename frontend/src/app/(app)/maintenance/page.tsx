@@ -35,7 +35,7 @@ export default function MaintenancePage() {
   const columns: DataTableColumn<MaintenanceLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
     { key: "vehicle", header: "Vehicle", cell: (r) => r.vehicle_plate ?? "—" },
-    { key: "service_type", header: "Services", cell: (r) => r.service_types.map((t) => SERVICE_TYPE_LABELS[t]).join(", ") },
+    { key: "service_type", header: "Services", cell: (r) => r.service_types.map((t) => SERVICE_TYPE_LABELS[t]).join(", "), cellClassName: "min-w-48 whitespace-normal" },
     { key: "scale", header: "Scale", cell: (r) => <Badge variant={r.service_scale === "major" ? "default" : "outline"}>{SERVICE_SCALE_LABELS[r.service_scale]}</Badge> },
     { key: "driver", header: "Brought in by", cell: (r) => r.driver_name ?? "—" },
     { key: "cost", header: "Cost", align: "right", cell: (r) => (r.cost ? formatMoney(r.cost) : "—") },

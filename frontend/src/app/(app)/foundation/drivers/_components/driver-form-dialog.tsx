@@ -89,7 +89,7 @@ export function DriverFormDialog({
               <Input id="full_name" {...register("full_name")} aria-invalid={Boolean(errors.full_name)} />
               <FieldError errors={[errors.full_name]} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.license_number)}>
                 <FieldLabel htmlFor="license_number">License number</FieldLabel>
                 <Input id="license_number" {...register("license_number")} aria-invalid={Boolean(errors.license_number)} />
@@ -101,7 +101,7 @@ export function DriverFormDialog({
                 <FieldError errors={[errors.license_expiry]} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="license_type">License type</FieldLabel>
                 <Input id="license_type" placeholder="e.g. LTV, HTV" {...register("license_type", { setValueAs: emptyToUndefined })} />

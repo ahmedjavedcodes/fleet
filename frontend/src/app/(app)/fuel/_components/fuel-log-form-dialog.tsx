@@ -98,7 +98,7 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
                 <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
               </Field>
             ) : null}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.date)}>
                 <FieldLabel htmlFor="date">Date</FieldLabel>
                 <Input id="date" type="date" {...register("date")} />
@@ -110,7 +110,7 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
                 <FieldError errors={[errors.odometer_reading]} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.liters_filled)}>
                 <FieldLabel htmlFor="liters_filled">Liters</FieldLabel>
                 <Input id="liters_filled" type="number" step="0.01" {...register("liters_filled", { valueAsNumber: true })} />
@@ -127,7 +127,7 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
               <Input id="total_cost" type="number" step="0.01" {...register("total_cost", { valueAsNumber: true })} />
               <FieldError errors={[errors.total_cost]} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="slip_id">Slip ID</FieldLabel>
                 <Input id="slip_id" {...register("slip_id", { setValueAs: emptyToUndefined })} />
@@ -141,7 +141,7 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
               <FieldLabel htmlFor="fuel_station_name">Fuel station</FieldLabel>
               <Input id="fuel_station_name" {...register("fuel_station_name", { setValueAs: emptyToUndefined })} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="payment_method">Payment method</FieldLabel>
                 <Input

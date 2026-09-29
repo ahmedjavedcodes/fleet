@@ -117,7 +117,7 @@ export function SupplierFormDialog({
               <FieldLabel htmlFor="address">Address</FieldLabel>
               <Input id="address" {...register("address", { setValueAs: emptyToUndefined })} />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field data-invalid={Boolean(errors.phone)}>
                 <FieldLabel htmlFor="phone">Phone</FieldLabel>
                 <Input id="phone" {...register("phone")} aria-invalid={Boolean(errors.phone)} />
