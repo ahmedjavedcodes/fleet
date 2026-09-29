@@ -1,20 +1,24 @@
 import { z } from "zod"
 import { documentSearchHitSchema } from "./document"
 
-// Mirrors the SSE contract in CLAUDE.md §5.5 for the `ai_agents` Grand
-// Orchestrator. There is no HTTP/SSE server for it today (re-checked per
-// plans/07's 2026-09-29 constraint: `backend` — which has the orchestrator's
-// *code* but still no web server for it — is never merged into `frontend`
-// anyway). Kept as the target contract; lib/api/chat.ts never opens a real
-// connection against it.
+// Mirrors ai_agents/orchestrator/{session,state}.py exactly (verified
+// against that code directly, not guessed) — this is now a live contract:
+// ai_agents/server.py wraps OrchestratorSession in a real HTTP/SSE API,
+// proxied through /api/proxy-agents. Re-verify against those two files if
+// either changes (CLAUDE.md §8).
 
 export const agentKeySchema = z.enum(["foundation", "fuel", "maintenance", "accountability", "insights", "assignment", "search_documents", "update_memory"])
 export type AgentKey = z.infer<typeof agentKeySchema>
 
+// orchestrator/state.py's HitlState TypedDict — `state` here is the paused
+// sub-agent's own state (for rendering), not a status enum.
 export const hitlStateSchema = z.object({
-  state: z.enum(["awaiting_approval", "halted", "done"]),
-  pending_action: z.string().nullable(),
-  approval_prompt: z.string().nullable(),
+  agent_name: z.string(),
+  thread_id: z.string(),
+  tool_name: z.string().optional(),
+  pending_node: z.string().optional(),
+  state: z.record(z.string(), z.unknown()).optional(),
+  approval_prompt: z.string().optional(),
 })
 export type HitlState = z.infer<typeof hitlStateSchema>
 
@@ -27,7 +31,10 @@ export const activityEventSchema = z.object({
 export const tokenEventSchema = z.object({ type: z.literal("token"), text: z.string() })
 export const approvalRequiredEventSchema = z.object({ type: z.literal("approval_required"), hitl_state: hitlStateSchema })
 export const citationsEventSchema = z.object({ type: z.literal("citations"), citations: z.array(documentSearchHitSchema) })
-export const doneEventSchema = z.object({ type: z.literal("done") })
+// orchestrator/session.py's TurnResult.status — "halted" included, since a
+// security/off-topic rejection or a HITL reject both settle with status
+// "halted" and a message already streamed as `token`s, not a separate error.
+export const doneEventSchema = z.object({ type: z.literal("done"), status: z.enum(["done", "halted"]) })
 export const errorEventSchema = z.object({ type: z.literal("error"), message: z.string() })
 
 export const chatEventSchema = z.discriminatedUnion("type", [

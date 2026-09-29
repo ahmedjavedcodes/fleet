@@ -76,7 +76,7 @@ export function ApprovalCard({
   return (
     <div className="space-y-3 rounded-xl border border-warning-border bg-warning-soft p-4">
       <p className="text-sm font-medium text-foreground">{hitlState.approval_prompt ?? "This action needs your approval."}</p>
-      {hitlState.pending_action ? <p className="text-caption text-muted-foreground">{hitlState.pending_action}</p> : null}
+      <p className="text-caption text-muted-foreground">{hitlState.tool_name ?? hitlState.agent_name}</p>
 
       {modifying ? (
         <div className="space-y-2">

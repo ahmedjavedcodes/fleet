@@ -40,4 +40,26 @@ describe("parseSseStream", () => {
     for await (const frame of parseSseStream(stream)) frames.push(frame)
     expect(frames).toEqual([{ event: "done", data: "ok" }])
   })
+
+  // Regression: sse-starlette (ai_agents/server.py) sends CRLF line endings,
+  // not LF — a real production bug where the LF-only boundary check above
+  // buffered every frame forever and never yielded anything, silently, all
+  // the way to stream close. Caught live in the browser, not by the LF-only
+  // tests above.
+  it("parses CRLF-terminated frames (sse-starlette's actual wire format)", async () => {
+    const stream = streamFrom(['event: activity\r\ndata: {"agent": "foundation"}\r\n\r\n', 'event: token\r\ndata: {"text": "Hi"}\r\n\r\n'])
+    const frames = []
+    for await (const frame of parseSseStream(stream)) frames.push(frame)
+    expect(frames).toEqual([
+      { event: "activity", data: '{"agent": "foundation"}' },
+      { event: "token", data: '{"text": "Hi"}' },
+    ])
+  })
+
+  it("parses a CRLF frame split across chunk boundaries mid-terminator", async () => {
+    const stream = streamFrom(["event: token\r\ndata: hi\r", "\ndata: there\r\n\r\n"])
+    const frames = []
+    for await (const frame of parseSseStream(stream)) frames.push(frame)
+    expect(frames).toEqual([{ event: "token", data: "hi\nthere" }])
+  })
 })

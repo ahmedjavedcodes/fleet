@@ -80,7 +80,7 @@ describe("AgentActivity", () => {
 })
 
 describe("ApprovalCard", () => {
-  const hitlState = { state: "awaiting_approval" as const, pending_action: "Assign driver X", approval_prompt: "Approve this assignment?" }
+  const hitlState = { agent_name: "assignment", thread_id: "t1", tool_name: "Assign driver X", approval_prompt: "Approve this assignment?" }
 
   it("never auto-approves — Approve requires an explicit click", () => {
     const onApprove = vi.fn()

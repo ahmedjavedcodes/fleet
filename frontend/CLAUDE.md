@@ -205,7 +205,7 @@ role **and** render the Access Denied state if the URL is opened directly.
 | --- | --- | --- | --- |
 | `/login` | Org slug + email + password | public | `POST /auth/login`, `GET /auth/me` |
 | `/dashboard` | Fleet overview + quick stats | all (role-specific variant, §2.2) | A/FM: `GET /dashboard/summary`, `/fuel-trends`, `/maintenance-calendar`, `/fleet-health` |
-| `/chat` | Full-screen Grand Orchestrator | all | Chat API (**to be built**, §5.5) |
+| `/chat` | Full-screen Grand Orchestrator | all | `ai_agents/server.py` (port 8100, proxied via `api/proxy-agents`), §5.4 |
 | `/foundation` | Redirects to `/foundation/vehicles` | all | — |
 | `/foundation/vehicles` | Vehicle list, create/edit/delete | all (read); A/FM (write) | `/vehicles` |
 | `/foundation/vehicles/[id]` | Vehicle detail (reference 1; region-by-role map in `plans/05`) | all (regions vary by role); assign/release A/FM | `/vehicles/{id}`, `/{id}/compliance`, `/{id}/assignments`, `/{id}/timeline`, `/fuel/summary`, `/fuel?vehicle_id`, `/trips?vehicle_id`, `/maintenance?vehicle_id`, `/incidents`, `/dashboard/fleet-health` (A/FM) |
@@ -368,12 +368,14 @@ tests/                               # mirrors src/ path-for-path — see §7's 
   overflowed. Caught by an actual browser screenshot at 1024px, not by the test suite.
 - **`RoutePlaceholder` vs `NotAvailableYet`:** every route in §2.1 is scaffolded and kept
   in the nav now (all of CLAUDE.md §3's sidebar, filtered by role), rather than hidden
-  until a later phase builds it. A route whose *backend* already exists but has no UI yet
-  (insights, documents) renders `RoutePlaceholder` ("… is being built" — an honest state,
-  not the §5.5 copy). `/dashboard` (plan 04), `/foundation/*` (plan 05) and
+  until a later phase builds it. `RoutePlaceholder` ("… is being built") is currently
+  unused — every scaffolded route has either a real backend and a built UI, or no backend
+  and a `NotAvailableYet` state (plan 07). `/dashboard` (plan 04), `/foundation/*` (plan 05),
   `/fuel`, `/maintenance`, `/accountability`, `/assignment` (plan 06, reduced scope — see
-  that plan's notes for what's deferred within each) are built. Only `/chat` and
-  `/notifications`, whose backend genuinely doesn't exist, render `NotAvailableYet`.
+  that plan's notes for what's deferred within each), `/insights` (plan 07, the analytics
+  regions; its NL search box is presentational only) and `/chat` (plan 07, a real integration
+  with `ai_agents/server.py`) are built and live. `/documents` and `/notifications` render
+  `NotAvailableYet` — their backends genuinely don't exist (see §5.5).
 - **Dashboard greeting is time-of-day, not literally "Good morning."** Plan 04 §1's copy
   ("Good morning, {first name}") was written before considering that a fleet manager
   checking in at 4pm shouldn't be told good morning; `_components/greeting.tsx` derives
@@ -436,6 +438,24 @@ re-mounts on navigation.
 ---
 
 ## 4. Visualizing the AI (the "wow" factor)
+
+**Implementation note (2026-09-29):** §4.1 below is the target design. The real first cut
+(`app/(app)/chat/page.tsx`, `lib/api/chat.ts`, `ai_agents/server.py`) is simpler in three
+ways, each because `OrchestratorSession.run/approve/modify/reject` are synchronous, blocking
+calls with no token-level streaming inside the graph itself:
+- **No conversation list / side panel.** `memory` is `None` on the server's `OrchestratorDeps`
+  (no Pinecone dependency for a first pass), so there's no `memory_session_id` to list
+  sessions by.
+- **One coarse "Thinking…" activity step, not the real per-hop `FleetLiveObserver` trace.**
+  Wiring the observer's actual UI events through to SSE is future work — currently the server
+  emits a single synthetic `activity` event, not one per sub-agent hop.
+- **Word-chunked "streaming," not real token streaming.** The full `final_response` comes
+  back from one blocking call; the server splits it into words and sends each as a `token`
+  event with a small delay, which animates like streaming but isn't token-level LLM output.
+
+Everything else — HITL approvals never auto-approving, agent icon mapping, Stop via
+`AbortController`, rendering activity/response text exactly as sent — is real and matches
+this section.
 
 ### 4.1 Chat interface (`/chat`)
 
@@ -645,10 +665,18 @@ Build against these, with shapes from the backend schemas (`backend/app/schemas/
   `/drivers/{id}/assignments`, `/vehicles/{id}/assignments`
 - **dashboard:** `/dashboard/summary`, `/dashboard/fuel-trends`,
   `/dashboard/maintenance-calendar`, `/dashboard/fleet-health`
-- **documents:** `/documents` (list), `/documents/upload`, `/documents/search`,
-  `/documents/{id}` (get/delete)
-- **agent memory:** `/memory/sessions` (chat history). The admin-only
-  `/memory/vector-jobs/failed` list (DLQ) is for an admin health view, if ever built.
+- **chat** (`ai_agents/server.py`, a separate process on port 8100, proxied through
+  `api/proxy-agents` — not the main backend on 8000): `POST /api/v1/chat/sessions` (create),
+  `POST /api/v1/chat/sessions/{id}/messages` → **SSE** (`activity`, `token`,
+  `approval_required` with `hitl_state`, `done` with `status`, `error`), `POST …/approve`,
+  `…/modify`, `…/reject`. Wraps `orchestrator.session.OrchestratorSession` directly — a real
+  multi-agent run against the real backend, not a mock. See CLAUDE.md's own note on
+  `ai_agents/server.py` and `frontend/plans/07-ai-surfaces.md` §0 for what's simplified
+  (coarse-grained activity events, word-chunked "streaming" of an already-complete response
+  rather than true token-level LLM streaming).
+
+`/documents` and `/memory/sessions` are **not** in this list — they live only on the
+`backend` branch (agents/memory/document-RAG), which is never merged into `frontend` (§5.5).
 
 ### 5.5 Contracts still to be built (build the UI, don't fake the data)
 
@@ -660,10 +688,13 @@ These features appear in this spec, but **no backend endpoint exists yet**. For 
 
 Wire the real endpoint the moment it lands. Never ship mock data behind a real-looking UI.
 
+**`/chat` shipped 2026-09-29** — moved out of this table into §5.4 above. It's the one
+exception to "no backend endpoint exists yet" in the frontend's *own* backend on 8000: its
+server is `ai_agents/server.py`, a second, separate process on port 8100.
+
 | Feature | Needed endpoint (proposed) | Backing today |
 | --- | --- | --- |
 | `/documents` | `GET /documents`, `POST /documents/upload`, `POST /documents/search`, `GET/DELETE /documents/{id}` | Exists only on the `backend` branch (agents/memory/document-RAG), which is **never merged into `frontend`** (plan 07 §0, decided 2026-09-29) — not "not yet built," but a standing decision not to bring it in |
-| `/chat` streaming | `POST /api/v1/chat/sessions/{id}/messages` → **SSE** events: `activity` (UI step text), `token`, `approval_required` (`hitl_state`), `citations`, `done` (`status`, `final_response`), `error`; `POST …/approve`, `…/modify`, `…/reject` | `ai_agents` `OrchestratorSession.run/approve/modify/reject` + `FleetLiveObserver.ui_messages` exist but nothing exposes them over HTTP yet, and even if they did, `ai_agents` lives on the un-merged `backend` branch too |
 | `/notifications` | `GET /api/v1/notifications?tab=warnings\|events\|triggers`, `PATCH …/{id}/read`, unread count | `AlertDispatcher` alerts (low stock, severe/critical incidents) are currently only logged. Tab mapping: **Warnings** = those alerts + overdue compliance; **Notified Events** = alerts already delivered; **Triggers** = the rule definitions that fire them |
 | `/insights` NL search | `POST /api/v1/insights/query` → `{sql_preview?, columns, rows}` (read-only, safety-hook guarded) | `query_fleet_data` MCP tool is scaffolded but not wired to a read-only DB session |
 

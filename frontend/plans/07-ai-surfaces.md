@@ -1,8 +1,14 @@
 # 07 — AI Surfaces (scoped)
 
-**Status:** scoped, not detailed. CLAUDE.md §4 already specifies these surfaces in depth.
-This plan records **what is actually buildable today**, the prerequisites, and the order of
-work. Expand it into a detailed plan before starting.
+**Status:** `/chat` shipped for real 2026-09-29 — `ai_agents/server.py` is a new HTTP/SSE
+server wrapping `orchestrator.session.OrchestratorSession` directly (a genuine multi-agent
+run against the real backend, not mock data), proxied into `frontend` via
+`api/proxy-agents/[...path]`. See CLAUDE.md §4's "Implementation note" for the three ways
+the first cut is simpler than that section's target design (no conversation list, one
+coarse activity step instead of a per-hop trace, word-chunked rather than token-level
+streaming). `/insights` (analytics only) also shipped live. `/documents` and
+`/notifications` remain UI-only per §2/§4 below — CLAUDE.md §4 already specifies the full
+target design for all of these in depth.
 
 **Depends on:** 03.
 
@@ -24,8 +30,8 @@ panels, soft-tinted pills, flat cards. Ask for an AI-surface reference before po
 | --- | --- | --- |
 | **Documents** (`/documents`) | ❌ Not on this branch's backend — `backend` is never merged in (see above). `DocumentType`/`DocumentStatus` already exist in `lib/schemas/enums.ts` from plan 01, kept as-is since they cost nothing to keep and the plan may resume later. | **UI only, like chat.** `lib/api/documents.ts` is a typed adapter (zod schemas mirroring the spec below, kept for the day this lands) whose functions all return `{ status: "unavailable" }` — no `fetch` call exists in it at all. The page renders `NotAvailableYet`. The Library table, upload flow and citation pills are built as real components with real props, but the only place they render is unit tests / test fixtures — no production page imports them. |
 | **Citations** (RAG) | ❌ Same as Documents. | Build `CitationPill` / hover card / sheet against typed fixture data, tested but not shipped on any live page; reused by chat's design later. |
-| **Chat** (`/chat`) | ❌ No HTTP API. `ai_agents` now has the full Grand Orchestrator (`orchestrator/session.py`, `runner.py`, `ui_interpolation.py`), but still **no web server** (no FastAPI app or SSE endpoint; re-checked after the merge). | Typed adapter `lib/api/chat.ts` → `{ status: "unavailable" }` + `NotAvailableYet`. Build the presentational components (ChatThread, AgentActivity, ApprovalCard) against **typed fixtures in tests and Storybook-like test renders only**, never in production paths. |
-| **Chat history** | ⚠️ `/memory` has `POST /sessions`, `GET /sessions/{id}/context`, `POST /sessions/{id}/summary` and memory CRUD, but **no "list my sessions" endpoint** | The conversation side panel needs `GET /memory/sessions` (list). Add it to the backend gaps; until then the panel shows "History will appear here". |
+| **Chat** (`/chat`) | ✅ **Live as of 2026-09-29.** `ai_agents` had the full Grand Orchestrator (`orchestrator/session.py`, `runner.py`) but no web server — `ai_agents/server.py` is new: a FastAPI/SSE app wrapping `OrchestratorSession` (session create, message send, approve/modify/reject), run alongside `backend` on its own port (8100) and proxied into `frontend` via `api/proxy-agents`. | `lib/api/chat.ts` calls the real endpoints; the presentational components (ChatThread, AgentActivity, ApprovalCard, …) are wired into `app/(app)/chat/page.tsx` for real, not just rendered in tests. See CLAUDE.md §4's "Implementation note" for what's simplified vs. the full target design. |
+| **Chat history** | ⚠️ `/memory` has `POST /sessions`, `GET /sessions/{id}/context`, `POST /sessions/{id}/summary` and memory CRUD, but **no "list my sessions" endpoint** — and regardless, `memory` isn't wired into `OrchestratorDeps` for this first pass (no Pinecone dependency). | Not built: no conversation side panel. A later pass would need `GET /memory/sessions` (still a genuine backend gap) plus threading `memory=` through `server.py`'s session construction. |
 | **Memory admin (DLQ)** | ✅ `GET /memory/vector-jobs/failed`, `POST …/{job_id}/retry` (admin) | Optional admin health view. Out of scope unless requested. |
 | **Notifications** (`/notifications`) | ❌ `AlertDispatcher` only logs | Adapter → unavailable. The page shows three tabs (Warnings, Notified Events, Triggers), each with `NotAvailableYet`. The bell stays badge-less (plan 03). |
 | **Insights NL search** (`/insights`) | ❌ `query_fleet_data` MCP tool not wired to HTTP | Box routes the question to `/chat` (itself unavailable), or shows "coming soon". **Never** build or run SQL in the browser. |
@@ -103,34 +109,59 @@ states, and delete invalidation — all against fixture props, since there is no
 to hit. The `/documents` page itself only has one thing to test: it renders
 `NotAvailableYet` and never imports the Library/upload/search components.
 
-## 3. Chat: `/chat` (UI only until the API exists)
+## 3. Chat: `/chat` — live (2026-09-29)
 
-- **`lib/api/chat.ts`** defines the CLAUDE.md §5.5 contract as zod schemas:
-  - SSE events `activity | token | approval_required | citations | done | error`;
-  - `hitl_state`, and `status: "awaiting_approval" | "halted" | "done"`;
-  - `sendMessage()` returns `{ status: "unavailable" }` today.
-- **Page:** `NotAvailableYet` ("The AI assistant is waiting on its chat API"), plus the
-  role-based example prompts as **disabled** suggestions so the page communicates intent.
-  No fake conversation.
-- **Components built and unit-tested now** (rendered only in tests until the API lands):
-  - `ChatThread` + `MessageBubble` (react-markdown + remark-gfm, **no rehype-raw**; token
-    component map for tables and code with a copy button; links `target="_blank"
-    rel="noopener noreferrer"`);
-  - `Composer` (Enter sends, Shift+Enter adds a newline; Stop via `AbortController`;
-    disabled while an approval is pending);
-  - `AgentActivity` (step rows with agent icon, a pulsing/glowing active indicator using
-    tokens and honoring reduced motion, a check when done; **text rendered exactly as the
-    backend sends it**; agent key → icon map for `foundation`, `fuel`, `maintenance`,
-    `accountability`, `insights`, `assignment`, `search_documents`, `update_memory`);
-  - `ApprovalCard` (pending action, key `hitl_state.state` fields, `approval_prompt`;
-    Approve / Modify (inline, re-validated) / Reject (confirm); **never auto-approve**);
-  - `HaltedCard` (warning callout, not an error);
-  - "Jump to latest" pill and at-bottom auto-scroll.
-- **SSE client:** `lib/api/sse.ts`, a `fetch` + `ReadableStream` parser through the proxy
-  (so the cookie auth works; `EventSource` can't send custom headers, but the proxy adds
-  them, so either works). Chosen when the API lands.
-- **When the API lands:** replace the adapter, move the endpoint from CLAUDE.md §5.5 to §5.4,
-  and delete the unavailable path (CLAUDE.md §8).
+The API landed: `ai_agents/server.py`. This section is now what actually shipped, not a
+plan for later.
+
+- **`ai_agents/server.py`** (new): FastAPI + `sse-starlette`, in-memory per-process session
+  store (`OrchestratorSession` instances keyed by a `uuid4` session id, no persistence —
+  restarting the process loses in-flight conversations). Auth: the browser's own
+  backend-issued JWT is forwarded as a Bearer token and decoded by
+  `tools.auth_context.build_context` — this server never re-authenticates the user itself.
+  `POST /api/v1/chat/sessions` (create), `.../messages` (`{message}` → SSE), `.../approve`,
+  `.../modify` (`{updates}`), `.../reject`. Every turn runs `OrchestratorSession.run` (or
+  `.approve`/`.modify`/`.reject`) in a thread pool, since those calls are synchronous, then
+  streams: one `activity` event, the final text chunked word-by-word as `token` events (real
+  text, deliberately simplified "typing" presentation — see CLAUDE.md §4's note), then `done`
+  or `approval_required`.
+  - **Required env:** at minimum `GROQ_API_KEY` (the default `_default_llm()` provider) and
+    `BACKEND_API_BASE_URL` (already defaults to `http://localhost:8000`) in `ai_agents/.env`.
+    `load_dotenv()` had to be added to `server.py` — **nothing else in this codebase called
+    it**, every provider in `core/llm_config.py` reads `os.environ` directly, so it was
+    silently relying on the caller's shell already having these exported.
+  - **Run it:** `uvicorn server:app --port 8100` (or the updated `ai_agents/Dockerfile`,
+    which used to `CMD` a no-op module with no server at all).
+- **`frontend/src/app/api/proxy-agents/[...path]/route.ts`** (new): the same
+  attach-the-cookie's-JWT-server-side proxy pattern as `api/proxy`, pointed at a new
+  `AGENTS_API_BASE_URL` (`lib/env.ts`, defaults to `http://localhost:8100`) instead of the
+  main backend's `API_BASE_URL` — a different process/port, so it needed its own route.
+- **`lib/schemas/chat.ts`**: rewritten against the *real* `orchestrator/state.py` shapes
+  after reading that code directly, not guessed from the spec. In particular `HitlState` is
+  `{agent_name, thread_id, tool_name?, pending_node?, state?, approval_prompt?}` — no
+  `pending_action` field, and `state` is the paused sub-agent's own state dict, not a status
+  enum, unlike this plan's original placeholder schema.
+- **`lib/api/chat.ts`**: `sendChatMessage()` creates a session (or reuses one),
+  `approveChatAction`/`modifyChatAction`/`rejectChatAction` resume it — each returns an
+  `AsyncGenerator<ChatEvent>` parsed and zod-validated frame by frame via `lib/api/sse.ts`.
+- **`lib/api/sse.ts`**: a real bug was found and fixed here — `sse-starlette` sends **CRLF**
+  (`\r\n\r\n`) frame terminators, not LF. The original LF-only boundary check
+  (`buffer.indexOf("\n\n")`) never matched, so every frame buffered forever and got silently
+  dropped once the stream closed — no error, just an empty assistant bubble. Caught by
+  watching it fail live in a real browser (unit tests alone didn't catch it, since they used
+  hand-written LF-only fixtures); fixed by normalizing `\r\n` → `\n` on the whole accumulated
+  buffer each read. Two regression tests cover it (`tests/lib/api/sse.test.ts`), including one
+  for a `\r\n` split exactly across a chunk boundary.
+- **`app/(app)/chat/page.tsx`**: wired for real — `ChatThread` + `Composer` +
+  `AgentActivity` + `ApprovalCard` + `HaltedCard`, an `AbortController` per turn so Stop
+  actually cancels the fetch, and inline error text on failure. **Not built:** the
+  conversation history side panel (§1's "Chat history" row) and role-based disabled example
+  prompts from the original UI-only plan — dropped once there was a live composer to use
+  instead.
+- **Not yet true token-level streaming** — see CLAUDE.md §4's "Implementation note" for why
+  (the orchestrator's `run()` is one blocking call) and what a later pass would need to
+  change (wire `FleetLiveObserver` into the SSE stream, stream the LLM's own tokens instead
+  of chunking a finished response).
 
 ## 4. Notifications and Insights NL
 
@@ -141,14 +172,21 @@ to hit. The `/documents` page itself only has one thing to test: it renders
   it says "Natural-language questions are coming soon" and offers "Ask in AI Assistant"
   (→ `/chat`).
 
-## 5. Suggested order
+## 5. What actually happened, in order
 
-1. Insights analytics (the only live surface; not AI-dependent, reuses plan 04 components).
-2. Documents library + upload + search + citation components — built and tested, not wired.
-3. Notifications and chat "not available" pages, plus the chat component library with tests.
-4. Wire documents, chat and notifications if `/documents`/`/memory`/a chat API/a notifications
-   API ever exist on *this* backend — which, per the constraint at the top of this file, is
-   not assumed to happen from a `backend` branch merge. Treat it as a fresh decision.
+1. Insights analytics — live, not AI-dependent, reuses plan 04 components.
+2. Documents library + upload + search + citation components — built and tested, not wired
+   (no backend, and none assumed per the constraint at the top of this file).
+3. Notifications "not available" tabs, plus the full chat component library, built and
+   unit-tested.
+4. **`ai_agents/server.py` written and wired live** — the chat component library turned out
+   to have a real server to talk to after all (the orchestrator's Python code, just missing
+   an HTTP layer), so §3 above stopped being "build for later" and became "build the server
+   and wire it now." `/documents` and `/notifications` stay unwired since neither has
+   *any* backend code to wrap, live or otherwise.
+
+Still true: wiring `/documents`/`/memory`/a notifications API needs its own decision, not a
+resumption of this plan, per the constraint at the top of this file.
 
 ## 6. Backend gaps surfaced here
 

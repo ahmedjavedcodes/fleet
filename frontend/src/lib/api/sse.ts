@@ -18,6 +18,13 @@ export async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGe
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
+      // The SSE spec allows CRLF, LF or lone CR as the line terminator —
+      // sse-starlette (the ai_agents chat server) sends CRLF. Normalizing
+      // the whole accumulated buffer each time (not just the newly
+      // appended chunk) also correctly handles a \r\n pair split across
+      // two chunk boundaries, since the leading \r stays in `buffer` until
+      // the trailing \n arrives.
+      buffer = buffer.replace(/\r\n/g, "\n")
 
       let boundary: number
       while ((boundary = buffer.indexOf("\n\n")) !== -1) {

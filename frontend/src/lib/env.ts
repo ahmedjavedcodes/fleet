@@ -13,6 +13,10 @@ import { z } from "zod"
 const envSchema = z.object({
   API_BASE_URL: z.string().url(),
   SESSION_COOKIE_NAME: z.string().min(1).default("fleet_session"),
+  // The ai_agents chat server (server.py) — a separate process/port from
+  // the main backend, hence its own proxy route (api/proxy-agents) and its
+  // own base URL here rather than reusing API_BASE_URL.
+  AGENTS_API_BASE_URL: z.string().url().default("http://localhost:8100"),
 })
 
 type Env = z.infer<typeof envSchema>
@@ -23,6 +27,7 @@ function loadEnv(): Env {
   cached ??= envSchema.parse({
     API_BASE_URL: process.env.API_BASE_URL,
     SESSION_COOKIE_NAME: process.env.SESSION_COOKIE_NAME,
+    AGENTS_API_BASE_URL: process.env.AGENTS_API_BASE_URL,
   })
   return cached
 }
