@@ -113,14 +113,17 @@ def extract_license_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> L
     """Parse a photographed driver's license via the Groq vision model.
 
     Output schema: first_name, last_name, license_number, phone_number,
-    expiration_date. Any field the model can't read is left None -- callers
+    expiration_date, license_type, license_issue_date, license_current_status. Any field the model can't read is left None -- callers
     (the LicenseInspectorSubAgent / onboarding graph) are responsible for
     treating a None required field as an extraction failure, not a valid
     empty value.
     """
     instruction = (
         "Read this driver's license photo and extract: first name, last name, "
-        "license number, phone number, and expiration date (as YYYY-MM-DD). "
+        "license number, phone number, expiration date (as YYYY-MM-DD), the "
+        "license type/class (e.g. LTV, HTV, motorcycle), the license issue date "
+        "(as YYYY-MM-DD), and the license's current status if stated (one of: "
+        "valid, expired, suspended, revoked). "
         "Leave any field you cannot clearly read as null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, LicenseExtraction, document_label="driver's license")
@@ -129,15 +132,18 @@ def extract_license_data(image_bytes: bytes, mime_type: str = "image/jpeg") -> L
 def extract_vehicle_doc(image_bytes: bytes, mime_type: str = "image/jpeg") -> VehicleDocExtraction:
     """Parse a photographed vehicle registration card or VIN plate.
 
-    Output schema: plate_number, make, model, year, vin, initial_odometer.
+    Output schema: plate_number, make, model, year, vin, initial_odometer,
+    engine_number, chassis_number, ownership_type.
     Fuel type is deliberately not part of this schema -- registration
     documents don't state it, so the graph must ask the user for it before
     calling create_vehicle_tool (fleet-registry-agent.md, FR 8 / AC 5).
     """
     instruction = (
         "Read this vehicle registration card or VIN plate photo and extract: "
-        "plate number, make, model, year, VIN, and the odometer reading if "
-        "shown. Leave any field you cannot clearly read as null -- never guess."
+        "plate number, make, model, year, VIN, engine number, chassis number, "
+        "the ownership type if stated (one of: leasing, rent, owner), and the "
+        "odometer reading if shown. Leave any field you cannot clearly read as "
+        "null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, VehicleDocExtraction, document_label="vehicle document")
 
@@ -146,13 +152,15 @@ def extract_supplier_doc(image_bytes: bytes, mime_type: str = "image/jpeg") -> S
     """Parse a photographed supplier invoice or registration document.
 
     Output schema is deliberately narrowed to the fields the backend's
-    SupplierCreate schema accepts (name, contact_email, phone) -- other
-    extractable text (address, tax/registration ID) is not part of this
-    schema and must not be submitted, per fleet-registry-agent.md FR 4.
+    SupplierCreate schema accepts (name, contact_email, phone, address,
+    category) -- other extractable text (tax/registration ID) is not part of
+    this schema and must not be submitted, per fleet-registry-agent.md FR 4.
     """
     instruction = (
         "Read this supplier invoice or registration document and extract: "
-        "the supplier's business name, contact email, and phone number. "
+        "the supplier's business name, contact email, phone number, street "
+        "address, and category (one of: workshop, tire_supplier, "
+        "parts_supplier, fuel_station, other). "
         "Leave any field you cannot clearly read as null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, SupplierDocExtraction, document_label="supplier document")
@@ -162,28 +170,34 @@ def extract_fuel_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> F
     """Parse a photographed fuel receipt.
 
     Output schema: station_name, receipt_date, liters, total_cost, odometer,
-    plate_number -- per fuel-agent.md FR 1. price_per_liter is deliberately
+    plate_number, slip_id, po_number, payment_method, card_used -- per
+    fuel-agent.md FR 1. price_per_liter is deliberately
     not part of this schema (rarely printed as its own line); the graph
     derives it from total_cost / liters instead of asking the model for it.
     """
     instruction = (
         "Read this fuel receipt photo and extract: the fuel station's name, "
         "the receipt date (as YYYY-MM-DD), liters filled, total cost paid, "
-        "the vehicle's odometer reading if shown, and the vehicle's plate "
-        "number if shown. Leave any field you cannot clearly read as null "
-        "-- never guess."
+        "the vehicle's odometer reading if shown, the vehicle's plate number "
+        "if shown, the slip / receipt / transaction ID, the purchase order (PO) "
+        "number, the payment method (e.g. cash, card, fuel_card), and the card "
+        "used (last digits or card name only -- never a full card number). "
+        "Leave any field you cannot clearly read as null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, FuelReceiptExtraction, document_label="fuel receipt")
 
 
 _WORK_ORDER_INSTRUCTION = (
     "Read this mechanic's work order / repair note and extract: the issue "
-    "description, the service type (one of: oil_change, brake_service, "
-    "tire_rotation, engine_repair, transmission, electrical, body_work, "
-    "general_inspection, other), the parts used (each as a name or SKU plus "
-    "quantity), labor hours, total cost, the vehicle's plate number, and "
-    "the odometer reading if shown. Leave any field you cannot clearly "
-    "determine as null -- never guess."
+    "description, EVERY service performed (service_types -- a list; each one of: "
+    "oil_change, brake_service, tire_rotation, engine_repair, transmission, "
+    "electrical, body_work, general_inspection, other), the service scale "
+    "(service_scale: minor for routine/small jobs, major for large repairs or "
+    "overhauls), the name of the driver who brought the vehicle in "
+    "(driver_name), the parts used (each as a name or SKU plus quantity), "
+    "labor hours, total cost, the vehicle's plate number, and the odometer "
+    "reading if shown. Leave any field you cannot clearly determine as null "
+    "(or an empty list) -- never guess."
 )
 
 _PARTS_INVOICE_INSTRUCTION = (
@@ -198,8 +212,9 @@ def extract_work_order(
 ) -> WorkOrderExtraction:
     """Parse a photographed work order/repair note, or typed mechanic-note text.
 
-    Output schema: issue_description, service_type, parts_used (name/SKU +
-    qty, unresolved), labor_hours, cost, vehicle_plate, odometer. Exactly
+    Output schema: issue_description, service_type (primary), service_types
+    (all), service_scale, driver_name, parts_used (name/SKU + qty,
+    unresolved), labor_hours, cost, vehicle_plate, odometer. Exactly
     one of image_bytes or text must be given -- per
     maintenance-inventory-agent.md FR 1, parts_used and vehicle_plate are
     raw and must still be resolved against get_inventory_tool/
@@ -236,7 +251,10 @@ def extract_parts_invoice(
 _INCIDENT_REPORT_INSTRUCTION = (
     "Read this accident/safety incident report (a police report, driver "
     "statement, or note) and extract: the incident date (as YYYY-MM-DD), "
-    "location, severity (one of: minor, moderate, severe, critical), "
+    "the full incident date-and-time if stated (incident_time, ISO 8601), the "
+    "location, the specific location area/zone/site (location_area), any "
+    "additional remarks, a link to any attached photo/file if one is "
+    "referenced (attachment_url), severity (one of: minor, moderate, severe, critical), "
     "incident type (one of: damage, violation, near_miss), the vehicle's "
     "plate number, the driver's name, and a description of any damage. "
     "Leave any field you cannot clearly determine as null -- never guess."
@@ -248,8 +266,9 @@ def extract_incident_report(
 ) -> IncidentExtraction:
     """Parse a photographed police report/accident document, or typed driver statement text.
 
-    Output schema: incident_date, location, severity, incident_type,
-    vehicle_plate, driver_name, damage_description -- per
+    Output schema: incident_date, incident_time, location, location_area, remarks,
+    attachment_url, severity, incident_type, vehicle_plate, driver_name,
+    damage_description -- per
     driver-accountability-agent.md FR 1. vehicle_plate and driver_name are
     raw and must still be resolved against get_vehicles_tool/get_drivers_tool
     before submission. Exactly one of image_bytes or text must be given.

@@ -6,6 +6,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import FuelReceiptUploadStatus
+from app.schemas.common import VehicleDriverRefs
 
 # Note: the type is imported as `date_type` (not `date`) because several fields
 # below are named `date` with a default value -- `date: date | None = None`
@@ -24,6 +25,11 @@ class FuelLogCreate(BaseModel):
     price_per_liter: Decimal = Field(gt=0)
     total_cost: Decimal = Field(gt=0)
     notes: str | None = None
+    po_number: str | None = None
+    payment_method: str | None = None
+    card_used: str | None = None
+    fuel_station_name: str | None = None
+    slip_id: str | None = None
 
 
 class FuelLogUpdate(BaseModel):
@@ -41,6 +47,11 @@ class FuelLogUpdate(BaseModel):
     price_per_liter: Decimal | None = Field(default=None, gt=0)
     total_cost: Decimal | None = Field(default=None, gt=0)
     notes: str | None = None
+    po_number: str | None = None
+    payment_method: str | None = None
+    card_used: str | None = None
+    fuel_station_name: str | None = None
+    slip_id: str | None = None
 
 
 class FuelReceiptResponse(BaseModel):
@@ -53,7 +64,7 @@ class FuelReceiptResponse(BaseModel):
     parsed_data: dict | None
 
 
-class FuelLogResponse(BaseModel):
+class FuelLogResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -67,12 +78,24 @@ class FuelLogResponse(BaseModel):
     cost_per_km: Decimal | None
     is_anomalous: bool
     notes: str | None
+    po_number: str | None
+    payment_method: str | None
+    card_used: str | None
+    fuel_station_name: str | None
+    slip_id: str | None
     created_at: datetime
     receipt: FuelReceiptResponse | None = None
 
 
 class VehicleFuelSummary(BaseModel):
     vehicle_id: uuid.UUID
+    plate_number: str | None = None
+    vehicle_name: str | None = None
+    # Distinct drivers who fuelled this vehicle in the period.
+    driver_names: list[str] = Field(default_factory=list)
+    first_fill_date: date_type | None = None
+    last_fill_date: date_type | None = None
+    fill_count: int = 0
     total_cost: Decimal
     total_liters: Decimal
     avg_cost_per_km: Decimal | None
@@ -80,6 +103,9 @@ class VehicleFuelSummary(BaseModel):
 
 class FuelSummaryResponse(BaseModel):
     month: str
+    period_start: date_type | None = None
+    period_end: date_type | None = None
+    generated_at: datetime | None = None
     total_cost: Decimal
     total_liters: Decimal
     avg_cost_per_km: Decimal | None

@@ -12,6 +12,9 @@ class DriverBase(BaseModel):
     license_expiry: date
     phone: str
     status: DriverStatus = DriverStatus.active
+    license_type: str | None = None
+    license_issue_date: date | None = None
+    license_current_status: str | None = None
 
 
 class DriverCreate(DriverBase):
@@ -26,6 +29,9 @@ class DriverUpdate(BaseModel):
     license_expiry: date | None = None
     phone: str | None = None
     status: DriverStatus | None = None
+    license_type: str | None = None
+    license_issue_date: date | None = None
+    license_current_status: str | None = None
     user_id: uuid.UUID | None = None
 
 

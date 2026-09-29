@@ -8,10 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.enums import FuelReceiptUploadStatus
-from app.models.mixins import AuditMixin, OrgScopedMixin
+from app.models.mixins import AuditMixin, OrgScopedMixin, VehicleDriverRefMixin
 
 
-class FuelLog(Base, OrgScopedMixin, AuditMixin):
+class FuelLog(Base, OrgScopedMixin, AuditMixin, VehicleDriverRefMixin):
     __tablename__ = "fuel_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -29,8 +29,16 @@ class FuelLog(Base, OrgScopedMixin, AuditMixin):
     cost_per_km: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     is_anomalous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Slip/receipt details captured off the physical fuel slip.
+    po_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    card_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fuel_station_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    slip_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     receipt: Mapped["FuelReceipt | None"] = relationship(back_populates="fuel_log", uselist=False)
+    vehicle: Mapped["Vehicle"] = relationship("Vehicle", lazy="joined", viewonly=True)
+    driver: Mapped["Driver | None"] = relationship("Driver", lazy="joined", viewonly=True)
 
 
 class FuelReceipt(Base, OrgScopedMixin, AuditMixin):

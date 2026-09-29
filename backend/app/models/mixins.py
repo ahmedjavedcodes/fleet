@@ -34,3 +34,32 @@ class OrgScopedMixin:
     @declared_attr
     def organization_id(cls) -> Mapped[uuid.UUID]:
         return mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
+
+
+class VehicleDriverRefMixin:
+    """Read-only flat accessors over the `vehicle`/`driver` relationships that
+    the host model declares (lazy="joined"), so response schemas can expose
+    plate/make/model/driver name via plain from_attributes without a second
+    query. driver is optional on some models, hence the None guards."""
+
+    @property
+    def vehicle_plate(self) -> str | None:
+        return self.vehicle.plate_number if getattr(self, "vehicle", None) is not None else None
+
+    @property
+    def vehicle_make(self) -> str | None:
+        return self.vehicle.make if getattr(self, "vehicle", None) is not None else None
+
+    @property
+    def vehicle_model(self) -> str | None:
+        return self.vehicle.model if getattr(self, "vehicle", None) is not None else None
+
+    @property
+    def vehicle_name(self) -> str | None:
+        vehicle = getattr(self, "vehicle", None)
+        return f"{vehicle.make} {vehicle.model}" if vehicle is not None else None
+
+    @property
+    def driver_name(self) -> str | None:
+        driver = getattr(self, "driver", None)
+        return driver.full_name if driver is not None else None

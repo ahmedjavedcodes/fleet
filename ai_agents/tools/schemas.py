@@ -12,8 +12,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class VehicleFuelType(str, Enum):
@@ -21,6 +22,25 @@ class VehicleFuelType(str, Enum):
     petrol = "petrol"
     hybrid = "hybrid"
     electric = "electric"
+
+
+class VehicleOwnershipType(str, Enum):
+    leasing = "leasing"
+    rent = "rent"
+    owner = "owner"
+
+
+class SupplierCategory(str, Enum):
+    workshop = "workshop"
+    tire_supplier = "tire_supplier"
+    parts_supplier = "parts_supplier"
+    fuel_station = "fuel_station"
+    other = "other"
+
+
+class ServiceScale(str, Enum):
+    minor = "minor"
+    major = "major"
 
 
 # ---- create-tool inputs: the bridged, sanitized, backend-ready shape ----
@@ -40,6 +60,9 @@ class VehicleCreateInput(BaseModel):
     vin: str
     fuel_type: VehicleFuelType
     current_odometer: int = 0
+    engine_number: str | None = None
+    chassis_number: str | None = None
+    ownership_type: VehicleOwnershipType = VehicleOwnershipType.owner
 
 
 class DriverCreateInput(BaseModel):
@@ -49,6 +72,9 @@ class DriverCreateInput(BaseModel):
     license_number: str
     license_expiry: date
     phone: str
+    license_type: str | None = None
+    license_issue_date: date | None = None
+    license_current_status: str | None = None
 
 
 class SupplierCreateInput(BaseModel):
@@ -57,6 +83,8 @@ class SupplierCreateInput(BaseModel):
     name: str
     contact_email: str | None = None
     phone: str | None = None
+    address: str | None = None
+    category: SupplierCategory = SupplierCategory.other
 
 
 # ---- vision extraction outputs: raw, pre-bridge, pre-sanitize ----
@@ -70,6 +98,9 @@ class LicenseExtraction(BaseModel):
     license_number: str | None = None
     phone_number: str | None = None
     expiration_date: date | None = None
+    license_type: str | None = None
+    license_issue_date: date | None = None
+    license_current_status: str | None = None
 
 
 class VehicleDocExtraction(BaseModel):
@@ -79,12 +110,17 @@ class VehicleDocExtraction(BaseModel):
     year: int | None = None
     vin: str | None = None
     initial_odometer: int | None = None
+    engine_number: str | None = None
+    chassis_number: str | None = None
+    ownership_type: str | None = None
 
 
 class SupplierDocExtraction(BaseModel):
     name: str | None = None
     contact_email: str | None = None
     phone: str | None = None
+    address: str | None = None
+    category: str | None = None
 
 
 # ---- Fuel Agent: create-tool inputs ----
@@ -106,6 +142,11 @@ class FuelLogCreateInput(BaseModel):
     price_per_liter: Decimal
     total_cost: Decimal
     notes: str | None = None
+    po_number: str | None = None
+    payment_method: str | None = None
+    card_used: str | None = None
+    fuel_station_name: str | None = None
+    slip_id: str | None = None
 
 
 class TripLogCreateInput(BaseModel):
@@ -131,6 +172,10 @@ class FuelReceiptExtraction(BaseModel):
     total_cost: float | None = None
     odometer: int | None = None
     plate_number: str | None = None
+    slip_id: str | None = None
+    po_number: str | None = None
+    payment_method: str | None = None
+    card_used: str | None = None
 
 
 # ---- Maintenance & Parts Inventory Agent: mirrors backend/app/models/enums.py
@@ -163,7 +208,12 @@ class PartLineItem(BaseModel):
 
 class WorkOrderExtraction(BaseModel):
     issue_description: str | None = None
+    # Primary/legacy single service, kept for backward compatibility; prefer service_types.
     service_type: str | None = None
+    # Every service performed in the visit (a work order can list several).
+    service_types: list[str] = Field(default_factory=list)
+    service_scale: str | None = None
+    driver_name: str | None = None
     parts_used: list[PartLineItem] = Field(default_factory=list)
     labor_hours: float | None = None
     cost: float | None = None
@@ -194,10 +244,23 @@ class MaintenanceLogCreateInput(BaseModel):
     vehicle_id: str
     date: date
     odometer_at_service: int
-    service_type: ServiceType
+    # One or more services performed in this visit; the legacy single
+    # `service_type` is still accepted as shorthand for a one-element list.
+    service_types: list[ServiceType] = Field(min_length=1)
+    service_scale: ServiceScale = ServiceScale.minor
+    # The driver who brought the vehicle in.
+    driver_id: str | None = None
     description: str | None = None
     cost: Decimal | None = None
     mechanic_name: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_service_type(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "service_types" not in values and values.get("service_type") is not None:
+            values = {**values, "service_types": [values["service_type"]]}
+            values.pop("service_type", None)
+        return values
 
 
 class ResolvedPartUsed(BaseModel):
@@ -249,6 +312,10 @@ class IncidentExtraction(BaseModel):
     # is required and has no default -- the model must classify it too (see
     # driver-accountability-agent.md FR 1's correction).
     incident_type: str | None = None
+    incident_time: datetime | None = None
+    location_area: str | None = None
+    remarks: str | None = None
+    attachment_url: str | None = None
     vehicle_plate: str | None = None
     driver_name: str | None = None
     damage_description: str | None = None
@@ -270,8 +337,12 @@ class IncidentCreateInput(BaseModel):
     incident_type: IncidentType
     date: date
     severity: IncidentSeverity
+    incident_time: datetime | None = None
     description: str
     location_description: str | None = None
+    location_area: str | None = None
+    remarks: str | None = None
+    attachment_url: str | None = None
     estimated_cost: Decimal | None = None
 
 

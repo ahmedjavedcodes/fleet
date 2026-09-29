@@ -4,6 +4,8 @@ from sqlalchemy import DateTime, String, cast, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
 from app.models.accountability import DriverReport, IncidentLog, TripLog
+from app.models.driver import Driver
+from app.models.vehicle import Vehicle
 from app.schemas.accountability import TimelineEntry
 
 
@@ -21,7 +23,14 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
     """
 
     def _scope(stmt, model):
-        stmt = stmt.where(model.organization_id == org_id, model.is_deleted.is_(False))
+        # Names come from joins (drivers is an outer join -- incidents may have no driver),
+        # so every timeline summary carries who/what without a second lookup.
+        stmt = (
+            stmt.select_from(model)
+            .join(Vehicle, Vehicle.id == model.vehicle_id)
+            .outerjoin(Driver, Driver.id == model.driver_id)
+            .where(model.organization_id == org_id, model.is_deleted.is_(False))
+        )
         if vehicle_id is not None:
             stmt = stmt.where(model.vehicle_id == vehicle_id)
         if driver_id is not None:
@@ -35,6 +44,9 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
             TripLog.start_time.label("event_date"),
             func.jsonb_build_object(
                 "driver_id", TripLog.driver_id,
+                "driver_name", Driver.full_name,
+                "vehicle_plate", Vehicle.plate_number,
+                "vehicle_name", Vehicle.make + literal(" ") + Vehicle.model,
                 "vehicle_id", TripLog.vehicle_id,
                 "start_time", TripLog.start_time,
                 "end_time", TripLog.end_time,
@@ -59,6 +71,9 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
             cast(DriverReport.shift_date, DateTime(timezone=True)).label("event_date"),
             func.jsonb_build_object(
                 "driver_id", DriverReport.driver_id,
+                "driver_name", Driver.full_name,
+                "vehicle_plate", Vehicle.plate_number,
+                "vehicle_name", Vehicle.make + literal(" ") + Vehicle.model,
                 "vehicle_id", DriverReport.vehicle_id,
                 "shift_date", DriverReport.shift_date,
                 "vehicle_condition", DriverReport.vehicle_condition,
@@ -76,6 +91,9 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
             cast(IncidentLog.date, DateTime(timezone=True)).label("event_date"),
             func.jsonb_build_object(
                 "driver_id", IncidentLog.driver_id,
+                "driver_name", Driver.full_name,
+                "vehicle_plate", Vehicle.plate_number,
+                "vehicle_name", Vehicle.make + literal(" ") + Vehicle.model,
                 "vehicle_id", IncidentLog.vehicle_id,
                 "incident_type", IncidentLog.incident_type,
                 "date", IncidentLog.date,
@@ -84,6 +102,10 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
                 "location_description", IncidentLog.location_description,
                 "estimated_cost", cast(IncidentLog.estimated_cost, String),
                 "resolution_status", IncidentLog.resolution_status,
+                "incident_time", IncidentLog.incident_time,
+                "location_area", IncidentLog.location_area,
+                "remarks", IncidentLog.remarks,
+                "attachment_url", IncidentLog.attachment_url,
                 "resolution_notes", IncidentLog.resolution_notes,
             ).label("summary"),
         ),

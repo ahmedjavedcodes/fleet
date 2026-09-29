@@ -58,6 +58,7 @@ class MaintenanceAgentState(TypedDict, total=False):
     extracted: dict[str, Any] | None
     vehicle_id: str | None
     resolved_parts: list[dict[str, Any]]
+    resolved_driver_id: str | None
     maintenance_log: dict[str, Any] | None
     mechanic_report: dict[str, Any] | None
 

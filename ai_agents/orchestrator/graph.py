@@ -455,7 +455,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
 _WRITE_INDICATOR_FIELDS = frozenset({
     "assign_request", "terminate_request",  # assignment
     "document_type", "document_text",  # foundation / fuel / maintenance / accountability onboarding
-    "trip_fields",  # fuel
+    "trip_fields", "fuel_fields",  # fuel
     "provided_fields",  # foundation follow-up write
 })
 

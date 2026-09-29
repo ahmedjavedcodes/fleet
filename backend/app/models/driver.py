@@ -25,6 +25,9 @@ class Driver(Base, OrgScopedMixin, AuditMixin):
     license_number: Mapped[str] = mapped_column(String(100), nullable=False)
     license_expiry: Mapped[date] = mapped_column(Date, nullable=False)
     phone: Mapped[str] = mapped_column(String(50), nullable=False)
+    license_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    license_issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    license_current_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[DriverStatus] = mapped_column(
         SAEnum(DriverStatus, name="driver_status"),
         default=DriverStatus.active,

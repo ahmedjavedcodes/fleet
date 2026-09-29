@@ -97,6 +97,9 @@ def get_maintenance_calendar(db: Session, org_id: uuid.UUID, window_days: int = 
         MaintenanceCalendarItem(
             vehicle_id=o.vehicle_id,
             plate_number=o.plate_number,
+            vehicle_name=o.vehicle_name,
+            driver_name=o.driver_name,
+            last_service_date=o.last_service_date,
             service_type=o.service_type,
             due_date=o.next_due_date,
             due_km=o.next_due_km,
@@ -108,6 +111,9 @@ def get_maintenance_calendar(db: Session, org_id: uuid.UUID, window_days: int = 
         MaintenanceCalendarItem(
             vehicle_id=u.vehicle_id,
             plate_number=u.plate_number,
+            vehicle_name=u.vehicle_name,
+            driver_name=u.driver_name,
+            last_service_date=u.last_service_date,
             service_type=u.service_type,
             due_date=u.next_due_date,
             due_km=u.next_due_km,

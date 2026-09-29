@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import VehicleFuelType, VehicleStatus
+from app.models.enums import VehicleFuelType, VehicleOwnershipType, VehicleStatus
 
 
 class VehicleBase(BaseModel):
@@ -15,6 +15,9 @@ class VehicleBase(BaseModel):
     status: VehicleStatus = VehicleStatus.active
     service_interval_km: int | None = None
     service_interval_months: int | None = None
+    engine_number: str | None = None
+    chassis_number: str | None = None
+    ownership_type: VehicleOwnershipType = VehicleOwnershipType.owner
 
 
 class VehicleCreate(VehicleBase):
@@ -32,6 +35,9 @@ class VehicleUpdate(BaseModel):
     status: VehicleStatus | None = None
     service_interval_km: int | None = None
     service_interval_months: int | None = None
+    engine_number: str | None = None
+    chassis_number: str | None = None
+    ownership_type: VehicleOwnershipType | None = None
 
 
 class VehicleResponse(VehicleBase):
@@ -40,3 +46,5 @@ class VehicleResponse(VehicleBase):
     id: uuid.UUID
     organization_id: uuid.UUID
     current_odometer: int
+    # Set server-side from the authenticated user on create; not accepted in requests.
+    added_by: uuid.UUID | None = None

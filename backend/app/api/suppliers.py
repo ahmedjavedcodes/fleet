@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import require_role
-from app.models.enums import UserRole
+from app.models.enums import SupplierCategory, UserRole
 from app.models.user import User
 from app.schemas.supplier import SupplierCreate, SupplierResponse, SupplierUpdate
 from app.services import supplier_service
@@ -29,11 +29,12 @@ def create_supplier(
 @router.get("", response_model=list[SupplierResponse])
 def list_suppliers(
     sort: str | None = Query(default=None, description="Set to 'reliability_score' to sort by it"),
+    category: SupplierCategory | None = None,
     current_user: User = Depends(require_role(*_READ_ROLES)),
     db: Session = Depends(get_db),
 ) -> list[SupplierResponse]:
     suppliers = supplier_service.list_suppliers(
-        db, current_user.organization_id, sort_by_reliability=(sort == "reliability_score")
+        db, current_user.organization_id, sort_by_reliability=(sort == "reliability_score"), category=category
     )
     return [SupplierResponse.model_validate(s) for s in suppliers]
 

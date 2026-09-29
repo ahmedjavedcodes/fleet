@@ -7,7 +7,9 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.maintenance import MaintenanceLog, MechanicReport
+from app.models.driver import Driver
+from app.models.enums import ServiceType
+from app.models.maintenance import MaintenanceLog, MaintenanceLogService, MechanicReport
 from app.models.vehicle import Vehicle
 from app.schemas.maintenance import (
     MaintenanceLogCreate,
@@ -43,6 +45,20 @@ def _get_vehicle_or_404(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID) -
     return vehicle
 
 
+def _validate_driver(db: Session, org_id: uuid.UUID, driver_id: uuid.UUID | None) -> None:
+    if driver_id is None:
+        return
+    driver = db.execute(
+        select(Driver).where(Driver.id == driver_id, Driver.organization_id == org_id, Driver.is_deleted.is_(False))
+    ).scalar_one_or_none()
+    if driver is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+
+
+def _build_services(service_types) -> list[MaintenanceLogService]:
+    return [MaintenanceLogService(id=uuid.uuid4(), service_type=t, position=i) for i, t in enumerate(service_types)]
+
+
 def _compute_next_due(vehicle: Vehicle, odometer_at_service: int, service_date: date_type) -> tuple[int | None, date_type | None]:
     next_due_km = odometer_at_service + vehicle.service_interval_km if vehicle.service_interval_km is not None else None
     next_due_date = _add_months(service_date, vehicle.service_interval_months) if vehicle.service_interval_months is not None else None
@@ -54,6 +70,7 @@ def create_maintenance_log(db: Session, org_id: uuid.UUID, data: MaintenanceLogC
     update Vehicle.current_odometer -- odometer currency comes from fuel/trip
     logging (Specs 01/04), not maintenance logging."""
     vehicle = _get_vehicle_or_404(db, org_id, data.vehicle_id)
+    _validate_driver(db, org_id, data.driver_id)
     next_due_km, next_due_date = _compute_next_due(vehicle, data.odometer_at_service, data.date)
 
     log = MaintenanceLog(
@@ -63,12 +80,15 @@ def create_maintenance_log(db: Session, org_id: uuid.UUID, data: MaintenanceLogC
         vehicle_id=data.vehicle_id,
         date=data.date,
         odometer_at_service=data.odometer_at_service,
-        service_type=data.service_type,
+        service_type=data.service_types[0],
+        service_scale=data.service_scale,
+        driver_id=data.driver_id,
         description=data.description,
         cost=data.cost,
         mechanic_name=data.mechanic_name,
         next_due_km=next_due_km,
         next_due_date=next_due_date,
+        services=_build_services(data.service_types),
     )
     db.add(log)
     db.commit()
@@ -101,7 +121,12 @@ def list_maintenance_logs(
     if vehicle_id is not None:
         stmt = stmt.where(MaintenanceLog.vehicle_id == vehicle_id)
     if service_type is not None:
-        stmt = stmt.where(MaintenanceLog.service_type == service_type)
+        # A visit can include several services -- match on any of them.
+        stmt = stmt.where(
+            MaintenanceLog.id.in_(
+                select(MaintenanceLogService.maintenance_log_id).where(MaintenanceLogService.service_type == service_type)
+            )
+        )
     if date_from is not None:
         stmt = stmt.where(MaintenanceLog.date >= date_from)
     if date_to is not None:
@@ -119,6 +144,13 @@ def update_maintenance_log(
     log = get_maintenance_log(db, org_id, log_id)
     updates = data.model_dump(exclude_unset=True)
     recompute = "odometer_at_service" in updates or "date" in updates
+
+    if "driver_id" in updates:
+        _validate_driver(db, org_id, updates["driver_id"])
+    service_types = updates.pop("service_types", None)
+    if service_types is not None:
+        log.service_type = service_types[0]
+        log.services = _build_services(service_types)
 
     for field, value in updates.items():
         setattr(log, field, value)
@@ -176,30 +208,37 @@ def create_mechanic_report(
     return report, alerts
 
 
-def _latest_logs_joined_with_vehicle(db: Session, org_id: uuid.UUID) -> list[tuple[MaintenanceLog, Vehicle]]:
+def _latest_logs_joined_with_vehicle(
+    db: Session, org_id: uuid.UUID
+) -> list[tuple[MaintenanceLog, Vehicle, ServiceType]]:
     """The latest MaintenanceLog per (vehicle_id, service_type), joined to its
     Vehicle -- shared by list_upcoming and list_overdue so an old, superseded
-    log never causes either to flag a vehicle incorrectly. Known limitation:
-    if two logs for the same (vehicle, service_type) share the exact same
-    date, both are returned rather than picking one -- an acceptable rarity
-    at this scale, not worth a window-function query."""
+    log never causes either to flag a vehicle incorrectly. A log covering
+    several services (MaintenanceLogService rows) counts as the latest for each
+    of them, so the returned service_type comes from the service row, not from
+    the log's primary service_type. Known limitation: if two logs for the same
+    (vehicle, service_type) share the exact same date, both are returned rather
+    than picking one -- an acceptable rarity at this scale, not worth a
+    window-function query."""
     latest = (
         select(
             MaintenanceLog.vehicle_id,
-            MaintenanceLog.service_type,
+            MaintenanceLogService.service_type,
             func.max(MaintenanceLog.date).label("max_date"),
         )
+        .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
         .where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False))
-        .group_by(MaintenanceLog.vehicle_id, MaintenanceLog.service_type)
+        .group_by(MaintenanceLog.vehicle_id, MaintenanceLogService.service_type)
         .subquery()
     )
     stmt = (
-        select(MaintenanceLog, Vehicle)
+        select(MaintenanceLog, Vehicle, MaintenanceLogService.service_type)
         .join(Vehicle, Vehicle.id == MaintenanceLog.vehicle_id)
+        .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
         .join(
             latest,
             (MaintenanceLog.vehicle_id == latest.c.vehicle_id)
-            & (MaintenanceLog.service_type == latest.c.service_type)
+            & (MaintenanceLogService.service_type == latest.c.service_type)
             & (MaintenanceLog.date == latest.c.max_date),
         )
         .where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False), Vehicle.is_deleted.is_(False))
@@ -207,24 +246,35 @@ def _latest_logs_joined_with_vehicle(db: Session, org_id: uuid.UUID) -> list[tup
     return list(db.execute(stmt).all())
 
 
+def _item_fields(log: MaintenanceLog, vehicle: Vehicle, service_type: ServiceType) -> dict:
+    """Fields shared by UpcomingMaintenanceItem/OverdueMaintenanceItem."""
+    return {
+        "vehicle_id": vehicle.id,
+        "plate_number": vehicle.plate_number,
+        "vehicle_name": f"{vehicle.make} {vehicle.model}",
+        "service_type": service_type,
+        "driver_name": log.driver_name,
+        "last_service_date": log.date,
+        "next_due_km": log.next_due_km,
+        "next_due_date": log.next_due_date,
+        "current_odometer": vehicle.current_odometer,
+    }
+
+
 def list_upcoming(db: Session, org_id: uuid.UUID, window_km: int = 1000) -> list[UpcomingMaintenanceItem]:
     """Vehicles where 0 <= (next_due_km - current_odometer) < window_km, using
     only the latest log per (vehicle, service_type). Read-time comparison, no
     stored flag."""
     items: list[UpcomingMaintenanceItem] = []
-    for log, vehicle in _latest_logs_joined_with_vehicle(db, org_id):
+    for log, vehicle, service_type in _latest_logs_joined_with_vehicle(db, org_id):
         if log.next_due_km is None:
             continue
         km_remaining = log.next_due_km - vehicle.current_odometer
         if 0 <= km_remaining < window_km:
             items.append(
                 UpcomingMaintenanceItem(
-                    vehicle_id=vehicle.id,
-                    plate_number=vehicle.plate_number,
-                    service_type=log.service_type,
-                    next_due_km=log.next_due_km,
-                    next_due_date=log.next_due_date,
-                    current_odometer=vehicle.current_odometer,
+                    **_item_fields(log, vehicle, service_type),
+                    service_scale=log.service_scale,
                     km_remaining=km_remaining,
                 )
             )
@@ -248,7 +298,7 @@ def list_upcoming_by_date(db: Session, org_id: uuid.UUID, window_days: int = 30)
     """
     today = datetime.now(timezone.utc).date()
     items: list[UpcomingMaintenanceItem] = []
-    for log, vehicle in _latest_logs_joined_with_vehicle(db, org_id):
+    for log, vehicle, service_type in _latest_logs_joined_with_vehicle(db, org_id):
         if log.next_due_date is None:
             continue
         days_remaining = (log.next_due_date - today).days
@@ -256,12 +306,8 @@ def list_upcoming_by_date(db: Session, org_id: uuid.UUID, window_days: int = 30)
             km_remaining = log.next_due_km - vehicle.current_odometer if log.next_due_km is not None else None
             items.append(
                 UpcomingMaintenanceItem(
-                    vehicle_id=vehicle.id,
-                    plate_number=vehicle.plate_number,
-                    service_type=log.service_type,
-                    next_due_km=log.next_due_km,
-                    next_due_date=log.next_due_date,
-                    current_odometer=vehicle.current_odometer,
+                    **_item_fields(log, vehicle, service_type),
+                    service_scale=log.service_scale,
                     km_remaining=km_remaining,
                 )
             )
@@ -273,19 +319,15 @@ def list_overdue(db: Session, org_id: uuid.UUID) -> list[OverdueMaintenanceItem]
     using only the latest log per (vehicle, service_type)."""
     today = datetime.now(timezone.utc).date()
     items: list[OverdueMaintenanceItem] = []
-    for log, vehicle in _latest_logs_joined_with_vehicle(db, org_id):
+    for log, vehicle, service_type in _latest_logs_joined_with_vehicle(db, org_id):
         overdue_by_km = log.next_due_km is not None and vehicle.current_odometer > log.next_due_km
         overdue_by_date = log.next_due_date is not None and today > log.next_due_date
         if overdue_by_km or overdue_by_date:
             km_remaining = log.next_due_km - vehicle.current_odometer if log.next_due_km is not None else None
             items.append(
                 OverdueMaintenanceItem(
-                    vehicle_id=vehicle.id,
-                    plate_number=vehicle.plate_number,
-                    service_type=log.service_type,
-                    next_due_km=log.next_due_km,
-                    next_due_date=log.next_due_date,
-                    current_odometer=vehicle.current_odometer,
+                    **_item_fields(log, vehicle, service_type),
+                    service_scale=log.service_scale,
                     km_remaining=km_remaining,
                 )
             )

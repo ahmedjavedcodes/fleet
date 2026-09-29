@@ -20,7 +20,11 @@ def _maintenance_facts(raw_result: dict[str, Any]) -> list[EntityFact]:
     log = raw_result.get("maintenance_log") or {}
     if not log.get("vehicle_id"):
         return []
-    service = str(log.get("service_type") or "service").replace("_", " ")
+    # A visit can cover several services; fall back to the primary service_type.
+    services = log.get("service_types") or [log.get("service_type") or "service"]
+    service = ", ".join(str(s).replace("_", " ") for s in services)
+    if log.get("service_scale") == "major":
+        service = f"major: {service}"
     details = f": {log['description']}" if log.get("description") else ""
     when = f" on {log['date']}" if log.get("date") else ""
     odometer = f" at {log['odometer_at_service']} km" if log.get("odometer_at_service") else ""

@@ -186,10 +186,15 @@ def _make_create_node(deps: AccountabilityAgentDeps):
             driver_id=state.get("resolved_driver_id"),
             vehicle_id=state["vehicle_id"],
             incident_type=_map_incident_type(extracted.get("incident_type")),
-            date=extracted.get("incident_date") or date.today(),
+            date=extracted.get("incident_date")
+            or (extracted["incident_time"].date() if extracted.get("incident_time") else date.today()),
             severity=_map_severity(extracted.get("severity")),
             description=extracted["damage_description"],
             location_description=extracted.get("location"),
+            incident_time=extracted.get("incident_time"),
+            location_area=(extracted.get("location_area") or "").strip() or None,
+            remarks=(extracted.get("remarks") or "").strip() or None,
+            attachment_url=(extracted.get("attachment_url") or "").strip() or None,
         )
 
         try:

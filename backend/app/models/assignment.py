@@ -3,14 +3,14 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.enums import VehicleCondition
-from app.models.mixins import AuditMixin, OrgScopedMixin
+from app.models.mixins import AuditMixin, OrgScopedMixin, VehicleDriverRefMixin
 
 
-class VehicleAssignment(Base, OrgScopedMixin, AuditMixin):
+class VehicleAssignment(Base, OrgScopedMixin, AuditMixin, VehicleDriverRefMixin):
     """Point-in-time custody record. released_at IS NULL means the assignment
     is currently active -- the sole source of truth for "who has this vehicle
     right now", never a separate status flag on Vehicle/Driver."""
@@ -34,3 +34,6 @@ class VehicleAssignment(Base, OrgScopedMixin, AuditMixin):
     )
     take_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     leave_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    vehicle: Mapped["Vehicle"] = relationship("Vehicle", lazy="joined", viewonly=True)
+    driver: Mapped["Driver"] = relationship("Driver", lazy="joined", viewonly=True)

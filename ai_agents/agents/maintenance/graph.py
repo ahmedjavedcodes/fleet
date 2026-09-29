@@ -32,7 +32,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.maintenance.state import MaintenanceAgentState
 from agents.maintenance.stock_checker import StockDeficitError, check_stock_sufficient
-from mcp_server.foundation_tools import get_vehicles_tool
+from mcp_server.foundation_tools import get_drivers_tool, get_vehicles_tool
 from mcp_server.maintenance_tools import (
     PermissionDeniedError,
     create_maintenance_log_tool,
@@ -56,6 +56,7 @@ from tools.schemas import (
     MaintenanceLogCreateInput,
     MechanicReportCreateInput,
     ResolvedPartUsed,
+    ServiceScale,
     ServiceType,
 )
 
@@ -70,6 +71,7 @@ class MaintenanceAgentDeps:
     extract_work_order: Extractor = extract_work_order
     extract_parts_invoice: Extractor = extract_parts_invoice
     get_vehicles: Lister = get_vehicles_tool
+    get_drivers: Lister = get_drivers_tool
     get_inventory: Lister = get_inventory_tool
     get_low_stock: Lister = get_low_stock_tool
     get_maintenance_logs: Lister = get_maintenance_logs_tool
@@ -123,13 +125,31 @@ def _resolve_part(name_or_sku: str, inventory: list[dict[str, Any]]) -> dict[str
     return None
 
 
-def _map_service_type(raw: str | None) -> ServiceType:
+def _map_service_types(extracted: dict[str, Any]) -> list[ServiceType]:
+    """Every service on the work order, de-duplicated in order. Falls back to the
+    single (legacy) service_type, then to [other], so a work order that lists no
+    recognisable service still files rather than failing on an optional detail."""
+    raw_items = list(extracted.get("service_types") or [])
+    if extracted.get("service_type"):
+        raw_items.append(extracted["service_type"])
+    mapped: list[ServiceType] = []
+    for raw in raw_items:
+        try:
+            service = ServiceType(str(raw).strip().lower().replace(" ", "_"))
+        except ValueError:
+            continue
+        if service not in mapped:
+            mapped.append(service)
+    return mapped or [ServiceType.other]
+
+
+def _map_service_scale(raw: str | None) -> ServiceScale:
     if raw:
         try:
-            return ServiceType(raw.strip().lower())
+            return ServiceScale(raw.strip().lower())
         except ValueError:
             pass
-    return ServiceType.other
+    return ServiceScale.minor
 
 
 # ---- maintenance_onboard ----
@@ -170,6 +190,17 @@ def _make_resolve_assets_node(deps: MaintenanceAgentDeps):
         if not extracted.get("odometer"):
             return {**state, "stage": "halted", "halt_reason": "Could not determine the work order's odometer reading."}
 
+        # Best-effort: an unmatched driver name doesn't block filing -- driver_id is optional.
+        resolved_driver_id = None
+        driver_name = (extracted.get("driver_name") or "").strip().casefold()
+        if driver_name:
+            driver = next(
+                (d for d in deps.get_drivers(context) if (d.get("full_name") or "").strip().casefold() == driver_name),
+                None,
+            )
+            if driver is not None:
+                resolved_driver_id = driver["id"]
+
         inventory = deps.get_inventory(context)
         resolved_parts: list[dict[str, Any]] = []
         for item in extracted.get("parts_used") or []:
@@ -188,6 +219,7 @@ def _make_resolve_assets_node(deps: MaintenanceAgentDeps):
             **state,
             "vehicle_id": vehicle["id"],
             "resolved_parts": resolved_parts,
+            "resolved_driver_id": resolved_driver_id,
             "stage": "creating_log",
         }
 
@@ -208,7 +240,9 @@ def _make_create_log_node(deps: MaintenanceAgentDeps):
             vehicle_id=state["vehicle_id"],
             date=date.today(),
             odometer_at_service=extracted.get("odometer"),
-            service_type=_map_service_type(extracted.get("service_type")),
+            service_types=_map_service_types(extracted),
+            service_scale=_map_service_scale(extracted.get("service_scale")),
+            driver_id=state.get("resolved_driver_id"),
             description=description or None,
             cost=extracted.get("cost"),
         )

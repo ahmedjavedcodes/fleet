@@ -116,3 +116,22 @@ class DocumentStatus(str, enum.Enum):
     processing = "processing"
     ready = "ready"
     failed = "failed"
+
+
+class VehicleOwnershipType(str, enum.Enum):
+    leasing = "leasing"
+    rent = "rent"
+    owner = "owner"
+
+
+class SupplierCategory(str, enum.Enum):
+    workshop = "workshop"
+    tire_supplier = "tire_supplier"
+    parts_supplier = "parts_supplier"
+    fuel_station = "fuel_station"
+    other = "other"
+
+
+class ServiceScale(str, enum.Enum):
+    minor = "minor"
+    major = "major"

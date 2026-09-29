@@ -15,7 +15,9 @@ _DUPLICATE_ERROR = HTTPException(
 
 
 def create_vehicle(db: Session, org_id: uuid.UUID, data: VehicleCreate, created_by: uuid.UUID) -> Vehicle:
-    vehicle = Vehicle(id=uuid.uuid4(), organization_id=org_id, created_by=created_by, **data.model_dump())
+    vehicle = Vehicle(
+        id=uuid.uuid4(), organization_id=org_id, created_by=created_by, added_by=created_by, **data.model_dump()
+    )
     db.add(vehicle)
     try:
         db.commit()

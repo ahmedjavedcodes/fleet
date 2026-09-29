@@ -1,11 +1,11 @@
 import uuid
 
-from sqlalchemy import Enum as SAEnum, Integer, String, UniqueConstraint
+from sqlalchemy import Enum as SAEnum, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-from app.models.enums import VehicleFuelType, VehicleStatus
+from app.models.enums import VehicleFuelType, VehicleOwnershipType, VehicleStatus
 from app.models.mixins import AuditMixin, OrgScopedMixin
 
 
@@ -31,3 +31,14 @@ class Vehicle(Base, OrgScopedMixin, AuditMixin):
     )
     service_interval_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
     service_interval_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    engine_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    chassis_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ownership_type: Mapped[VehicleOwnershipType] = mapped_column(
+        SAEnum(VehicleOwnershipType, name="vehicle_ownership_type"),
+        default=VehicleOwnershipType.owner,
+        server_default=VehicleOwnershipType.owner.value,
+        nullable=False,
+    )
+    # Who registered the record. Set server-side from the authenticated user,
+    # never accepted from the client (see VehicleCreate).
+    added_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)

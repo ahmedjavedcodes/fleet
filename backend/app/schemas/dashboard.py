@@ -32,6 +32,9 @@ class MaintenanceCalendarItem(BaseModel):
     vehicle_id: uuid.UUID
     plate_number: str
     service_type: ServiceType
+    vehicle_name: str | None = None
+    driver_name: str | None = None
+    last_service_date: date_type | None = None
     # Nullable: an item overdue purely by km (no service_interval_months
     # configured on the vehicle) has no next_due_date at all. Per EC-2, an
     # overdue item is never dropped from the calendar for any reason

@@ -3,12 +3,16 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
+from app.models.enums import SupplierCategory
+
 
 class SupplierBase(BaseModel):
     name: str
     contact_email: str | None = None
     phone: str | None = None
     avg_lead_time_days: int | None = None
+    address: str | None = None
+    category: SupplierCategory = SupplierCategory.other
 
 
 class SupplierCreate(SupplierBase):
@@ -20,6 +24,8 @@ class SupplierUpdate(BaseModel):
     contact_email: str | None = None
     phone: str | None = None
     avg_lead_time_days: int | None = None
+    address: str | None = None
+    category: SupplierCategory | None = None
 
 
 class SupplierResponse(SupplierBase):

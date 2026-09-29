@@ -10,6 +10,7 @@ from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.models.driver import Driver
 from app.models.enums import FuelReceiptUploadStatus
 from app.models.fuel import FuelLog, FuelReceipt
 from app.models.vehicle import Vehicle
@@ -162,6 +163,11 @@ def create_fuel_log(
         cost_per_km=cost_per_km,
         is_anomalous=is_anomalous,
         notes=data.notes,
+        po_number=data.po_number,
+        payment_method=data.payment_method,
+        card_used=data.card_used,
+        fuel_station_name=data.fuel_station_name,
+        slip_id=data.slip_id,
     )
     db.add(fuel_log)
 
@@ -337,19 +343,57 @@ def get_monthly_summary(db: Session, org_id: uuid.UUID, month: str | None) -> Fu
     ).one()
 
     by_vehicle_rows = db.execute(
-        select(FuelLog.vehicle_id, func.sum(FuelLog.total_cost), total_liters_expr, avg_expr)
+        select(
+            FuelLog.vehicle_id,
+            func.sum(FuelLog.total_cost),
+            total_liters_expr,
+            avg_expr,
+            func.count(FuelLog.id),
+            func.min(FuelLog.date),
+            func.max(FuelLog.date),
+        )
         .where(*filters)
         .group_by(FuelLog.vehicle_id)
     ).all()
+
+    vehicle_ids = [row[0] for row in by_vehicle_rows]
+    vehicles = (
+        {v.id: v for v in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars()} if vehicle_ids else {}
+    )
+    drivers_by_vehicle: dict[uuid.UUID, list[str]] = {}
+    if vehicle_ids:
+        driver_rows = db.execute(
+            select(FuelLog.vehicle_id, Driver.full_name)
+            .join(Driver, Driver.id == FuelLog.driver_id)
+            .where(*filters)
+            .distinct()
+            .order_by(Driver.full_name)
+        ).all()
+        for vid, name in driver_rows:
+            drivers_by_vehicle.setdefault(vid, []).append(name)
 
     return FuelSummaryResponse(
         month=month,
         total_cost=total_cost,
         total_liters=total_liters,
         avg_cost_per_km=avg_cost_per_km,
+        period_start=period_start,
+        period_end=period_end,
+        generated_at=datetime.now(timezone.utc),
         by_vehicle=[
-            VehicleFuelSummary(vehicle_id=vehicle_id, total_cost=vtotal, total_liters=vliters, avg_cost_per_km=vavg)
-            for vehicle_id, vtotal, vliters, vavg in by_vehicle_rows
+            VehicleFuelSummary(
+                vehicle_id=vehicle_id,
+                plate_number=vehicles[vehicle_id].plate_number if vehicle_id in vehicles else None,
+                vehicle_name=f"{vehicles[vehicle_id].make} {vehicles[vehicle_id].model}" if vehicle_id in vehicles else None,
+                driver_names=drivers_by_vehicle.get(vehicle_id, []),
+                total_cost=vtotal,
+                total_liters=vliters,
+                avg_cost_per_km=vavg,
+                fill_count=fill_count,
+                first_fill_date=first_date,
+                last_fill_date=last_date,
+            )
+            for vehicle_id, vtotal, vliters, vavg, fill_count, first_date, last_date in by_vehicle_rows
         ],
     )
 

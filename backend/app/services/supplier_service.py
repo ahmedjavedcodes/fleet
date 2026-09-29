@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.enums import PurchaseOrderStatus
+from app.models.enums import PurchaseOrderStatus, SupplierCategory
 from app.models.inventory import PurchaseOrder
 from app.models.supplier import Supplier
 from app.schemas.supplier import SupplierCreate, SupplierUpdate
@@ -32,8 +32,12 @@ def get_supplier(db: Session, org_id: uuid.UUID, supplier_id: uuid.UUID) -> Supp
     return supplier
 
 
-def list_suppliers(db: Session, org_id: uuid.UUID, sort_by_reliability: bool = False) -> list[Supplier]:
+def list_suppliers(
+    db: Session, org_id: uuid.UUID, sort_by_reliability: bool = False, category: SupplierCategory | None = None
+) -> list[Supplier]:
     stmt = select(Supplier).where(Supplier.organization_id == org_id, Supplier.is_deleted.is_(False))
+    if category is not None:
+        stmt = stmt.where(Supplier.category == category)
     if sort_by_reliability:
         # NULLS LAST so suppliers with no scored history yet sort after scored ones.
         stmt = stmt.order_by(Supplier.reliability_score.desc().nulls_last())

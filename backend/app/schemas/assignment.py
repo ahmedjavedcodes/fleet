@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.models.enums import VehicleCondition
+from app.schemas.common import VehicleDriverRefs
 
 
 class VehicleAssignRequest(BaseModel):
@@ -25,7 +26,7 @@ class VehicleReleaseRequest(BaseModel):
     leave_notes: str | None = None
 
 
-class VehicleAssignmentResponse(BaseModel):
+class VehicleAssignmentResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID

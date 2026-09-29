@@ -4,9 +4,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import IncidentResolutionStatus, IncidentSeverity, IncidentType, VehicleCondition
+from app.schemas.common import VehicleDriverRefs
 
 # --- TripLog -------------------------------------------------------------------
 
@@ -28,7 +29,7 @@ class TripLogCreate(BaseModel):
     notes: str | None = None
 
 
-class TripLogResponse(BaseModel):
+class TripLogResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -58,7 +59,7 @@ class DriverReportCreate(BaseModel):
     issues_reported: str | None = None
 
 
-class DriverReportResponse(BaseModel):
+class DriverReportResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -80,11 +81,25 @@ class IncidentLogCreate(BaseModel):
     driver_id: uuid.UUID | None = None
     vehicle_id: uuid.UUID
     incident_type: IncidentType
-    date: date_type
+    # At least one of date/incident_time is required; date is derived from incident_time
+    # when omitted, so callers with a full timestamp never have to send both.
+    date: date_type | None = None
+    incident_time: datetime | None = None
     severity: IncidentSeverity
     description: str
     location_description: str | None = None
+    location_area: str | None = None
+    remarks: str | None = None
+    attachment_url: str | None = None
     estimated_cost: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _require_date_or_time(self) -> "IncidentLogCreate":
+        if self.date is None:
+            if self.incident_time is None:
+                raise ValueError("Either date or incident_time is required")
+            self.date = self.incident_time.date()
+        return self
 
 
 class IncidentLogResolutionUpdate(BaseModel):
@@ -99,7 +114,7 @@ class IncidentLogResolutionUpdate(BaseModel):
     resolution_notes: str | None = None
 
 
-class IncidentLogResponse(BaseModel):
+class IncidentLogResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -107,9 +122,13 @@ class IncidentLogResponse(BaseModel):
     vehicle_id: uuid.UUID
     incident_type: IncidentType
     date: date_type
+    incident_time: datetime | None
     severity: IncidentSeverity
     description: str
     location_description: str | None
+    location_area: str | None
+    remarks: str | None
+    attachment_url: str | None
     estimated_cost: Decimal | None
     resolution_status: IncidentResolutionStatus
     resolution_notes: str | None

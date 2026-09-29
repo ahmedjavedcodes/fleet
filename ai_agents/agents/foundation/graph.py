@@ -53,7 +53,14 @@ from tools.sanitize import (
     sanitize_plate_number,
     sanitize_vin,
 )
-from tools.schemas import DriverCreateInput, LicenseExtraction, SupplierCreateInput, VehicleCreateInput
+from tools.schemas import (
+    DriverCreateInput,
+    LicenseExtraction,
+    SupplierCategory,
+    SupplierCreateInput,
+    VehicleCreateInput,
+    VehicleOwnershipType,
+)
 
 Extractor = Callable[[bytes, str], Any]
 Lister = Callable[[AgentContext], list[dict[str, Any]]]
@@ -80,6 +87,31 @@ _REQUIRED_FIELDS = {
     "vehicle_doc": ["plate_number", "make", "model", "year", "vin", "fuel_type"],
     "supplier_doc": ["name"],
 }
+
+
+# Optional attributes per document type that the caller may supply in chat via
+# provided_fields (e.g. {"engine_number": "ENG-9", "ownership_type": "leasing"})
+# or that vision extraction may have read off the document. provided_fields wins.
+_OPTIONAL_FIELDS = {
+    "license": ["license_type", "license_issue_date", "license_current_status"],
+    "vehicle_doc": ["engine_number", "chassis_number", "ownership_type"],
+    "supplier_doc": ["address", "category"],
+}
+
+
+def _clean_text(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _map_enum(value: Any, enum_cls: Any, default: Any) -> Any:
+    """Case/space-insensitive enum match; anything unrecognised falls back to
+    the default rather than failing the whole onboarding over an optional field."""
+    text = (_clean_text(value) or "").lower().replace(" ", "_").replace("-", "_")
+    try:
+        return enum_cls(text).value
+    except ValueError:
+        return default.value
 
 
 def _context_from_state(state: FoundationAgentState) -> AgentContext:
@@ -158,6 +190,9 @@ def sanitize(state: FoundationAgentState) -> FoundationAgentState:
             "license_number": sanitize_license_number(extracted.get("license_number")) or None,
             "license_expiry": extracted.get("expiration_date"),
             "phone": sanitize_phone(extracted.get("phone_number")) or None,
+            "license_type": _clean_text(extracted.get("license_type")),
+            "license_issue_date": extracted.get("license_issue_date"),
+            "license_current_status": _clean_text(extracted.get("license_current_status")),
         }
     elif document_type == "vehicle_doc":
         bridged = {
@@ -168,13 +203,28 @@ def sanitize(state: FoundationAgentState) -> FoundationAgentState:
             "vin": sanitize_vin(extracted.get("vin")) or None,
             "current_odometer": extracted.get("initial_odometer") or 0,
             "fuel_type": provided.get("fuel_type"),
+            "engine_number": _clean_text(extracted.get("engine_number")),
+            "chassis_number": _clean_text(extracted.get("chassis_number")),
+            "ownership_type": extracted.get("ownership_type"),
         }
     else:  # supplier_doc
         bridged = {
             "name": sanitize_name(extracted.get("name")) or None,
             "contact_email": (extracted.get("contact_email") or "").strip().lower() or None,
             "phone": sanitize_phone(extracted.get("phone")) or None,
+            "address": _clean_text(extracted.get("address")),
+            "category": extracted.get("category"),
         }
+
+    for key in _OPTIONAL_FIELDS[document_type]:
+        if provided.get(key) not in (None, ""):
+            bridged[key] = provided[key]
+    if document_type == "vehicle_doc":
+        bridged["ownership_type"] = _map_enum(
+            bridged.get("ownership_type"), VehicleOwnershipType, VehicleOwnershipType.owner
+        )
+    elif document_type == "supplier_doc":
+        bridged["category"] = _map_enum(bridged.get("category"), SupplierCategory, SupplierCategory.other)
 
     required = _REQUIRED_FIELDS[document_type]
     missing = [f for f in required if not bridged.get(f)]

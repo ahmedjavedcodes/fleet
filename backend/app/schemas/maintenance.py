@@ -3,9 +3,25 @@ from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.enums import ServiceType
+from app.models.enums import ServiceScale, ServiceType
+from app.schemas.common import VehicleDriverRefs
+
+
+def _normalize_service_types(values: dict) -> dict:
+    """Accept the legacy single `service_type` as shorthand for `service_types`,
+    de-duplicating while preserving order. The first entry is the primary service."""
+    if isinstance(values, dict) and "service_types" not in values and values.get("service_type") is not None:
+        values = {**values, "service_types": [values["service_type"]]}
+        values.pop("service_type", None)
+    if isinstance(values, dict) and values.get("service_types") is not None:
+        seen: list = []
+        for item in values["service_types"]:
+            if item not in seen:
+                seen.append(item)
+        values = {**values, "service_types": seen}
+    return values
 
 
 class MaintenanceLogCreate(BaseModel):
@@ -14,10 +30,20 @@ class MaintenanceLogCreate(BaseModel):
     vehicle_id: uuid.UUID
     date: date_type
     odometer_at_service: int = Field(gt=0)
-    service_type: ServiceType
+    # One or more services performed in this visit (legacy `service_type` is still
+    # accepted as shorthand for a single-element list).
+    service_types: list[ServiceType] = Field(min_length=1)
+    service_scale: ServiceScale = ServiceScale.minor
+    # The driver who brought the vehicle in.
+    driver_id: uuid.UUID | None = None
     description: str | None = None
     cost: Decimal | None = Field(default=None, ge=0)
     mechanic_name: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_service_type(cls, values):
+        return _normalize_service_types(values)
 
 
 class MaintenanceLogUpdate(BaseModel):
@@ -29,10 +55,17 @@ class MaintenanceLogUpdate(BaseModel):
 
     date: date_type | None = None
     odometer_at_service: int | None = Field(default=None, gt=0)
-    service_type: ServiceType | None = None
+    service_types: list[ServiceType] | None = Field(default=None, min_length=1)
+    service_scale: ServiceScale | None = None
+    driver_id: uuid.UUID | None = None
     description: str | None = None
     cost: Decimal | None = Field(default=None, ge=0)
     mechanic_name: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_service_type(cls, values):
+        return _normalize_service_types(values)
 
 
 class PartUsed(BaseModel):
@@ -71,14 +104,18 @@ class MechanicReportResponse(BaseModel):
     low_stock_alerts: list[LowStockAlert] = Field(default_factory=list)
 
 
-class MaintenanceLogResponse(BaseModel):
+class MaintenanceLogResponse(VehicleDriverRefs):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     vehicle_id: uuid.UUID
     date: date_type
     odometer_at_service: int
+    # Primary (first) service, kept for consumers that only need one.
     service_type: ServiceType
+    service_types: list[ServiceType]
+    service_scale: ServiceScale
+    driver_id: uuid.UUID | None
     description: str | None
     cost: Decimal | None
     mechanic_name: str | None
@@ -95,6 +132,11 @@ class UpcomingMaintenanceItem(BaseModel):
     vehicle_id: uuid.UUID
     plate_number: str
     service_type: ServiceType
+    vehicle_name: str | None = None
+    # Driver who brought the vehicle in for the last service of this type, and when.
+    driver_name: str | None = None
+    last_service_date: date_type | None = None
+    service_scale: ServiceScale | None = None
     next_due_km: int | None
     next_due_date: date_type | None
     current_odometer: int
@@ -105,6 +147,11 @@ class OverdueMaintenanceItem(BaseModel):
     vehicle_id: uuid.UUID
     plate_number: str
     service_type: ServiceType
+    vehicle_name: str | None = None
+    # Driver who brought the vehicle in for the last service of this type, and when.
+    driver_name: str | None = None
+    last_service_date: date_type | None = None
+    service_scale: ServiceScale | None = None
     next_due_km: int | None
     next_due_date: date_type | None
     current_odometer: int

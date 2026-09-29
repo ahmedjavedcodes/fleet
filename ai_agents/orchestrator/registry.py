@@ -40,7 +40,9 @@ SUB_AGENT_REGISTRY: dict[str, SubAgentSpec] = {
         deps_factory=FoundationAgentDeps,
         mutating_nodes=("creating",),
         description=(
-            "Fleet Registry Agent: onboard a vehicle, driver, or supplier from a "
+            "Fleet Registry Agent: onboard a vehicle (incl. engine_number, chassis_number, "
+            "ownership_type), driver (incl. license_type, license_issue_date, "
+            "license_current_status), or supplier (incl. address, category) from a "
             "photographed document, or query existing vehicles/drivers/suppliers."
         ),
     ),
@@ -50,8 +52,10 @@ SUB_AGENT_REGISTRY: dict[str, SubAgentSpec] = {
         deps_factory=FuelAgentDeps,
         mutating_nodes=("creating", "creating_trip"),
         description=(
-            "Fuel Agent: log a fuel receipt (photo) or a trip (driver_id/vehicle_id "
-            "already resolved), or query fuel logs, trip logs, or fuel trends."
+            "Fuel Agent: log a fuel receipt (photo and/or slip details such as slip_id, "
+            "po_number, payment_method, card_used, fuel_station_name) or a trip "
+            "(driver_id/vehicle_id already resolved), or query fuel logs, trip logs, "
+            "or fuel trends."
         ),
     ),
     "maintenance": SubAgentSpec(
@@ -61,7 +65,8 @@ SUB_AGENT_REGISTRY: dict[str, SubAgentSpec] = {
         mutating_nodes=("creating_log", "creating_report", "restocking"),
         description=(
             "Maintenance & Parts Inventory Agent: log a work order/repair (photo or "
-            "text), restock inventory from a parts invoice (photo or text), or query "
+            "text; several services per visit, service_scale minor/major, driver who "
+            "brought the vehicle in), restock inventory from a parts invoice (photo or text), or query "
             "maintenance logs, inventory, or low-stock parts."
         ),
     ),

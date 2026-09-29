@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.enums import ServiceType, VehicleStatus
-from app.models.maintenance import ComplianceRule, MaintenanceLog
+from app.models.maintenance import ComplianceRule, MaintenanceLog, MaintenanceLogService
 from app.models.vehicle import Vehicle
 from app.schemas.compliance import (
     ComplianceRuleCreate,
@@ -117,11 +117,12 @@ def get_vehicle_compliance(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID
     for rule in rules:
         last_service = db.execute(
             select(MaintenanceLog)
+            .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
             .where(
                 MaintenanceLog.organization_id == org_id,
                 MaintenanceLog.is_deleted.is_(False),
                 MaintenanceLog.vehicle_id == vehicle.id,
-                MaintenanceLog.service_type == rule.service_type,
+                MaintenanceLogService.service_type == rule.service_type,
             )
             .order_by(MaintenanceLog.date.desc(), MaintenanceLog.odometer_at_service.desc())
             .limit(1)

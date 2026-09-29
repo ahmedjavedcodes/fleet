@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-Intent = Literal["receipt_onboard", "trip_log", "query"]
+Intent = Literal["receipt_onboard", "trip_log", "fuel_log", "query"]
 QueryEntity = Literal["fuel_logs", "trip_logs", "fuel_trends"]
 
 Stage = Literal[
@@ -60,6 +60,11 @@ class FuelAgentState(TypedDict, total=False):
 
     # trip_log input -- presence of this key (even empty) signals intent
     trip_fields: dict[str, Any] | None
+
+    # fuel_log input (text-only, no photo) -- full FuelLogCreateInput fields. When a
+    # receipt photo is also present, only the slip/receipt attributes are merged
+    # over the extracted values.
+    fuel_fields: dict[str, Any] | None
 
     # query input/output
     query_entity: QueryEntity | None

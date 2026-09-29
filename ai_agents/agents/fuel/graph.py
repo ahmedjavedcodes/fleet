@@ -23,6 +23,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from langgraph.graph import END, StateGraph
+from pydantic import ValidationError
 
 from agents.fuel.efficiency_auditor import OdometerContinuityError, check_odometer_continuity
 from agents.fuel.state import FuelAgentState
@@ -40,6 +41,18 @@ from tools.auth_context import AgentContext, InvalidTokenError, build_context
 from tools.file_parsers import ExtractionFailedError, UnsupportedImageTypeError, extract_fuel_receipt
 from tools.sanitize import sanitize_plate_number
 from tools.schemas import FuelLogCreateInput, TripLogCreateInput
+
+# Slip/receipt attributes a caller can supply in chat (fuel_fields) to complete or
+# correct a receipt log -- e.g. "slip 8841, PO 1207, paid with the fleet card".
+_SUPPLEMENTARY_FUEL_FIELDS = (
+    "slip_id",
+    "po_number",
+    "payment_method",
+    "card_used",
+    "fuel_station_name",
+    "driver_id",
+    "notes",
+)
 
 Extractor = Callable[[bytes, str], Any]
 Lister = Callable[[AgentContext], list[dict[str, Any]]]
@@ -87,6 +100,15 @@ def classify_intent(state: FuelAgentState) -> FuelAgentState:
         return {**state, "intent": "receipt_onboard", "stage": "extracting"}
     if state.get("trip_fields") is not None:
         return {**state, "intent": "trip_log", "stage": "creating_trip"}
+    if state.get("fuel_fields") is not None:
+        # Text-only fuel log (no receipt photo): every FuelLogCreateInput field must
+        # already be in fuel_fields. Validate up front so a missing/extra key halts
+        # with a readable reason instead of a traceback at the create node.
+        try:
+            FuelLogCreateInput(**state["fuel_fields"])
+        except (ValidationError, TypeError) as exc:
+            return {**state, "intent": "fuel_log", "stage": "halted", "halt_reason": f"Invalid fuel_fields: {exc}"}
+        return {**state, "intent": "fuel_log", "sanitized": dict(state["fuel_fields"]), "stage": "creating"}
     return {**state, "intent": "query", "stage": "querying"}
 
 
@@ -155,6 +177,7 @@ def sanitize(state: FuelAgentState) -> FuelAgentState:
         return {**state, "stage": "halted", "halt_reason": "Could not compute price per liter from the receipt."}
 
     station_name = extracted.get("station_name")
+    payment_method = extracted.get("payment_method")
     bridged = {
         "vehicle_id": state.get("vehicle_id"),
         "date": extracted.get("receipt_date"),
@@ -163,7 +186,17 @@ def sanitize(state: FuelAgentState) -> FuelAgentState:
         "price_per_liter": price_per_liter,
         "total_cost": total_cost_d,
         "notes": f"Station: {station_name}" if station_name else None,
+        "fuel_station_name": station_name or None,
+        "slip_id": (extracted.get("slip_id") or "").strip() or None,
+        "po_number": (extracted.get("po_number") or "").strip() or None,
+        "payment_method": payment_method.strip().lower() if isinstance(payment_method, str) and payment_method.strip() else None,
+        "card_used": (extracted.get("card_used") or "").strip() or None,
     }
+    # Text supplied alongside (or instead of) the photo wins over what OCR read.
+    for key in _SUPPLEMENTARY_FUEL_FIELDS:
+        value = (state.get("fuel_fields") or {}).get(key)
+        if value not in (None, ""):
+            bridged[key] = value
 
     if bridged["date"] is None:
         return {**state, "stage": "halted", "halt_reason": "Could not determine the receipt's date."}
@@ -255,7 +288,13 @@ def build_fuel_graph(deps: FuelAgentDeps | None = None) -> StateGraph:
     graph.add_conditional_edges(
         "classify_intent",
         _route_after,
-        {"extracting": "extracting", "creating_trip": "creating_trip", "querying": "querying"},
+        {
+            "end": END,
+            "extracting": "extracting",
+            "creating": "creating",
+            "creating_trip": "creating_trip",
+            "querying": "querying",
+        },
     )
     graph.add_conditional_edges("extracting", _route_after, {"end": END, "resolving_vehicle": "resolving_vehicle"})
     graph.add_conditional_edges("resolving_vehicle", _route_after, {"end": END, "sanitizing": "sanitizing"})
