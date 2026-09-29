@@ -105,8 +105,25 @@ bar, since drivers log fuel from a phone.
 
 ## 7. Exit criteria
 
-- [ ] With seed data created (plan 05 vehicles + a few fuel, trip and maintenance records),
-      each role's dashboard renders real numbers; with none, every region shows its
-      designed empty state.
-- [ ] Visual check against the reference at 1440px (tiles, panels, chart style) and 375px.
-- [ ] build, lint and tests pass.
+- [x] With seed data created (vehicles, drivers, fuel logs, maintenance logs, trips and an
+      incident, via the running backend's `POST` endpoints), each of the four seeded roles
+      (admin, fleet_manager, mechanic, driver) was logged into headless Chrome via raw CDP and
+      the dashboard rendered real numbers end to end: KPI tiles, the fuel-trend area chart, the
+      fleet-health table with gauges, the mechanic's recent-work timeline, and the driver's
+      current vehicle / fuel logs / trips / incidents / timeline. Regions with genuinely no rows
+      in the live org rendered their designed empty state ("Nothing due", "Stock is healthy",
+      "No compliance rules yet"); the `driver_profile === null` empty state is covered by
+      `tests/app/(app)/dashboard/_components/driver-dashboard.test.tsx` (asserts zero data hook
+      calls). This surfaced and fixed a real bug: `GET /drivers/{id}/timeline`'s `summary`
+      object (built via raw SQL `jsonb_build_object` in `backend/app/services/timeline_service.py`)
+      serialized `fuel_consumed`/`estimated_cost` as JSON numbers instead of the Decimal-as-string
+      convention every other endpoint follows, failing the frontend's Zod schema. Fixed with an
+      explicit `::text` cast in the SQL, plus a regression test
+      (`test_timeline_summary_decimal_fields_serialize_as_strings`).
+- [x] Visual check against the reference at 1440px (tiles, panels, chart style) and 375px, for
+      all four roles, via CDP screenshots. Responsive layout (sidebar → hamburger, KPI grid →
+      single column) holds up; the topbar's breadcrumb truncates under the driver's two page
+      actions at 375px, which is existing phase-03 `shrink-0` action / `min-w-0` breadcrumb
+      behavior, not a regression.
+- [x] build, lint and tests pass (453 tests, `npm run lint`, `npx tsc --noEmit`, `npm run build`
+      all clean).

@@ -1,8 +1,9 @@
-import type { LucideIcon } from "lucide-react"
+import { Info, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { formatInt, formatMoney, formatNumber } from "@/lib/api/decimal"
 import { cn } from "@/lib/utils"
 import { CardContent } from "@/components/ui/card"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { IconTile } from "./icon-tile"
 import { InnerCard } from "./inner-card"
 
@@ -30,24 +31,46 @@ export function KpiTile({
   value,
   format,
   unit,
+  hint,
   href,
   className,
 }: {
   icon: LucideIcon
-  tone: "green" | "blue" | "amber" | "purple"
+  tone: "green" | "blue" | "amber" | "purple" | "destructive"
   label: string
   value: string
   format: KpiTileFormat
   unit?: string
+  /** A short explanation shown on hover next to the label (e.g. what a count
+   * actually includes) — never the value itself, which is a zero, not hidden. */
+  hint?: string
   href?: string
   className?: string
 }) {
   const body = (
     <InnerCard className={className}>
       <CardContent className="space-y-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <IconTile icon={icon} tone={tone} />
           <span className="text-caption text-muted-foreground">{label}</span>
+          {hint ? (
+            <Tooltip>
+              {/* asChild + <span>, not the default <button> — the whole tile
+                  is wrapped in a <Link> when `href` is set, and a <button>
+                  there would nest interactive content inside an <a>. */}
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  role="button"
+                  aria-label={hint}
+                  className="rounded-full text-muted-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{hint}</TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
         <p className="text-h1 text-foreground">
           {formatKpiValue(value, format)}

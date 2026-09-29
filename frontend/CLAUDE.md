@@ -269,6 +269,7 @@ src/
 │   ├── (app)/                      # authenticated shell: sidebar + topbar (§3)
 │   │   ├── layout.tsx
 │   │   ├── dashboard/  chat/  fuel/  maintenance/
+│   │   │     dashboard/_components/: Greeting, AdminDashboard, MechanicDashboard, DriverDashboard
 │   │   ├── foundation/{vehicles,vehicles/[id],drivers,drivers/[id],suppliers}/
 │   │   ├── accountability/  assignment/  insights/  documents/  notifications/
 │   │   │     each: page.tsx, loading.tsx, error.tsx (+ _components/ for page-local UI)
@@ -288,6 +289,8 @@ src/
 │   ├── states/                     # PageSkeleton (+ Skeleton* shape helpers), EmptyState, ErrorState,
 │   │   │                           #   AccessDenied, NotAvailableYet, QueryRegion, RouteErrorBoundary,
 │   │   │                           #   RoutePlaceholder (see note below)
+│   ├── charts/                     # AreaTrendChart (recharts, generic over series), HealthGauge (hand-rolled SVG semicircle)
+│   ├── fleet/                      # DueRow, TimelineList — domain components shared across dashboard (plan 04) and 05
 │   └── ai/                         # ChatThread, AgentActivity, ApprovalCard, CitationPill
 ├── lib/
 │   ├── brand.ts                    # APP_NAME = "FleetOps" — the only place the name lives
@@ -297,11 +300,15 @@ src/
 │   │                                #   AccessDenied's "area" text
 │   ├── longest-prefix-match.ts     # shared by rbac.ts and route-labels.ts
 │   ├── use-media-query.ts          # SSR-safe window.matchMedia hook (sidebar collapse — see note below)
+│   ├── format-date.ts              # formatMonthLabel/formatDate/formatDateTime/formatDurationBetween (Intl, UTC-safe)
+│   ├── enum-labels.ts              # backend enum value → display label + tone maps (service type, incident severity/type/…)
+│   ├── health-score.ts             # healthScoreLabel(score): the Good/Fair/Poor UI-only threshold mapping (plan 05 §5)
 │   ├── api/
 │   │   ├── client.ts               # browser fetch → /api/proxy, zod-validates every response
 │   │   ├── server-client.ts        # server-only twin: Server Component prefetch, talks to the backend directly
 │   │   ├── errors.ts               # ApiError union + toApiError() — every page's ErrorState switches on `.kind`
-│   │   ├── decimal.ts              # parseDecimal/formatMoney/formatNumber/formatInt (Decimal fields are strings)
+│   │   ├── decimal.ts              # parseDecimal/formatMoney/formatNumber/formatInt (Decimal-string fields) plus
+│   │   │                           #   formatMoneyValue/formatNumberValue for values a chart has already parsed to number
 │   │   └── auth.ts, vehicles.ts, drivers.ts, fuel.ts, …  # one module per domain: plain functions + co-located hooks
 │   ├── query/
 │   │   ├── client.ts               # QueryClient factory (retry policy, 401 → redirect)
@@ -355,10 +362,21 @@ tests/                               # mirrors src/ path-for-path — see §7's 
 - **`RoutePlaceholder` vs `NotAvailableYet`:** every route in §2.1 is scaffolded and kept
   in the nav now (all of CLAUDE.md §3's sidebar, filtered by role), rather than hidden
   until a later phase builds it. A route whose *backend* already exists but has no UI yet
-  (dashboard, foundation/*, fuel, maintenance, accountability, assignment, insights,
-  documents) renders `RoutePlaceholder` ("… is being built" — an honest state, not the
-  §5.5 copy). Only `/chat` and `/notifications`, whose backend genuinely doesn't exist,
-  render `NotAvailableYet`.
+  (foundation/*, fuel, maintenance, accountability, assignment, insights, documents)
+  renders `RoutePlaceholder` ("… is being built" — an honest state, not the §5.5 copy).
+  `/dashboard` is built (plan 04). Only `/chat` and `/notifications`, whose backend
+  genuinely doesn't exist, render `NotAvailableYet`.
+- **Dashboard greeting is time-of-day, not literally "Good morning."** Plan 04 §1's copy
+  ("Good morning, {first name}") was written before considering that a fleet manager
+  checking in at 4pm shouldn't be told good morning; `_components/greeting.tsx` derives
+  Good morning/afternoon/evening from `new Date().getHours()` instead. No CLAUDE.md
+  conflict — the plan's literal string was never a contract, just placeholder copy.
+- **`KpiTile` grew a `hint?: string` (tooltip) and a `"destructive"` tone** for the
+  dashboard's "Open incidents" tile (plan 04 §2: counts open + investigating, so the
+  tooltip disambiguates what the number includes). The tooltip trigger is `TooltipTrigger
+  asChild` around a `<span role="button" tabIndex={0}>`, not a `<button>` — `KpiTile` can
+  be wrapped in a `<Link>` (via `href`), and a `<button>` trigger there would nest
+  interactive content inside an `<a>`, which is invalid HTML.
 
 ---
 

@@ -24,12 +24,26 @@ export function parseDecimal(value: string): number {
 }
 
 /**
- * Formats a backend decimal string as currency. Defaults to PKR, the org
- * default per CLAUDE.md §1.3; pass the org's actual currency once org
- * settings expose one.
+ * Formats an already-numeric value as currency (e.g. a chart point parsed
+ * once for plotting) — formatMoney is the entry point for a raw backend
+ * decimal string; this is for a value that's already been through it.
+ * Defaults to PKR, the org default per CLAUDE.md §1.3; pass the org's
+ * actual currency once org settings expose one.
+ */
+export function formatMoneyValue(value: number, currency = "PKR", locale = "en-PK"): string {
+  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(value)
+}
+
+/**
+ * Formats a backend decimal string as currency. See formatMoneyValue.
  */
 export function formatMoney(value: string, currency = "PKR", locale = "en-PK"): string {
-  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(parseDecimal(value))
+  return formatMoneyValue(parseDecimal(value), currency, locale)
+}
+
+/** Formats an already-numeric value with a bounded number of decimal places. */
+export function formatNumberValue(value: number, maximumFractionDigits = 2, locale = "en-PK"): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)
 }
 
 /**
@@ -37,7 +51,7 @@ export function formatMoney(value: string, currency = "PKR", locale = "en-PK"): 
  * cost/km, reliability score, …) with a bounded number of decimal places.
  */
 export function formatNumber(value: string, maximumFractionDigits = 2, locale = "en-PK"): string {
-  return new Intl.NumberFormat(locale, { maximumFractionDigits }).format(parseDecimal(value))
+  return formatNumberValue(parseDecimal(value), maximumFractionDigits, locale)
 }
 
 /** Formats a plain integer/number (odometer, counts, …) with locale grouping. */
