@@ -24,7 +24,7 @@ are in [00-design-analysis.md](00-design-analysis.md). Read that first.
 | 04 | [Dashboard](04-dashboard.md) | Detailed | 03 | ✅ Done (2026-09-29) |
 | 05 | [Foundation & vehicle detail](05-foundation-and-vehicle-detail.md) | Detailed | 03 | ⚠️ Built, not live-verified (2026-09-29) |
 | 06 | [Operations modules](06-operations-modules.md) | Scoped | 03 | ⚠️ Built at reduced scope (2026-09-29) |
-| 07 | [AI surfaces](07-ai-surfaces.md) | Scoped | 03 | ☐ Not started |
+| 07 | [AI surfaces](07-ai-surfaces.md) | Scoped | 03 | ✅ Done (2026-09-29) — Insights live, Documents/Chat/Notifications UI-only |
 
 ```
 01 ──► 02 ──► 03 ──┬──► 04

@@ -1,5 +1,13 @@
 import type { StatusPillTone } from "@/components/primitives/status-pill"
-import type { IncidentResolutionStatus, IncidentSeverity, IncidentType, ServiceType, VehicleCondition } from "@/lib/schemas/enums"
+import type {
+  DocumentStatus,
+  DocumentType,
+  IncidentResolutionStatus,
+  IncidentSeverity,
+  IncidentType,
+  ServiceType,
+  VehicleCondition,
+} from "@/lib/schemas/enums"
 
 // Display labels for backend enums that need one — shared across dashboard,
 // maintenance, accountability and vehicle-detail pages so the wording never
@@ -49,4 +57,18 @@ export const VEHICLE_CONDITION_LABELS: Record<VehicleCondition, string> = {
   good: "Good",
   fair: "Fair",
   poor: "Poor",
+}
+
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  manual: "Manual",
+  policy: "Policy",
+  supplier_invoice: "Supplier invoice",
+  incident_report: "Incident report",
+  legal: "Legal",
+}
+
+export const DOCUMENT_STATUS_TONE: Record<DocumentStatus, StatusPillTone> = {
+  processing: "info",
+  ready: "success",
+  failed: "destructive",
 }

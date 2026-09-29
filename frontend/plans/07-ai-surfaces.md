@@ -4,7 +4,13 @@
 This plan records **what is actually buildable today**, the prerequisites, and the order of
 work. Expand it into a detailed plan before starting.
 
-**Depends on:** 03. (The backend branch merge it used to need is done; see §0.)
+**Depends on:** 03.
+
+**Strict constraint (added 2026-09-29): the `backend` branch is never merged into
+`frontend`.** They stay permanently separate. `backend`'s agents/memory/document-RAG
+pipelines — and therefore `/documents` and `/memory` — do not exist on this branch's backend
+instance and are not assumed to arrive by a later phase. Any future plan that wants them
+back needs its own explicit decision, not a resumption of this one.
 
 **Design note:** the reference has no chat or AI screens (CLAUDE.md §1.1 rows 2–4 are still
 TBD). Build these on the existing tokens and primitives, in the reference's language: section
@@ -12,24 +18,12 @@ panels, soft-tinted pills, flat cards. Ask for an AI-surface reference before po
 
 ---
 
-## 0. Prerequisite: merge `backend` → `frontend` ✅ done
-
-**Done 2026-09-25** (merge commit `39083ec`). `origin/backend` and `origin/ai-agents` both
-pointed at `22d079f`, so one merge brought in the agent suite, the Grand Orchestrator, agent
-memory (Pinecone) and the document RAG pipeline. `backend/app/main.py` now registers
-`memory_router` and `documents_router`, and `DocumentType` / `DocumentStatus` exist in
-`backend/app/models/enums.py`.
-
-**Before starting §2:** run the new Alembic migrations (agent memory, failed vector jobs,
-document RAG tables) and set the new variables in `backend/.env.example` (Pinecone etc.).
-Then confirm `/docs` lists `/documents` and `/memory`.
-
 ## 1. What exists vs what doesn't
 
 | Surface | Backend today | Frontend approach |
 | --- | --- | --- |
-| **Documents** (`/documents`) | ✅ Merged into `frontend`: `GET /documents`, `POST /documents/upload` (202, upload roles), `POST /documents/search`, `GET /documents/{id}`, `DELETE /documents/{id}` (upload roles) | **Build it for real.** First AI surface to ship. |
-| **Citations** (RAG) | ✅ `DocumentSearchResponse {results: DocumentSearchHit[], cached}` | Build `CitationPill` / hover card / sheet against search results; reuse in chat later. |
+| **Documents** (`/documents`) | ❌ Not on this branch's backend — `backend` is never merged in (see above). `DocumentType`/`DocumentStatus` already exist in `lib/schemas/enums.ts` from plan 01, kept as-is since they cost nothing to keep and the plan may resume later. | **UI only, like chat.** `lib/api/documents.ts` is a typed adapter (zod schemas mirroring the spec below, kept for the day this lands) whose functions all return `{ status: "unavailable" }` — no `fetch` call exists in it at all. The page renders `NotAvailableYet`. The Library table, upload flow and citation pills are built as real components with real props, but the only place they render is unit tests / test fixtures — no production page imports them. |
+| **Citations** (RAG) | ❌ Same as Documents. | Build `CitationPill` / hover card / sheet against typed fixture data, tested but not shipped on any live page; reused by chat's design later. |
 | **Chat** (`/chat`) | ❌ No HTTP API. `ai_agents` now has the full Grand Orchestrator (`orchestrator/session.py`, `runner.py`, `ui_interpolation.py`), but still **no web server** (no FastAPI app or SSE endpoint; re-checked after the merge). | Typed adapter `lib/api/chat.ts` → `{ status: "unavailable" }` + `NotAvailableYet`. Build the presentational components (ChatThread, AgentActivity, ApprovalCard) against **typed fixtures in tests and Storybook-like test renders only**, never in production paths. |
 | **Chat history** | ⚠️ `/memory` has `POST /sessions`, `GET /sessions/{id}/context`, `POST /sessions/{id}/summary` and memory CRUD, but **no "list my sessions" endpoint** | The conversation side panel needs `GET /memory/sessions` (list). Add it to the backend gaps; until then the panel shows "History will appear here". |
 | **Memory admin (DLQ)** | ✅ `GET /memory/vector-jobs/failed`, `POST …/{job_id}/retry` (admin) | Optional admin health view. Out of scope unless requested. |
@@ -37,9 +31,16 @@ Then confirm `/docs` lists `/documents` and `/memory`.
 | **Insights NL search** (`/insights`) | ❌ `query_fleet_data` MCP tool not wired to HTTP | Box routes the question to `/chat` (itself unavailable), or shows "coming soon". **Never** build or run SQL in the browser. |
 | **Insights analytics** (`/insights`) | ✅ Dashboard endpoints (A/FM) | Build now: an expanded version of the plan 04 A/FM widgets (fuel trends 24-month, full maintenance calendar with `window_days` picker, fleet-health table with per-signal breakdown and "n/a" for null). Could ship with plan 04/06 since it isn't AI-dependent. |
 
-## 2. Documents: `/documents` (buildable)
+## 2. Documents: `/documents` (UI only until the API exists)
 
-**Schemas** (`backend/app/schemas/document.py`):
+Same treatment as chat (§3): a typed adapter that always resolves to unavailable, a
+`NotAvailableYet` page, and a real component library exercised only in tests. The shapes
+below are kept from the original (buildable) version of this plan as the target contract —
+useful groundwork for whenever `/documents` actually ships, on this backend or a future
+merge — but nothing here is wired to a live `fetch`.
+
+**Schemas** (kept from `backend/app/schemas/document.py` on the `backend` branch, for reference —
+not verifiable against *this* backend since it isn't merged in):
 
 - `DocumentResponse`:
   - `id, filename, document_type, vehicle_id?, status, version, size_bytes`;
@@ -51,9 +52,12 @@ Then confirm `/docs` lists `/documents` and `/memory`.
   - `DocumentType`: `manual | policy | supplier_invoice | incident_report | legal`;
   - `DocumentStatus`: `processing | ready | failed`.
 
-  Both verified against `backend/app/models/enums.py` after the merge.
+  `DocumentType`/`DocumentStatus` are already in `lib/schemas/enums.ts` (plan 01); the rest
+  of this file's schemas are new, added to `lib/schemas/document.ts`.
 
-**Regions:**
+**Regions** (component contracts below — every one of these is driven by props/fixtures in
+tests, never by a real request; `lib/api/documents.ts`'s functions are never called from a
+page):
 
 1. **Library table:**
    - columns: filename, type badge, vehicle, version, size, status pill (`processing`
@@ -95,7 +99,9 @@ Passages are untrusted: no markdown rendering of chunk text, no `dangerouslySetI
 
 **Tests:** the upload flow including **429** (countdown), 413/415 pre-validation, polling
 stops on ready/failed, the empty search state, the cached badge, `CitationPill` in all
-states, and delete invalidation.
+states, and delete invalidation — all against fixture props, since there is no live endpoint
+to hit. The `/documents` page itself only has one thing to test: it renders
+`NotAvailableYet` and never imports the Library/upload/search components.
 
 ## 3. Chat: `/chat` (UI only until the API exists)
 
@@ -137,17 +143,20 @@ states, and delete invalidation.
 
 ## 5. Suggested order
 
-1. Merge `backend` → `frontend` (§0).
-2. Insights analytics (not AI-dependent; reuses plan 04 components).
-3. Documents library + upload + search + citation components.
-4. Notifications and chat "not available" pages, plus the chat component library with tests.
-5. Wire chat and notifications as their APIs land.
+1. Insights analytics (the only live surface; not AI-dependent, reuses plan 04 components).
+2. Documents library + upload + search + citation components — built and tested, not wired.
+3. Notifications and chat "not available" pages, plus the chat component library with tests.
+4. Wire documents, chat and notifications if `/documents`/`/memory`/a chat API/a notifications
+   API ever exist on *this* backend — which, per the constraint at the top of this file, is
+   not assumed to happen from a `backend` branch merge. Treat it as a fresh decision.
 
 ## 6. Backend gaps surfaced here
 
-Add these to [00](00-design-analysis.md) §6:
+These describe the `backend`-branch APIs this plan targets as a future contract; none of them
+exist on this branch's backend and merging `backend` in is explicitly not the plan to get
+them (see the constraint at the top of this file):
 
-- `GET /memory/sessions`: list the current user's sessions (for the chat history panel).
-- The chat SSE API, the notifications API and the insights NL query (already in CLAUDE.md §5.5).
-- CLAUDE.md §5.4 lists `/memory/sessions` as "chat history", but only create/context/summary
-  exist. Fix the wording in CLAUDE.md when this phase starts.
+- `/documents` (library, upload, search) and `/memory` (sessions, chat history) — entire
+  routers, not present on this backend at all.
+- The chat SSE API and the notifications API (CLAUDE.md §5.5).
+- The insights NL query endpoint (`query_fleet_data` not wired to HTTP).

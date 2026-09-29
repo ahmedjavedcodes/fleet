@@ -217,7 +217,7 @@ role **and** render the Access Denied state if the URL is opened directly.
 | `/accountability` | Incidents, severity, shift reports, driver timelines | A, FM, D (resolve: A, FM; shift report write: A, D) | `/incidents`, `/driver-reports`, `/drivers/{id}/timeline` |
 | `/assignment` | Vehicle ↔ driver custody: assign, release, history | A, FM (write + all history); D (own history, vehicle history) | `POST /vehicles/{id}/assign`, `/release`, `GET /drivers/{id}/assignments`, `/vehicles/{id}/assignments?target_date=` |
 | `/insights` | Analytics and custom reporting | A, FM | Dashboard endpoints today; NL→SQL search **to be built** (§5.5) |
-| `/documents` | RAG knowledge base: list, search, upload, manage | all (list/search, scoped by role); A/FM (upload/delete) | `/documents`, `/documents/upload`, `/documents/search`, `/documents/{id}` |
+| `/documents` | RAG knowledge base: list, search, upload, manage | all (list/search, scoped by role); A/FM (upload/delete) | Documents API (**to be built**, §5.5 — lives only on the `backend` branch, never merged into `frontend`; see plan 07 §0) |
 | `/notifications` | Tabs: Warnings, Notified Events, Triggers | all | Notifications API (**to be built**, §5.5) |
 
 All paths are under `${API_BASE}/api/v1`. Read-only helper: `GET /health`.
@@ -293,7 +293,12 @@ src/
 │   ├── fleet/                      # DueRow, TimelineList, AssignDriverDialog/ReleaseDriverFlow (promoted here in plan 06
 │   │   │                           #   once /assignment became a 2nd caller, per the _components/ promotion rule below)
 │   ├── primitives/…, Callout       # warning-toned banner (fuel-anomaly / open-incident callout on vehicle detail, plan 05 §2.5)
-│   └── ai/                         # ChatThread, AgentActivity, ApprovalCard, CitationPill
+│   └── ai/                         # chat-thread, message-bubble, composer, agent-panels (AgentActivity/
+│       │                           #   ApprovalCard/HaltedCard), citation-pill (CitationPill/HoverCard/Sheet),
+│       │                           #   document-library-table, document-upload-card — all built and unit-
+│       │                           #   tested, none wired to a live page (plan 07 §0: `backend` — which has
+│       │                           #   /documents, /memory and the chat orchestrator — is never merged into
+│       │                           #   `frontend`; see CLAUDE.md's own note in §2.1/§5.5 below)
 ├── lib/
 │   ├── brand.ts                    # APP_NAME = "FleetOps" — the only place the name lives
 │   ├── utils.ts                    # cn() (shadcn)
@@ -657,7 +662,8 @@ Wire the real endpoint the moment it lands. Never ship mock data behind a real-l
 
 | Feature | Needed endpoint (proposed) | Backing today |
 | --- | --- | --- |
-| `/chat` streaming | `POST /api/v1/chat/sessions/{id}/messages` → **SSE** events: `activity` (UI step text), `token`, `approval_required` (`hitl_state`), `citations`, `done` (`status`, `final_response`), `error`; `POST …/approve`, `…/modify`, `…/reject` | `ai_agents` `OrchestratorSession.run/approve/modify/reject` + `FleetLiveObserver.ui_messages` exist but nothing exposes them over HTTP yet |
+| `/documents` | `GET /documents`, `POST /documents/upload`, `POST /documents/search`, `GET/DELETE /documents/{id}` | Exists only on the `backend` branch (agents/memory/document-RAG), which is **never merged into `frontend`** (plan 07 §0, decided 2026-09-29) — not "not yet built," but a standing decision not to bring it in |
+| `/chat` streaming | `POST /api/v1/chat/sessions/{id}/messages` → **SSE** events: `activity` (UI step text), `token`, `approval_required` (`hitl_state`), `citations`, `done` (`status`, `final_response`), `error`; `POST …/approve`, `…/modify`, `…/reject` | `ai_agents` `OrchestratorSession.run/approve/modify/reject` + `FleetLiveObserver.ui_messages` exist but nothing exposes them over HTTP yet, and even if they did, `ai_agents` lives on the un-merged `backend` branch too |
 | `/notifications` | `GET /api/v1/notifications?tab=warnings\|events\|triggers`, `PATCH …/{id}/read`, unread count | `AlertDispatcher` alerts (low stock, severe/critical incidents) are currently only logged. Tab mapping: **Warnings** = those alerts + overdue compliance; **Notified Events** = alerts already delivered; **Triggers** = the rule definitions that fire them |
 | `/insights` NL search | `POST /api/v1/insights/query` → `{sql_preview?, columns, rows}` (read-only, safety-hook guarded) | `query_fleet_data` MCP tool is scaffolded but not wired to a read-only DB session |
 
