@@ -151,13 +151,20 @@ def get_driver_assignment_history(db: Session, org_id: uuid.UUID, driver_id: uui
 
 
 def get_vehicle_assignment_history(
-    db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID, target_date: date_type | None = None
+    db: Session,
+    org_id: uuid.UUID,
+    vehicle_id: uuid.UUID,
+    target_date: date_type | None = None,
+    *,
+    driver_id_filter: uuid.UUID | None = None,
 ) -> list[VehicleAssignment]:
     stmt = select(VehicleAssignment).where(
         VehicleAssignment.vehicle_id == vehicle_id,
         VehicleAssignment.organization_id == org_id,
         VehicleAssignment.is_deleted.is_(False),
     )
+    if driver_id_filter is not None:
+        stmt = stmt.where(VehicleAssignment.driver_id == driver_id_filter)
     if target_date is not None:
         stmt = stmt.where(
             VehicleAssignment.assigned_at <= target_date,

@@ -18,6 +18,7 @@ import type { TripLog } from "@/lib/schemas/trip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { IconTile } from "@/components/primitives/icon-tile"
 import { SectionPanel } from "@/components/primitives/section-panel"
 import { StatusPill } from "@/components/primitives/status-pill"
@@ -101,6 +102,10 @@ function DriverDashboardContent({ driverId, pageActions }: { driverId: string; p
 
   const tripColumns: DataTableColumn<TripLog>[] = [
     { key: "date", header: "Date", cell: (row) => formatDate(row.start_time.slice(0, 10)) },
+    { key: "vehicle_name", header: "Vehicle Name", cell: (row) => row.vehicle_name ?? "—" },
+    { key: "vehicle_plate", header: "Vehicle Plate", cell: (row) => <VehicleLink vehicleId={row.vehicle_id} plate={row.vehicle_plate} /> },
+    { key: "start_odometer", header: "Start Odometer", align: "right", cell: (row) => formatInt(row.start_odometer) },
+    { key: "end_odometer", header: "End Odometer", align: "right", cell: (row) => formatInt(row.end_odometer) },
     { key: "distance", header: "Distance (km)", align: "right", cell: (row) => formatInt(row.distance_km) },
     { key: "duration", header: "Duration", align: "right", cell: (row) => formatDurationBetween(row.start_time, row.end_time) },
   ]
@@ -140,7 +145,7 @@ function DriverDashboardContent({ driverId, pageActions }: { driverId: string; p
         <SectionPanel icon={Route} title="Your trips">
           <QueryRegion
             query={tripsQuery}
-            skeleton={<SkeletonTable rows={RECENT_COUNT} columns={3} />}
+            skeleton={<SkeletonTable rows={RECENT_COUNT} columns={7} />}
             empty={<EmptyState icon={Route} title="No trips logged yet" description="Log your first trip." action={
               <Button asChild variant="outline"><Link href="/fuel?tab=trips&new=1">Log trip</Link></Button>
             } />}

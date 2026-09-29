@@ -103,7 +103,7 @@ export function DriverFormDialog({
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
-                <FieldLabel htmlFor="license_type">License type</FieldLabel>
+                <FieldLabel htmlFor="license_type">License Type</FieldLabel>
                 <Input id="license_type" placeholder="e.g. LTV, HTV" {...register("license_type", { setValueAs: emptyToUndefined })} />
               </Field>
               <Field data-invalid={Boolean(errors.license_issue_date)}>

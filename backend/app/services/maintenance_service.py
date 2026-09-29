@@ -96,13 +96,20 @@ def create_maintenance_log(db: Session, org_id: uuid.UUID, data: MaintenanceLogC
     return log
 
 
-def get_maintenance_log(db: Session, org_id: uuid.UUID, log_id: uuid.UUID) -> MaintenanceLog:
-    """Eager-loads mechanic_report."""
-    log = db.execute(
+def get_maintenance_log(
+    db: Session, org_id: uuid.UUID, log_id: uuid.UUID, *, created_by: uuid.UUID | None = None
+) -> MaintenanceLog:
+    """Eager-loads mechanic_report. created_by restricts to logs that user recorded
+    (a mechanic's "own jobs"); anyone else's log is a 404, not a 403, so its
+    existence isn't disclosed."""
+    stmt = (
         select(MaintenanceLog)
         .where(MaintenanceLog.id == log_id, MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False))
         .options(selectinload(MaintenanceLog.mechanic_report))
-    ).scalar_one_or_none()
+    )
+    if created_by is not None:
+        stmt = stmt.where(MaintenanceLog.created_by == created_by)
+    log = db.execute(stmt).scalar_one_or_none()
     if log is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Maintenance log not found")
     return log
@@ -116,8 +123,11 @@ def list_maintenance_logs(
     service_type=None,
     date_from: date_type | None = None,
     date_to: date_type | None = None,
+    created_by: uuid.UUID | None = None,
 ) -> list[MaintenanceLog]:
     stmt = select(MaintenanceLog).where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False))
+    if created_by is not None:
+        stmt = stmt.where(MaintenanceLog.created_by == created_by)
     if vehicle_id is not None:
         stmt = stmt.where(MaintenanceLog.vehicle_id == vehicle_id)
     if service_type is not None:

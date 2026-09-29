@@ -73,7 +73,7 @@ export default function DriversPage() {
       ),
     },
     { key: "license", header: "License number", cell: (row) => row.license_number },
-    { key: "license_type", header: "Type", cell: (row) => row.license_type ?? "—" },
+    { key: "license_type", header: "License Type", cell: (row) => row.license_type ?? "—" },
     { key: "license_issued", header: "Issued", cell: (row) => (row.license_issue_date ? formatDate(row.license_issue_date) : "—") },
     {
       key: "expiry",

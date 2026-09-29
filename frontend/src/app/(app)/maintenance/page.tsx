@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { MaintenanceLog } from "@/lib/schemas/maintenance"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
 import { PageHeader } from "@/components/layout/page-header"
 import { AccessDenied } from "@/components/states/access-denied"
@@ -34,7 +35,7 @@ export default function MaintenancePage() {
 
   const columns: DataTableColumn<MaintenanceLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
-    { key: "vehicle", header: "Vehicle", cell: (r) => r.vehicle_plate ?? "—" },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.vehicle_plate} name={r.vehicle_name} /> },
     { key: "service_type", header: "Services", cell: (r) => r.service_types.map((t) => SERVICE_TYPE_LABELS[t]).join(", "), cellClassName: "min-w-48 whitespace-normal" },
     { key: "scale", header: "Scale", cell: (r) => <Badge variant={r.service_scale === "major" ? "default" : "outline"}>{SERVICE_SCALE_LABELS[r.service_scale]}</Badge> },
     { key: "driver", header: "Brought in by", cell: (r) => r.driver_name ?? "—" },

@@ -2,7 +2,6 @@
 
 import { Car, Users } from "lucide-react"
 import { useParams } from "next/navigation"
-import Link from "next/link"
 import { useDriver, useDriverAssignments, useDriverTimeline } from "@/lib/api/drivers"
 import { isApiError } from "@/lib/api/errors"
 import { formatDate, formatDateTime } from "@/lib/format-date"
@@ -14,6 +13,7 @@ import { KpiTile } from "@/components/primitives/kpi-tile"
 import { SectionPanel } from "@/components/primitives/section-panel"
 import { StatusPill } from "@/components/primitives/status-pill"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { TimelineList } from "@/components/fleet/timeline-list"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
@@ -55,11 +55,7 @@ export default function DriverDetailPage() {
     {
       key: "vehicle",
       header: "Vehicle",
-      cell: (row) => (
-        <Link href={`/foundation/vehicles/${row.vehicle_id}`} className="font-medium text-foreground hover:underline">
-          View vehicle
-        </Link>
-      ),
+      cell: (row) => <VehicleLink vehicleId={row.vehicle_id} plate={row.vehicle_plate} name={row.vehicle_name} />,
     },
     { key: "assigned", header: "Assigned", cell: (row) => formatDateTime(row.assigned_at) },
     { key: "released", header: "Released", cell: (row) => (row.released_at ? formatDateTime(row.released_at) : "Active") },

@@ -13,6 +13,7 @@ import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { IncidentLog } from "@/lib/schemas/incident"
 import type { DriverReport } from "@/lib/schemas/driver-report"
 import { Button } from "@/components/ui/button"
+import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
 import { StatusPill } from "@/components/primitives/status-pill"
@@ -42,7 +43,7 @@ export default function AccountabilityPage() {
 
   const incidentColumns: DataTableColumn<IncidentLog>[] = [
     { key: "date", header: "When", cell: (r) => (r.incident_time ? formatDateTime(r.incident_time) : formatDate(r.date)) },
-    { key: "vehicle", header: "Vehicle", cell: (r) => r.vehicle_plate ?? "—" },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.vehicle_plate} name={r.vehicle_name} /> },
     { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "type", header: "Type", cell: (r) => INCIDENT_TYPE_LABELS[r.incident_type] },
     { key: "severity", header: "Severity", cell: (r) => <StatusPill tone={INCIDENT_SEVERITY_TONE[r.severity]}>{r.severity[0]!.toUpperCase() + r.severity.slice(1)}</StatusPill> },

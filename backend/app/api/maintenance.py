@@ -22,13 +22,17 @@ from app.services import maintenance_service
 router = APIRouter(prefix="/api/v1/maintenance", tags=["maintenance"])
 
 # MaintenanceLog/MechanicReport: admin full, fleet_manager read all, driver
-# none, mechanic own jobs. Row-level "own jobs" filtering for mechanic is a
-# known, explicitly-flagged gap (see plans/03 §5) -- there is no reliable FK
-# to filter on (MaintenanceLog.mechanic_name is free text), so mechanic is
-# scoped to role-level access only here, not row-level, until that's resolved.
+# none, mechanic own jobs. There is no mechanic profile and mechanic_name is
+# free text, so "own" means the logs the mechanic recorded (created_by ==
+# their user id). Admin and fleet_manager are unrestricted.
 _FULL_WRITE_ROLES = (UserRole.admin, UserRole.mechanic)
 _READ_ROLES = (UserRole.admin, UserRole.fleet_manager, UserRole.mechanic)
 _FLEET_VIEW_ROLES = (UserRole.admin, UserRole.fleet_manager)
+
+
+def _owner_filter(current_user: User) -> uuid.UUID | None:
+    """None -> no row-level restriction. A mechanic sees only logs they created."""
+    return current_user.id if current_user.role == UserRole.mechanic else None
 
 
 @router.post("", response_model=MaintenanceLogResponse, status_code=status.HTTP_201_CREATED)
@@ -57,6 +61,7 @@ def list_maintenance_logs(
         service_type=service_type,
         date_from=date_from,
         date_to=date_to,
+        created_by=_owner_filter(current_user),
     )
     return [MaintenanceLogResponse.model_validate(log) for log in logs]
 
@@ -84,7 +89,9 @@ def get_maintenance_log(
     current_user: User = Depends(require_role(*_READ_ROLES)),
     db: Session = Depends(get_db),
 ) -> MaintenanceLogResponse:
-    log = maintenance_service.get_maintenance_log(db, current_user.organization_id, log_id)
+    log = maintenance_service.get_maintenance_log(
+        db, current_user.organization_id, log_id, created_by=_owner_filter(current_user)
+    )
     return MaintenanceLogResponse.model_validate(log)
 
 

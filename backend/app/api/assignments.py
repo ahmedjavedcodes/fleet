@@ -67,9 +67,14 @@ def get_vehicle_assignment_history(
     vehicle_id: uuid.UUID,
     target_date: date | None = Query(default=None),
     current_user: User = Depends(require_role(*_VEHICLE_HISTORY_ROLES)),
+    driver_profile: Driver | None = Depends(get_current_driver_profile),
     db: Session = Depends(get_db),
 ) -> list[VehicleAssignmentResponse]:
+    # A driver sees only their own custody rows for the vehicle, never who else had it.
+    driver_filter: uuid.UUID | None = None
+    if current_user.role == UserRole.driver:
+        driver_filter = driver_profile.id if driver_profile is not None else uuid.uuid4()
     assignments = assignment_service.get_vehicle_assignment_history(
-        db, current_user.organization_id, vehicle_id, target_date=target_date
+        db, current_user.organization_id, vehicle_id, target_date=target_date, driver_id_filter=driver_filter
     )
     return [VehicleAssignmentResponse.model_validate(a) for a in assignments]

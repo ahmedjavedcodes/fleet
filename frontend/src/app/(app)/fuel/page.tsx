@@ -4,7 +4,6 @@ import { useState } from "react"
 import { Fuel as FuelIcon, Plus, Route } from "lucide-react"
 import { useFuelLogs, useFuelSummary } from "@/lib/api/fuel"
 import { useTrips } from "@/lib/api/trips"
-import Link from "next/link"
 import { formatInt, formatMoney, formatNumber } from "@/lib/api/decimal"
 import { formatDate, formatDateTime, formatDurationBetween } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
@@ -12,6 +11,7 @@ import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { FuelLog } from "@/lib/schemas/fuel"
 import type { TripLog } from "@/lib/schemas/trip"
 import { Button } from "@/components/ui/button"
+import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
 import { KpiTile } from "@/components/primitives/kpi-tile"
@@ -23,15 +23,6 @@ import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
 import { FuelLogFormDialog } from "./_components/fuel-log-form-dialog"
 import { TripFormDialog } from "./_components/trip-form-dialog"
-
-function VehicleCell({ plate, name }: { plate: string | null; name: string | null }) {
-  return (
-    <div>
-      <p className="font-medium text-foreground">{plate ?? "—"}</p>
-      {name ? <p className="text-caption text-muted-foreground">{name}</p> : null}
-    </div>
-  )
-}
 
 function SlipCell({ slipId, poNumber }: { slipId: string | null; poNumber: string | null }) {
   if (!slipId && !poNumber) return <>—</>
@@ -73,7 +64,7 @@ export default function FuelPage() {
 
   const fuelColumns: DataTableColumn<FuelLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
-    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleCell plate={r.vehicle_plate} name={r.vehicle_name} /> },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.vehicle_plate} name={r.vehicle_name} /> },
     { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "slip", header: "Slip / PO", cell: (r) => <SlipCell slipId={r.slip_id} poNumber={r.po_number} /> },
     { key: "station", header: "Station", cell: (r) => r.fuel_station_name ?? "—" },
@@ -92,10 +83,12 @@ export default function FuelPage() {
 
   const tripColumns: DataTableColumn<TripLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.start_time.slice(0, 10)) },
-    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleCell plate={r.vehicle_plate} name={r.vehicle_name} /> },
+    { key: "vehicle_name", header: "Vehicle Name", cell: (r) => r.vehicle_name ?? "—" },
+    { key: "vehicle_plate", header: "Vehicle Plate", cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.vehicle_plate} /> },
     { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "start", header: "Started", cell: (r) => formatDateTime(r.start_time) },
-    { key: "odometer", header: "Odometer (km)", align: "right", cell: (r) => `${formatInt(r.start_odometer)} → ${formatInt(r.end_odometer)}` },
+    { key: "start_odometer", header: "Start Odometer", align: "right", cell: (r) => formatInt(r.start_odometer) },
+    { key: "end_odometer", header: "End Odometer", align: "right", cell: (r) => formatInt(r.end_odometer) },
     { key: "distance", header: "Distance (km)", align: "right", cell: (r) => formatInt(r.distance_km) },
     { key: "duration", header: "Duration", cell: (r) => formatDurationBetween(r.start_time, r.end_time) },
     { key: "fuel", header: "Fuel used (L)", align: "right", cell: (r) => (r.fuel_consumed ? formatNumber(r.fuel_consumed) : "—") },
@@ -178,11 +171,7 @@ export default function FuelPage() {
                           {
                             key: "vehicle",
                             header: "Vehicle",
-                            cell: (r) => (
-                              <Link href={`/foundation/vehicles/${r.vehicle_id}`} className="font-medium text-foreground hover:underline">
-                                <VehicleCell plate={r.plate_number} name={r.vehicle_name} />
-                              </Link>
-                            ),
+                            cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.plate_number} name={r.vehicle_name} />,
                           },
                           { key: "drivers", header: "Drivers", cell: (r) => (r.driver_names.length ? r.driver_names.join(", ") : "—") },
                           { key: "fills", header: "Fills", align: "right", cell: (r) => r.fill_count },

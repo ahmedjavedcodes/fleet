@@ -21,6 +21,10 @@ import { MaintenancePanel } from "./_components/maintenance-panel"
 import { TripPanel } from "./_components/trip-panel"
 import { VehicleOverview } from "./_components/vehicle-overview"
 
+// "Contact driver" is hidden for now; flip to true to restore it (the button and its
+// tel: link below are intact).
+const SHOW_CONTACT_DRIVER = false
+
 const STATUS_LABEL: Record<string, { label: string; tone: StatusPillTone }> = {
   active: { label: "Active", tone: "success" },
   maintenance: { label: "In maintenance", tone: "warning" },
@@ -85,7 +89,7 @@ export default function VehicleDetailPage() {
         status={<StatusPill tone={statusInfo.tone}>{statusInfo.label}</StatusPill>}
         actions={
           <div className="flex items-center gap-1">
-            {canSeeAssignment && currentAssignment && driverQuery.data ? (
+            {SHOW_CONTACT_DRIVER && canSeeAssignment && currentAssignment && driverQuery.data ? (
               <Button asChild variant="outline" size="sm">
                 <a href={`tel:${driverQuery.data.phone}`}>
                   <Phone className="size-4" />
