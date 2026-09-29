@@ -1,5 +1,169 @@
-import { RoutePlaceholder } from "@/components/states/route-placeholder"
+"use client"
+
+import { useState } from "react"
+import { Fuel as FuelIcon, Plus, Route } from "lucide-react"
+import { useFuelLogs, useFuelSummary } from "@/lib/api/fuel"
+import { useTrips } from "@/lib/api/trips"
+import Link from "next/link"
+import { formatInt, formatMoney, formatNumber } from "@/lib/api/decimal"
+import { formatDate, formatDurationBetween } from "@/lib/format-date"
+import { can } from "@/lib/rbac"
+import { useCurrentUser } from "@/lib/auth/use-current-user"
+import type { FuelLog } from "@/lib/schemas/fuel"
+import type { TripLog } from "@/lib/schemas/trip"
+import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { KpiTile } from "@/components/primitives/kpi-tile"
+import { SectionPanel } from "@/components/primitives/section-panel"
+import { StatusPill } from "@/components/primitives/status-pill"
+import { PageHeader } from "@/components/layout/page-header"
+import { EmptyState } from "@/components/states/empty-state"
+import { PageSkeleton } from "@/components/states/page-skeleton"
+import { QueryRegion } from "@/components/states/query-boundary"
+import { FuelLogFormDialog } from "./_components/fuel-log-form-dialog"
+import { TripFormDialog } from "./_components/trip-form-dialog"
+
+function todayMonth(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+}
 
 export default function FuelPage() {
-  return <RoutePlaceholder title="Fuel & Trips" crumbs={[{ label: "Fuel & Trips" }]} />
+  const { role } = useCurrentUser()
+  const canWriteFuel = Boolean(role && can(role, "fuel:write"))
+  const canWriteTrip = Boolean(role && can(role, "trip:write"))
+  const canSeeSummary = Boolean(role && can(role, "fuel:summary"))
+
+  const [fuelFormOpen, setFuelFormOpen] = useState(false)
+  const [tripFormOpen, setTripFormOpen] = useState(false)
+
+  const fuelLogsQuery = useFuelLogs({ limit: 50 })
+  const tripsQuery = useTrips()
+  const summaryQuery = useFuelSummary(todayMonth(), { enabled: canSeeSummary })
+
+  const fuelColumns: DataTableColumn<FuelLog>[] = [
+    { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
+    { key: "odometer", header: "Odometer", align: "right", cell: (r) => formatInt(r.odometer_reading) },
+    { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.liters_filled) },
+    { key: "price", header: "Price/L", align: "right", cell: (r) => formatMoney(r.price_per_liter) },
+    { key: "total", header: "Total", align: "right", cell: (r) => formatMoney(r.total_cost) },
+    { key: "cost_per_km", header: "Cost/km", align: "right", cell: (r) => (r.cost_per_km ? formatMoney(r.cost_per_km) : "—") },
+    {
+      key: "anomaly",
+      header: "",
+      cell: (r) => (r.is_anomalous ? <StatusPill tone="warning">Anomaly</StatusPill> : null),
+    },
+  ]
+
+  const tripColumns: DataTableColumn<TripLog>[] = [
+    { key: "date", header: "Date", cell: (r) => formatDate(r.start_time.slice(0, 10)) },
+    { key: "distance", header: "Distance (km)", align: "right", cell: (r) => formatInt(r.distance_km) },
+    { key: "duration", header: "Duration", cell: (r) => formatDurationBetween(r.start_time, r.end_time) },
+    { key: "fuel", header: "Fuel used (L)", align: "right", cell: (r) => (r.fuel_consumed ? formatNumber(r.fuel_consumed) : "—") },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <PageHeader crumbs={[{ label: "Operations" }, { label: "Fuel & Trips" }]} />
+
+      <Tabs defaultValue="fuel">
+        <TabsList>
+          <TabsTrigger value="fuel">Fuel logs</TabsTrigger>
+          <TabsTrigger value="trips">Trips</TabsTrigger>
+          {canSeeSummary ? <TabsTrigger value="summary">Summary</TabsTrigger> : null}
+        </TabsList>
+
+        <TabsContent value="fuel" className="space-y-4">
+          <div className="flex justify-end">
+            {canWriteFuel ? (
+              <Button onClick={() => setFuelFormOpen(true)}>
+                <Plus className="size-4" />
+                Log fuel
+              </Button>
+            ) : null}
+          </div>
+          <QueryRegion
+            query={fuelLogsQuery}
+            skeleton={<PageSkeleton />}
+            empty={<EmptyState icon={FuelIcon} title="No fuel logs yet" description="Fuel logs will appear here once recorded." />}
+            isEmpty={(rows) => rows.length === 0}
+            areaLabel="fuel logs"
+          >
+            {(rows) => <DataTable columns={fuelColumns} rows={rows} getRowId={(r) => r.id} />}
+          </QueryRegion>
+        </TabsContent>
+
+        <TabsContent value="trips" className="space-y-4">
+          <div className="flex justify-end">
+            {canWriteTrip ? (
+              <Button onClick={() => setTripFormOpen(true)}>
+                <Plus className="size-4" />
+                Log trip
+              </Button>
+            ) : null}
+          </div>
+          <QueryRegion
+            query={tripsQuery}
+            skeleton={<PageSkeleton />}
+            empty={<EmptyState icon={Route} title="No trips yet" description="Trips will appear here once logged." />}
+            isEmpty={(rows) => rows.length === 0}
+            areaLabel="trips"
+          >
+            {(rows) => <DataTable columns={tripColumns} rows={rows} getRowId={(r) => r.id} />}
+          </QueryRegion>
+        </TabsContent>
+
+        {canSeeSummary ? (
+          <TabsContent value="summary" className="space-y-4">
+            <QueryRegion query={summaryQuery} skeleton={<PageSkeleton />} areaLabel="the fuel summary">
+              {(summary) => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <KpiTile icon={FuelIcon} tone="green" label="Total cost" value={summary.total_cost} format="money" />
+                    <KpiTile icon={FuelIcon} tone="blue" label="Total liters" value={summary.total_liters} format="number" />
+                    <KpiTile
+                      icon={FuelIcon}
+                      tone="purple"
+                      label="Avg cost/km"
+                      value={summary.avg_cost_per_km ?? "0"}
+                      format="money"
+                      hint={!summary.avg_cost_per_km ? "No data yet" : undefined}
+                    />
+                  </div>
+                  <SectionPanel icon={FuelIcon} title="By vehicle">
+                    {summary.by_vehicle.length === 0 ? (
+                      <EmptyState icon={FuelIcon} title="No fuel data yet" description="Per-vehicle costs will appear here once logged." />
+                    ) : (
+                      <DataTable
+                        columns={[
+                          {
+                            key: "vehicle",
+                            header: "Vehicle",
+                            cell: (r) => (
+                              <Link href={`/foundation/vehicles/${r.vehicle_id}`} className="font-medium text-foreground hover:underline">
+                                View vehicle
+                              </Link>
+                            ),
+                          },
+                          { key: "cost", header: "Cost", align: "right", cell: (r) => formatMoney(r.total_cost) },
+                          { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.total_liters) },
+                          { key: "avg", header: "Avg cost/km", align: "right", cell: (r) => (r.avg_cost_per_km ? formatMoney(r.avg_cost_per_km) : "—") },
+                        ]}
+                        rows={summary.by_vehicle}
+                        getRowId={(r) => r.vehicle_id}
+                      />
+                    )}
+                  </SectionPanel>
+                </div>
+              )}
+            </QueryRegion>
+          </TabsContent>
+        ) : null}
+      </Tabs>
+
+      <FuelLogFormDialog open={fuelFormOpen} onOpenChange={setFuelFormOpen} />
+      <TripFormDialog open={tripFormOpen} onOpenChange={setTripFormOpen} />
+    </div>
+  )
 }

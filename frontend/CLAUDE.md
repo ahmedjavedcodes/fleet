@@ -290,7 +290,8 @@ src/
 │   │   │                           #   AccessDenied, NotAvailableYet, QueryRegion, RouteErrorBoundary,
 │   │   │                           #   RoutePlaceholder (see note below)
 │   ├── charts/                     # AreaTrendChart (recharts, generic over series), HealthGauge (hand-rolled SVG semicircle)
-│   ├── fleet/                      # DueRow, TimelineList — domain components shared across dashboard (plan 04) and 05
+│   ├── fleet/                      # DueRow, TimelineList, AssignDriverDialog/ReleaseDriverFlow (promoted here in plan 06
+│   │   │                           #   once /assignment became a 2nd caller, per the _components/ promotion rule below)
 │   ├── primitives/…, Callout       # warning-toned banner (fuel-anomaly / open-incident callout on vehicle detail, plan 05 §2.5)
 │   └── ai/                         # ChatThread, AgentActivity, ApprovalCard, CitationPill
 ├── lib/
@@ -363,9 +364,10 @@ tests/                               # mirrors src/ path-for-path — see §7's 
 - **`RoutePlaceholder` vs `NotAvailableYet`:** every route in §2.1 is scaffolded and kept
   in the nav now (all of CLAUDE.md §3's sidebar, filtered by role), rather than hidden
   until a later phase builds it. A route whose *backend* already exists but has no UI yet
-  (fuel, maintenance, accountability, assignment, insights, documents) renders
-  `RoutePlaceholder` ("… is being built" — an honest state, not the §5.5 copy).
-  `/dashboard` (plan 04) and `/foundation/*` (plan 05) are built. Only `/chat` and
+  (insights, documents) renders `RoutePlaceholder` ("… is being built" — an honest state,
+  not the §5.5 copy). `/dashboard` (plan 04), `/foundation/*` (plan 05) and
+  `/fuel`, `/maintenance`, `/accountability`, `/assignment` (plan 06, reduced scope — see
+  that plan's notes for what's deferred within each) are built. Only `/chat` and
   `/notifications`, whose backend genuinely doesn't exist, render `NotAvailableYet`.
 - **Dashboard greeting is time-of-day, not literally "Good morning."** Plan 04 §1's copy
   ("Good morning, {first name}") was written before considering that a fleet manager

@@ -15,7 +15,7 @@ import { StatusPill, type StatusPillTone } from "@/components/primitives/status-
 import { PageHeader } from "@/components/layout/page-header"
 import { ErrorState } from "@/components/states/error-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
-import { AssignDriverDialog, ReleaseDriverFlow } from "./_components/assign-release-dialog"
+import { AssignDriverDialog, ReleaseDriverFlow } from "@/components/fleet/assign-release-dialog"
 import { HealthPanel } from "./_components/health-panel"
 import { MaintenancePanel } from "./_components/maintenance-panel"
 import { TripPanel } from "./_components/trip-panel"

@@ -11,8 +11,8 @@ vi.mock("@/lib/auth/use-current-user", () => ({ useCurrentUser: () => mockUseCur
 const pending = () => ({ data: undefined, isPending: true, error: null, refetch: vi.fn() })
 const success = <T,>(data: T) => ({ data, isPending: false, error: null, refetch: vi.fn() })
 
-const mockVehicle = vi.fn(pending)
-const mockAssignments = vi.fn(pending)
+const mockVehicle = vi.fn()
+const mockAssignments = vi.fn()
 vi.mock("@/lib/api/vehicles", () => ({
   useVehicle: () => mockVehicle(),
   useVehicleAssignments: () => mockAssignments(),
@@ -21,13 +21,13 @@ vi.mock("@/lib/api/vehicles", () => ({
   useReleaseVehicle: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-const mockDriver = vi.fn(pending)
+const mockDriver = vi.fn()
 vi.mock("@/lib/api/drivers", () => ({ useDriver: () => mockDriver(), useDrivers: () => pending() }))
 
-const useFleetHealth = vi.fn(pending)
+const useFleetHealth = vi.fn()
 vi.mock("@/lib/api/dashboard", () => ({ useFleetHealth: () => useFleetHealth() }))
 vi.mock("@/lib/api/fuel", () => ({ useFuelSummary: () => pending(), useFuelLogs: () => pending() }))
-const useTrips = vi.fn(pending)
+const useTrips = vi.fn()
 vi.mock("@/lib/api/trips", () => ({ useTrips: () => useTrips() }))
 vi.mock("@/lib/api/maintenance", () => ({ useMaintenanceLogs: () => pending() }))
 vi.mock("@/lib/api/incidents", () => ({ useIncidents: () => pending() }))
@@ -51,8 +51,9 @@ describe("VehicleDetailPage", () => {
   beforeEach(() => {
     mockVehicle.mockReturnValue(success(VEHICLE))
     mockAssignments.mockReturnValue(success([]))
-    useFleetHealth.mockClear()
-    useTrips.mockClear()
+    mockDriver.mockReturnValue(pending())
+    useFleetHealth.mockReset().mockReturnValue(pending())
+    useTrips.mockReset().mockReturnValue(pending())
   })
 
   it("shows a not-found error state when the vehicle 404s", () => {

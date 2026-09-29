@@ -1,8 +1,31 @@
 # 06 — Operations Modules (scoped)
 
-**Status:** scoped, not detailed. Before starting a module, expand its section into a
-detailed plan (layout sketch, component list, tests) the way plans 04 and 05 are written,
-and re-check the endpoints against `backend/app/api/*.py`, since they may have moved.
+**Status:** built at a reduced scope on 2026-09-29, under a tight session token budget —
+see the per-module notes below for what shipped vs. what's deferred. Before picking up a
+deferred piece, re-check the endpoints against `backend/app/api/*.py`, since they may have
+moved, and expand it into a detailed plan the way 04/05 are written.
+
+**Built this pass, all four routes:**
+- **Fuel & Trips** (`/fuel`): tabs for Fuel logs (table + log-fuel form), Trips (table +
+  log-trip form), Summary (A/FM: KPI tiles + by-vehicle table). **Not built:** receipt
+  upload/`upload_status` display, the driver-facing mobile-first layout polish.
+- **Maintenance** (`/maintenance`): Service log only (table + log-service form, `?vehicle_id=`
+  pre-fill honored, D gets `AccessDenied`). **Not built:** mechanic report form,
+  upcoming/overdue calendars, compliance rules CRUD, inventory, purchase orders — the page
+  says so inline rather than pretending they exist.
+- **Accountability** (`/accountability`): tabs for Incidents (table + report form + A/FM
+  resolve dialog, `?vehicle_id=&new=1` pre-fill honored) and Shift reports (table + append-only
+  submit form, no edit action per the backend's 405). **Not built:** the driver-picker
+  timeline view (plan §3's third row) — a driver's own timeline is still reachable from
+  their detail page (plan 05).
+- **Assignment** (`/assignment`): the custody board (fans out `GET /vehicles` then
+  `GET /vehicles/{id}/assignments` per vehicle, same assign/release dialogs as vehicle
+  detail — promoted to `components/fleet/assign-release-dialog.tsx` since a second page now
+  uses them). **Not built:** the "who had it on…" date-lookup region.
+
+**Not done at all this pass, for the same budget reason:** live-browser verification with
+seeded data, and the full test matrix from §-level "Tests" sections in 04/05's style — only
+build/lint/typecheck/test (473 tests) were run as verification.
 
 **Depends on:** 03. All modules reuse the primitives (`SectionPanel`, `KpiTile`,
 `DataTable`, `StatusPill`, `TimelineList`, `Callout`) and follow the page-state rules from
