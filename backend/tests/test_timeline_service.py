@@ -55,6 +55,42 @@ def test_timeline_interleaves_and_orders_correctly(
     assert timeline[2].summary["distance_km"] == 100
 
 
+def test_timeline_summary_decimal_fields_serialize_as_strings(
+    db_session: Session, organization: Organization, admin, driver_profile
+) -> None:
+    """jsonb_build_object renders a bare Decimal column as a JSON number,
+    breaking the Decimal-as-string convention every other endpoint follows —
+    regression test for the explicit ::text cast in _build_timeline_query."""
+    vehicle = make_vehicle(db_session, organization)
+
+    trip = trip_service.create_trip(
+        db_session, organization.id,
+        TripLogCreate(
+            driver_id=driver_profile.id, vehicle_id=vehicle.id,
+            start_time=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc), end_time=datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+            start_odometer=1000, end_odometer=1100, fuel_consumed="8.50",
+        ),
+        admin.id,
+    )
+    incident_service.create_incident(
+        db_session, organization.id,
+        IncidentLogCreate(
+            driver_id=driver_profile.id, vehicle_id=vehicle.id, incident_type=IncidentType.damage,
+            date=date(2026, 6, 3), severity=IncidentSeverity.moderate, description="Bumper damage",
+            estimated_cost="5000.00",
+        ),
+        admin.id,
+    )
+
+    timeline = timeline_service.get_vehicle_timeline(db_session, organization.id, vehicle.id)
+    trip_entry = next(e for e in timeline if e.id == trip.id)
+    incident_entry = next(e for e in timeline if e.record_type == "incident")
+    assert isinstance(trip_entry.summary["fuel_consumed"], str)
+    assert trip_entry.summary["fuel_consumed"] == "8.50"
+    assert isinstance(incident_entry.summary["estimated_cost"], str)
+    assert incident_entry.summary["estimated_cost"] == "5000.00"
+
+
 def test_timeline_same_date_ordering_is_stable(db_session: Session, organization: Organization, admin, driver_profile) -> None:
     vehicle = make_vehicle(db_session, organization)
     same_date = date(2026, 6, 1)

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import DateTime, cast, func, literal, select, union_all
+from sqlalchemy import DateTime, String, cast, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
 from app.models.accountability import DriverReport, IncidentLog, TripLog
@@ -41,7 +41,11 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
                 "start_odometer", TripLog.start_odometer,
                 "end_odometer", TripLog.end_odometer,
                 "distance_km", TripLog.distance_km,
-                "fuel_consumed", TripLog.fuel_consumed,
+                # Cast to text: jsonb_build_object renders a bare Decimal column
+                # as a JSON number, breaking the Decimal-as-string convention
+                # every other endpoint follows (CLAUDE.md's Pydantic responses
+                # serialize Decimal to a string; this raw-SQL path bypasses that).
+                "fuel_consumed", cast(TripLog.fuel_consumed, String),
                 "notes", TripLog.notes,
             ).label("summary"),
         ),
@@ -78,7 +82,7 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
                 "severity", IncidentLog.severity,
                 "description", IncidentLog.description,
                 "location_description", IncidentLog.location_description,
-                "estimated_cost", IncidentLog.estimated_cost,
+                "estimated_cost", cast(IncidentLog.estimated_cost, String),
                 "resolution_status", IncidentLog.resolution_status,
                 "resolution_notes", IncidentLog.resolution_notes,
             ).label("summary"),
