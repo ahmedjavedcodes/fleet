@@ -20,8 +20,12 @@ export function createTrip(input: TripLogCreate): Promise<TripLog> {
   return apiRequest("/trips", { method: "POST", body: input, schema: tripLogSchema })
 }
 
-export function useTrips(params: TripLogListParams = {}) {
-  return useQuery({ queryKey: tripKeys.list(params), queryFn: () => listTrips(params) })
+export function useTrips(params: TripLogListParams = {}, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: tripKeys.list(params),
+    queryFn: () => listTrips(params),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useTrip(id: string) {

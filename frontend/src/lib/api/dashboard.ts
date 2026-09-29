@@ -50,6 +50,10 @@ export function useMaintenanceCalendar(windowDays?: number) {
   })
 }
 
-export function useFleetHealth() {
-  return useQuery({ queryKey: dashboardKeys.fleetHealth(), queryFn: getFleetHealth })
+export function useFleetHealth(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: dashboardKeys.fleetHealth(),
+    queryFn: getFleetHealth,
+    enabled: options?.enabled ?? true,
+  })
 }

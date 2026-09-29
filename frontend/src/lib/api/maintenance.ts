@@ -53,8 +53,12 @@ export function createMechanicReport(logId: string, input: MechanicReportCreate)
 
 // --- Hooks -------------------------------------------------------------
 
-export function useMaintenanceLogs(params: MaintenanceLogListParams = {}) {
-  return useQuery({ queryKey: maintenanceKeys.list(params), queryFn: () => listMaintenanceLogs(params) })
+export function useMaintenanceLogs(params: MaintenanceLogListParams = {}, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: maintenanceKeys.list(params),
+    queryFn: () => listMaintenanceLogs(params),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useMaintenanceLog(id: string) {

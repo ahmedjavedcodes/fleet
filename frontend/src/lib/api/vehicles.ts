@@ -81,11 +81,11 @@ export function useVehicleCompliance(id: string) {
   })
 }
 
-export function useVehicleAssignments(id: string, targetDate?: string) {
+export function useVehicleAssignments(id: string, targetDate?: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: vehicleKeys.assignments(id, targetDate),
     queryFn: () => getVehicleAssignments(id, targetDate),
-    enabled: Boolean(id),
+    enabled: Boolean(id) && (options?.enabled ?? true),
   })
 }
 

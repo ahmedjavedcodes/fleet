@@ -49,16 +49,24 @@ export function attachFuelReceipt(id: string, file: File): Promise<FuelReceipt> 
 
 // --- Hooks -------------------------------------------------------------
 
-export function useFuelLogs(params: FuelLogListParams = {}) {
-  return useQuery({ queryKey: fuelKeys.list(params), queryFn: () => listFuelLogs(params) })
+export function useFuelLogs(params: FuelLogListParams = {}, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: fuelKeys.list(params),
+    queryFn: () => listFuelLogs(params),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useFuelLog(id: string) {
   return useQuery({ queryKey: fuelKeys.detail(id), queryFn: () => getFuelLog(id), enabled: Boolean(id) })
 }
 
-export function useFuelSummary(month?: string) {
-  return useQuery({ queryKey: fuelKeys.summary(month), queryFn: () => getFuelSummary(month) })
+export function useFuelSummary(month?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: fuelKeys.summary(month),
+    queryFn: () => getFuelSummary(month),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 // A fuel log invalidates fuel lists, fuel summary and dashboard trends
