@@ -73,12 +73,15 @@ export default function DriversPage() {
       ),
     },
     { key: "license", header: "License number", cell: (row) => row.license_number },
+    { key: "license_type", header: "Type", cell: (row) => row.license_type ?? "—" },
+    { key: "license_issued", header: "Issued", cell: (row) => (row.license_issue_date ? formatDate(row.license_issue_date) : "—") },
     {
       key: "expiry",
       header: "License expiry",
       cell: (row) => <StatusPill tone={expiryTone(row.license_expiry)}>{formatDate(row.license_expiry)}</StatusPill>,
     },
     { key: "phone", header: "Phone", cell: (row) => row.phone },
+    { key: "license_status", header: "License status", cell: (row) => row.license_current_status ?? "—" },
     {
       key: "status",
       header: "Status",

@@ -11,6 +11,7 @@ import { formatInt } from "@/lib/api/decimal"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { Vehicle } from "@/lib/schemas/vehicle"
+import { VEHICLE_OWNERSHIP_LABELS } from "@/lib/enum-labels"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -98,6 +99,9 @@ export default function VehiclesPage() {
           return <StatusPill tone={s.tone}>{s.label}</StatusPill>
         },
       },
+      { key: "ownership", header: "Ownership", cell: (row) => VEHICLE_OWNERSHIP_LABELS[row.ownership_type] },
+      { key: "engine_number", header: "Engine no.", cell: (row) => row.engine_number ?? "—" },
+      { key: "chassis_number", header: "Chassis no.", cell: (row) => row.chassis_number ?? "—" },
       { key: "odometer", header: "Odometer", align: "right", cell: (row) => `${formatInt(row.current_odometer)} km` },
     ]
     if (canWrite) {

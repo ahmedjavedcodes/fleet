@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema } from "./common"
+import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
 import { fuelReceiptUploadStatusSchema } from "./enums"
 
 // Mirrors backend/app/schemas/fuel.py.
@@ -14,6 +14,7 @@ export const fuelReceiptSchema = z.object({
 export type FuelReceipt = z.infer<typeof fuelReceiptSchema>
 
 export const fuelLogSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   vehicle_id: uuidSchema,
   driver_id: uuidSchema.nullable(),
@@ -27,6 +28,12 @@ export const fuelLogSchema = z.object({
   cost_per_km: decimalStringSchema.nullable(),
   is_anomalous: z.boolean(),
   notes: z.string().nullable(),
+  // Slip / receipt details.
+  po_number: z.string().nullable(),
+  payment_method: z.string().nullable(),
+  card_used: z.string().nullable(),
+  fuel_station_name: z.string().nullable(),
+  slip_id: z.string().nullable(),
   created_at: dateTimeStringSchema,
   receipt: fuelReceiptSchema.nullable().optional(),
 })
@@ -42,6 +49,11 @@ export const fuelLogCreateSchema = z
     price_per_liter: z.number().positive(),
     total_cost: z.number().positive(),
     notes: z.string().optional(),
+    po_number: z.string().optional(),
+    payment_method: z.string().optional(),
+    card_used: z.string().optional(),
+    fuel_station_name: z.string().optional(),
+    slip_id: z.string().optional(),
   })
   .strict()
 export type FuelLogCreate = z.infer<typeof fuelLogCreateSchema>
@@ -57,12 +69,23 @@ export const fuelLogUpdateSchema = z
     price_per_liter: z.number().positive().optional(),
     total_cost: z.number().positive().optional(),
     notes: z.string().optional(),
+    po_number: z.string().optional(),
+    payment_method: z.string().optional(),
+    card_used: z.string().optional(),
+    fuel_station_name: z.string().optional(),
+    slip_id: z.string().optional(),
   })
   .strict()
 export type FuelLogUpdate = z.infer<typeof fuelLogUpdateSchema>
 
 export const vehicleFuelSummarySchema = z.object({
   vehicle_id: uuidSchema,
+  plate_number: z.string().nullable(),
+  vehicle_name: z.string().nullable(),
+  driver_names: z.array(z.string()),
+  fill_count: z.number().int(),
+  first_fill_date: dateStringSchema.nullable(),
+  last_fill_date: dateStringSchema.nullable(),
   total_cost: decimalStringSchema,
   total_liters: decimalStringSchema,
   avg_cost_per_km: decimalStringSchema.nullable(),
@@ -71,6 +94,9 @@ export type VehicleFuelSummary = z.infer<typeof vehicleFuelSummarySchema>
 
 export const fuelSummaryResponseSchema = z.object({
   month: z.string(),
+  period_start: dateStringSchema,
+  period_end: dateStringSchema,
+  generated_at: dateTimeStringSchema,
   total_cost: decimalStringSchema,
   total_liters: decimalStringSchema,
   avg_cost_per_km: decimalStringSchema.nullable(),

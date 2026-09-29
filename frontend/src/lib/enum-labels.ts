@@ -5,8 +5,11 @@ import type {
   IncidentResolutionStatus,
   IncidentSeverity,
   IncidentType,
+  ServiceScale,
   ServiceType,
+  SupplierCategory,
   VehicleCondition,
+  VehicleOwnershipType,
 } from "@/lib/schemas/enums"
 
 // Display labels for backend enums that need one — shared across dashboard,
@@ -71,4 +74,23 @@ export const DOCUMENT_STATUS_TONE: Record<DocumentStatus, StatusPillTone> = {
   processing: "info",
   ready: "success",
   failed: "destructive",
+}
+
+export const VEHICLE_OWNERSHIP_LABELS: Record<VehicleOwnershipType, string> = {
+  leasing: "Leasing",
+  rent: "Rent",
+  owner: "Owner",
+}
+
+export const SUPPLIER_CATEGORY_LABELS: Record<SupplierCategory, string> = {
+  workshop: "Workshop",
+  tire_supplier: "Tire supplier",
+  parts_supplier: "Parts supplier",
+  fuel_station: "Fuel station",
+  other: "Other",
+}
+
+export const SERVICE_SCALE_LABELS: Record<ServiceScale, string> = {
+  minor: "Minor",
+  major: "Major",
 }

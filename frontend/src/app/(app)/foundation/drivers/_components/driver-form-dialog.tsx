@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { useCreateDriver, useUpdateDriver } from "@/lib/api/drivers"
 import { isApiError } from "@/lib/api/errors"
+import { emptyToUndefined } from "@/lib/form-utils"
 import { driverCreateSchema, type Driver, type DriverCreate } from "@/lib/schemas/driver"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -48,6 +49,9 @@ export function DriverFormDialog({
             phone: driver.phone,
             status: driver.status,
             user_id: driver.user_id ?? undefined,
+            license_type: driver.license_type ?? undefined,
+            license_issue_date: driver.license_issue_date ?? undefined,
+            license_current_status: driver.license_current_status ?? undefined,
           }
         : { full_name: "", license_number: "", license_expiry: "", phone: "", status: "active" }
     )
@@ -97,6 +101,30 @@ export function DriverFormDialog({
                 <FieldError errors={[errors.license_expiry]} />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="license_type">License type</FieldLabel>
+                <Input id="license_type" placeholder="e.g. LTV, HTV" {...register("license_type", { setValueAs: emptyToUndefined })} />
+              </Field>
+              <Field data-invalid={Boolean(errors.license_issue_date)}>
+                <FieldLabel htmlFor="license_issue_date">License issued</FieldLabel>
+                <Input
+                  id="license_issue_date"
+                  type="date"
+                  {...register("license_issue_date", { setValueAs: emptyToUndefined })}
+                  aria-invalid={Boolean(errors.license_issue_date)}
+                />
+                <FieldError errors={[errors.license_issue_date]} />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="license_current_status">License status</FieldLabel>
+              <Input
+                id="license_current_status"
+                placeholder="e.g. valid, suspended"
+                {...register("license_current_status", { setValueAs: emptyToUndefined })}
+              />
+            </Field>
             <Field data-invalid={Boolean(errors.phone)}>
               <FieldLabel htmlFor="phone">Phone</FieldLabel>
               <Input id="phone" {...register("phone")} aria-invalid={Boolean(errors.phone)} />

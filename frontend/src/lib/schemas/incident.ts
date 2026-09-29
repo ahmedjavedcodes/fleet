@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema } from "./common"
+import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
 import { incidentResolutionStatusSchema, incidentSeveritySchema, incidentTypeSchema } from "./enums"
 
 // Mirrors backend/app/schemas/accountability.py IncidentLog*.
@@ -8,14 +8,20 @@ import { incidentResolutionStatusSchema, incidentSeveritySchema, incidentTypeSch
 // on the backend (extra="forbid"), not just a convention here.
 
 export const incidentLogSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   driver_id: uuidSchema.nullable(),
   vehicle_id: uuidSchema,
   incident_type: incidentTypeSchema,
   date: dateStringSchema,
+  // Full timestamp; null on records that pre-date the field.
+  incident_time: dateTimeStringSchema.nullable(),
   severity: incidentSeveritySchema,
   description: z.string(),
   location_description: z.string().nullable(),
+  location_area: z.string().nullable(),
+  remarks: z.string().nullable(),
+  attachment_url: z.string().nullable(),
   estimated_cost: decimalStringSchema.nullable(),
   resolution_status: incidentResolutionStatusSchema,
   resolution_notes: z.string().nullable(),
@@ -29,9 +35,13 @@ export const incidentLogCreateSchema = z
     vehicle_id: uuidSchema,
     incident_type: incidentTypeSchema,
     date: dateStringSchema,
+    incident_time: dateTimeStringSchema.optional(),
     severity: incidentSeveritySchema,
     description: z.string().min(1, "Description is required"),
     location_description: z.string().optional(),
+    location_area: z.string().optional(),
+    remarks: z.string().optional(),
+    attachment_url: z.string().optional(),
     estimated_cost: z.number().min(0).optional(),
   })
   .strict()

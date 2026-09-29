@@ -30,6 +30,9 @@ export const maintenanceCalendarItemSchema = z.object({
   vehicle_id: uuidSchema,
   plate_number: z.string(),
   service_type: serviceTypeSchema,
+  vehicle_name: z.string().nullable(),
+  driver_name: z.string().nullable(),
+  last_service_date: dateStringSchema.nullable(),
   // Nullable: an item overdue purely by km has no next_due_date. Per the
   // backend, an overdue item is never dropped from the calendar for any
   // reason — it stays, with due_date null and due_km/status conveying it.

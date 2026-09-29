@@ -14,3 +14,15 @@ export const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expecte
 // explicit offset/Z rather than over-constraining against a backend detail
 // that isn't part of the contract.
 export const dateTimeStringSchema = z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Expected an ISO datetime")
+
+// Flat vehicle/driver display fields the backend joins onto operational
+// records (backend/app/schemas/common.py VehicleDriverRefs) — lets list views
+// show a plate, make/model or driver name without a second lookup. driver_name
+// is null for records with no driver attached.
+export const vehicleDriverRefsShape = {
+  vehicle_plate: z.string().nullable(),
+  vehicle_make: z.string().nullable(),
+  vehicle_model: z.string().nullable(),
+  vehicle_name: z.string().nullable(),
+  driver_name: z.string().nullable(),
+}

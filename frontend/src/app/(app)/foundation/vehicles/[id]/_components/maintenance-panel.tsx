@@ -93,10 +93,11 @@ export function MaintenancePanel({ vehicleId, role }: { vehicleId: string; role:
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-foreground">
-                            {formatDate(log.date)} · {SERVICE_TYPE_LABELS[log.service_type]}
+                            {formatDate(log.date)} · {log.service_types.map((t) => SERVICE_TYPE_LABELS[t]).join(", ")}
                           </p>
                           <p className="text-caption text-muted-foreground">
                             {log.mechanic_name ?? "—"}
+                            {log.driver_name ? ` · brought in by ${log.driver_name}` : ""}
                             {log.mechanic_report ? (
                               <Badge variant="outline" className="ml-2">
                                 Report

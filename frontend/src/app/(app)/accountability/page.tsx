@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { useIncidents } from "@/lib/api/incidents"
 import { useDriverReports } from "@/lib/api/driver-reports"
 import { formatMoney } from "@/lib/api/decimal"
-import { formatDate } from "@/lib/format-date"
+import { formatDate, formatDateTime } from "@/lib/format-date"
 import { INCIDENT_RESOLUTION_LABELS, INCIDENT_SEVERITY_TONE, INCIDENT_TYPE_LABELS, VEHICLE_CONDITION_LABELS } from "@/lib/enum-labels"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
@@ -41,10 +41,23 @@ export default function AccountabilityPage() {
   const reportsQuery = useDriverReports()
 
   const incidentColumns: DataTableColumn<IncidentLog>[] = [
-    { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
+    { key: "date", header: "When", cell: (r) => (r.incident_time ? formatDateTime(r.incident_time) : formatDate(r.date)) },
+    { key: "vehicle", header: "Vehicle", cell: (r) => r.vehicle_plate ?? "—" },
+    { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "type", header: "Type", cell: (r) => INCIDENT_TYPE_LABELS[r.incident_type] },
     { key: "severity", header: "Severity", cell: (r) => <StatusPill tone={INCIDENT_SEVERITY_TONE[r.severity]}>{r.severity[0]!.toUpperCase() + r.severity.slice(1)}</StatusPill> },
     { key: "description", header: "Description", cell: (r) => <span className="line-clamp-1">{r.description}</span> },
+    { key: "area", header: "Location", cell: (r) => r.location_area ?? r.location_description ?? "—" },
+    {
+      key: "attachment",
+      header: "",
+      cell: (r) =>
+        r.attachment_url ? (
+          <a href={r.attachment_url} target="_blank" rel="noreferrer" className="text-sm text-foreground underline">
+            Attachment
+          </a>
+        ) : null,
+    },
     { key: "cost", header: "Est. cost", align: "right", cell: (r) => (r.estimated_cost ? formatMoney(r.estimated_cost) : "—") },
     { key: "status", header: "Status", cell: (r) => <StatusPill tone={r.resolution_status === "open" ? "destructive" : r.resolution_status === "investigating" ? "warning" : "success"}>{INCIDENT_RESOLUTION_LABELS[r.resolution_status]}</StatusPill> },
   ]

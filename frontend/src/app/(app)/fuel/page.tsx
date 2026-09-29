@@ -6,7 +6,7 @@ import { useFuelLogs, useFuelSummary } from "@/lib/api/fuel"
 import { useTrips } from "@/lib/api/trips"
 import Link from "next/link"
 import { formatInt, formatMoney, formatNumber } from "@/lib/api/decimal"
-import { formatDate, formatDurationBetween } from "@/lib/format-date"
+import { formatDate, formatDateTime, formatDurationBetween } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { FuelLog } from "@/lib/schemas/fuel"
@@ -23,6 +23,35 @@ import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
 import { FuelLogFormDialog } from "./_components/fuel-log-form-dialog"
 import { TripFormDialog } from "./_components/trip-form-dialog"
+
+function VehicleCell({ plate, name }: { plate: string | null; name: string | null }) {
+  return (
+    <div>
+      <p className="font-medium text-foreground">{plate ?? "—"}</p>
+      {name ? <p className="text-caption text-muted-foreground">{name}</p> : null}
+    </div>
+  )
+}
+
+function SlipCell({ slipId, poNumber }: { slipId: string | null; poNumber: string | null }) {
+  if (!slipId && !poNumber) return <>—</>
+  return (
+    <div>
+      {slipId ? <p>{slipId}</p> : null}
+      {poNumber ? <p className="text-caption text-muted-foreground">PO {poNumber}</p> : null}
+    </div>
+  )
+}
+
+function PaymentCell({ method, card }: { method: string | null; card: string | null }) {
+  if (!method && !card) return <>—</>
+  return (
+    <div>
+      {method ? <p>{method}</p> : null}
+      {card ? <p className="text-caption text-muted-foreground">{card}</p> : null}
+    </div>
+  )
+}
 
 function todayMonth(): string {
   const d = new Date()
@@ -44,6 +73,11 @@ export default function FuelPage() {
 
   const fuelColumns: DataTableColumn<FuelLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleCell plate={r.vehicle_plate} name={r.vehicle_name} /> },
+    { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
+    { key: "slip", header: "Slip / PO", cell: (r) => <SlipCell slipId={r.slip_id} poNumber={r.po_number} /> },
+    { key: "station", header: "Station", cell: (r) => r.fuel_station_name ?? "—" },
+    { key: "payment", header: "Payment", cell: (r) => <PaymentCell method={r.payment_method} card={r.card_used} /> },
     { key: "odometer", header: "Odometer", align: "right", cell: (r) => formatInt(r.odometer_reading) },
     { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.liters_filled) },
     { key: "price", header: "Price/L", align: "right", cell: (r) => formatMoney(r.price_per_liter) },
@@ -58,6 +92,10 @@ export default function FuelPage() {
 
   const tripColumns: DataTableColumn<TripLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.start_time.slice(0, 10)) },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleCell plate={r.vehicle_plate} name={r.vehicle_name} /> },
+    { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
+    { key: "start", header: "Started", cell: (r) => formatDateTime(r.start_time) },
+    { key: "odometer", header: "Odometer (km)", align: "right", cell: (r) => `${formatInt(r.start_odometer)} → ${formatInt(r.end_odometer)}` },
     { key: "distance", header: "Distance (km)", align: "right", cell: (r) => formatInt(r.distance_km) },
     { key: "duration", header: "Duration", cell: (r) => formatDurationBetween(r.start_time, r.end_time) },
     { key: "fuel", header: "Fuel used (L)", align: "right", cell: (r) => (r.fuel_consumed ? formatNumber(r.fuel_consumed) : "—") },
@@ -142,9 +180,16 @@ export default function FuelPage() {
                             header: "Vehicle",
                             cell: (r) => (
                               <Link href={`/foundation/vehicles/${r.vehicle_id}`} className="font-medium text-foreground hover:underline">
-                                View vehicle
+                                <VehicleCell plate={r.plate_number} name={r.vehicle_name} />
                               </Link>
                             ),
+                          },
+                          { key: "drivers", header: "Drivers", cell: (r) => (r.driver_names.length ? r.driver_names.join(", ") : "—") },
+                          { key: "fills", header: "Fills", align: "right", cell: (r) => r.fill_count },
+                          {
+                            key: "last_fill",
+                            header: "Last fill",
+                            cell: (r) => (r.last_fill_date ? formatDate(r.last_fill_date) : "—"),
                           },
                           { key: "cost", header: "Cost", align: "right", cell: (r) => formatMoney(r.total_cost) },
                           { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.total_liters) },

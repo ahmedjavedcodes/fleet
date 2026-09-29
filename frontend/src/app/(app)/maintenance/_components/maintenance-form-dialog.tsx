@@ -7,9 +7,11 @@ import { toast } from "sonner"
 import { useCreateMaintenanceLog } from "@/lib/api/maintenance"
 import { useVehicles } from "@/lib/api/vehicles"
 import { isApiError } from "@/lib/api/errors"
-import { SERVICE_TYPE_LABELS } from "@/lib/enum-labels"
+import { SERVICE_SCALE_LABELS, SERVICE_TYPE_LABELS } from "@/lib/enum-labels"
 import { maintenanceLogCreateSchema, type MaintenanceLogCreate } from "@/lib/schemas/maintenance"
-import type { ServiceType } from "@/lib/schemas/enums"
+import type { ServiceScale, ServiceType } from "@/lib/schemas/enums"
+import { DriverSelect } from "@/components/fleet/driver-select"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -18,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 
 const SERVICE_TYPES = Object.keys(SERVICE_TYPE_LABELS) as ServiceType[]
+const SERVICE_SCALES = Object.keys(SERVICE_SCALE_LABELS) as ServiceScale[]
 
 export function MaintenanceFormDialog({
   open,
@@ -40,11 +43,11 @@ export function MaintenanceFormDialog({
     formState: { errors },
   } = useForm<MaintenanceLogCreate>({
     resolver: zodResolver(maintenanceLogCreateSchema),
-    defaultValues: { vehicle_id: defaultVehicleId ?? "", date: new Date().toISOString().slice(0, 10), odometer_at_service: 0, service_type: "oil_change" },
+    defaultValues: { vehicle_id: defaultVehicleId ?? "", date: new Date().toISOString().slice(0, 10), odometer_at_service: 0, service_types: ["oil_change"], service_scale: "minor" },
   })
 
   useEffect(() => {
-    if (open) reset({ vehicle_id: defaultVehicleId ?? "", date: new Date().toISOString().slice(0, 10), odometer_at_service: 0, service_type: "oil_change" })
+    if (open) reset({ vehicle_id: defaultVehicleId ?? "", date: new Date().toISOString().slice(0, 10), odometer_at_service: 0, service_types: ["oil_change"], service_scale: "minor" })
   }, [open, defaultVehicleId, reset])
 
   function onSubmit(values: MaintenanceLogCreate) {
@@ -102,21 +105,46 @@ export function MaintenanceFormDialog({
                 <FieldError errors={[errors.odometer_at_service]} />
               </Field>
             </div>
-            <Field>
-              <FieldLabel htmlFor="service_type">Service type</FieldLabel>
-              <Select value={watch("service_type")} onValueChange={(v) => setValue("service_type", v as ServiceType)}>
-                <SelectTrigger id="service_type" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SERVICE_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {SERVICE_TYPE_LABELS[t]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <Field data-invalid={Boolean(errors.service_types)}>
+              <FieldLabel>Services performed</FieldLabel>
+              <ToggleGroup
+                type="multiple"
+                variant="outline"
+                size="sm"
+                className="flex-wrap"
+                aria-label="Services performed"
+                value={watch("service_types") ?? []}
+                onValueChange={(v) => setValue("service_types", v as ServiceType[], { shouldValidate: true })}
+              >
+                {SERVICE_TYPES.map((t) => (
+                  <ToggleGroupItem key={t} value={t}>
+                    {SERVICE_TYPE_LABELS[t]}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <FieldError errors={[errors.service_types as { message?: string } | undefined]} />
             </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="service_scale">Scale</FieldLabel>
+                <Select value={watch("service_scale")} onValueChange={(v) => setValue("service_scale", v as ServiceScale)}>
+                  <SelectTrigger id="service_scale" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SERVICE_SCALES.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {SERVICE_SCALE_LABELS[s]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="driver_id">Brought in by</FieldLabel>
+                <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
+              </Field>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Field data-invalid={Boolean(errors.cost)}>
                 <FieldLabel htmlFor="cost">Cost (PKR)</FieldLabel>

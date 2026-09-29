@@ -7,6 +7,9 @@ import { toast } from "sonner"
 import { useCreateFuelLog } from "@/lib/api/fuel"
 import { useVehicles } from "@/lib/api/vehicles"
 import { isApiError } from "@/lib/api/errors"
+import { useCurrentUser } from "@/lib/auth/use-current-user"
+import { emptyToUndefined } from "@/lib/form-utils"
+import { DriverSelect } from "@/components/fleet/driver-select"
 import { fuelLogCreateSchema, type FuelLogCreate } from "@/lib/schemas/fuel"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -16,6 +19,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const vehiclesQuery = useVehicles()
+  // A driver-role user always logs for themself (the backend forces it), so only
+  // admins get to pick a driver.
+  const { role } = useCurrentUser()
+  const canPickDriver = role !== null && role !== "driver"
   const createMutation = useCreateFuelLog()
   const {
     register,
@@ -85,6 +92,12 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
               </Select>
               <FieldError errors={[errors.vehicle_id]} />
             </Field>
+            {canPickDriver ? (
+              <Field>
+                <FieldLabel htmlFor="driver_id">Driver</FieldLabel>
+                <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
+              </Field>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <Field data-invalid={Boolean(errors.date)}>
                 <FieldLabel htmlFor="date">Date</FieldLabel>
@@ -114,6 +127,38 @@ export function FuelLogFormDialog({ open, onOpenChange }: { open: boolean; onOpe
               <Input id="total_cost" type="number" step="0.01" {...register("total_cost", { valueAsNumber: true })} />
               <FieldError errors={[errors.total_cost]} />
             </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="slip_id">Slip ID</FieldLabel>
+                <Input id="slip_id" {...register("slip_id", { setValueAs: emptyToUndefined })} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="po_number">PO number</FieldLabel>
+                <Input id="po_number" {...register("po_number", { setValueAs: emptyToUndefined })} />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="fuel_station_name">Fuel station</FieldLabel>
+              <Input id="fuel_station_name" {...register("fuel_station_name", { setValueAs: emptyToUndefined })} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="payment_method">Payment method</FieldLabel>
+                <Input
+                  id="payment_method"
+                  placeholder="cash, card, fuel card"
+                  {...register("payment_method", { setValueAs: emptyToUndefined })}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="card_used">Card used</FieldLabel>
+                <Input
+                  id="card_used"
+                  placeholder="Last 4 digits or name"
+                  {...register("card_used", { setValueAs: emptyToUndefined })}
+                />
+              </Field>
+            </div>
             {errors.root ? <p className="text-sm text-destructive">{errors.root.message}</p> : null}
           </FieldGroup>
           <DialogFooter>

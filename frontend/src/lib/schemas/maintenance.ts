@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema } from "./common"
-import { serviceTypeSchema } from "./enums"
+import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
+import { serviceScaleSchema, serviceTypeSchema } from "./enums"
 
 // Mirrors backend/app/schemas/maintenance.py.
 
@@ -41,11 +41,18 @@ export const mechanicReportCreateSchema = z
 export type MechanicReportCreate = z.infer<typeof mechanicReportCreateSchema>
 
 export const maintenanceLogSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   vehicle_id: uuidSchema,
   date: dateStringSchema,
   odometer_at_service: z.number().int(),
+  // Primary (first) service — kept for single-service consumers; use service_types.
   service_type: serviceTypeSchema,
+  // Every service performed in the visit.
+  service_types: z.array(serviceTypeSchema).min(1),
+  service_scale: serviceScaleSchema,
+  // The driver who brought the vehicle in.
+  driver_id: uuidSchema.nullable(),
   description: z.string().nullable(),
   cost: decimalStringSchema.nullable(),
   mechanic_name: z.string().nullable(),
@@ -61,7 +68,9 @@ export const maintenanceLogCreateSchema = z
     vehicle_id: uuidSchema,
     date: dateStringSchema,
     odometer_at_service: z.number().int().positive(),
-    service_type: serviceTypeSchema,
+    service_types: z.array(serviceTypeSchema).min(1, "Pick at least one service"),
+    service_scale: serviceScaleSchema.default("minor"),
+    driver_id: uuidSchema.optional(),
     description: z.string().optional(),
     cost: z.number().min(0).optional(),
     mechanic_name: z.string().optional(),
@@ -73,7 +82,9 @@ export const maintenanceLogUpdateSchema = z
   .object({
     date: dateStringSchema.optional(),
     odometer_at_service: z.number().int().positive().optional(),
-    service_type: serviceTypeSchema.optional(),
+    service_types: z.array(serviceTypeSchema).min(1).optional(),
+    service_scale: serviceScaleSchema.optional(),
+    driver_id: uuidSchema.optional(),
     description: z.string().optional(),
     cost: z.number().min(0).optional(),
     mechanic_name: z.string().optional(),
@@ -94,6 +105,11 @@ const maintenanceCalendarItemBaseSchema = z.object({
   vehicle_id: uuidSchema,
   plate_number: z.string(),
   service_type: serviceTypeSchema,
+  vehicle_name: z.string().nullable(),
+  // Driver who brought the vehicle in for the last service of this type, and when.
+  driver_name: z.string().nullable(),
+  last_service_date: dateStringSchema.nullable(),
+  service_scale: serviceScaleSchema.nullable(),
   next_due_km: z.number().int().nullable(),
   next_due_date: dateStringSchema.nullable(),
   current_odometer: z.number().int(),

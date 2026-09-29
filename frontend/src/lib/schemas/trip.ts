@@ -1,10 +1,11 @@
 import { z } from "zod"
-import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema } from "./common"
+import { dateStringSchema, dateTimeStringSchema, decimalStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
 
 // Mirrors backend/app/schemas/accountability.py TripLog*.
 // Both ends of a trip are required — there is no in-progress trip state.
 
 export const tripLogSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   driver_id: uuidSchema,
   vehicle_id: uuidSchema,

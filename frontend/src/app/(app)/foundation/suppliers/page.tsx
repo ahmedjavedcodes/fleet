@@ -7,6 +7,7 @@ import { formatNumber } from "@/lib/api/decimal"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { Supplier } from "@/lib/schemas/supplier"
+import { SUPPLIER_CATEGORY_LABELS } from "@/lib/enum-labels"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
 import { PageHeader } from "@/components/layout/page-header"
@@ -42,6 +43,8 @@ export default function SuppliersPage() {
           <span className="font-semibold text-foreground">{row.name}</span>
         ),
     },
+    { key: "category", header: "Category", cell: (row) => SUPPLIER_CATEGORY_LABELS[row.category] },
+    { key: "address", header: "Address", cell: (row) => row.address ?? "—" },
     { key: "email", header: "Contact email", cell: (row) => row.contact_email ?? "—" },
     { key: "phone", header: "Phone", cell: (row) => row.phone ?? "—" },
     { key: "lead_time", header: "Avg lead time", align: "right", cell: (row) => (row.avg_lead_time_days ? `${row.avg_lead_time_days} days` : "—") },

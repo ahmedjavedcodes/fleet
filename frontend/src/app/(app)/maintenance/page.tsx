@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { useMaintenanceLogs } from "@/lib/api/maintenance"
 import { formatMoney } from "@/lib/api/decimal"
 import { formatDate } from "@/lib/format-date"
-import { SERVICE_TYPE_LABELS } from "@/lib/enum-labels"
+import { SERVICE_SCALE_LABELS, SERVICE_TYPE_LABELS } from "@/lib/enum-labels"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { MaintenanceLog } from "@/lib/schemas/maintenance"
@@ -34,7 +34,10 @@ export default function MaintenancePage() {
 
   const columns: DataTableColumn<MaintenanceLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
-    { key: "service_type", header: "Service", cell: (r) => SERVICE_TYPE_LABELS[r.service_type] },
+    { key: "vehicle", header: "Vehicle", cell: (r) => r.vehicle_plate ?? "—" },
+    { key: "service_type", header: "Services", cell: (r) => r.service_types.map((t) => SERVICE_TYPE_LABELS[t]).join(", ") },
+    { key: "scale", header: "Scale", cell: (r) => <Badge variant={r.service_scale === "major" ? "default" : "outline"}>{SERVICE_SCALE_LABELS[r.service_scale]}</Badge> },
+    { key: "driver", header: "Brought in by", cell: (r) => r.driver_name ?? "—" },
     { key: "cost", header: "Cost", align: "right", cell: (r) => (r.cost ? formatMoney(r.cost) : "—") },
     { key: "mechanic", header: "Mechanic", cell: (r) => r.mechanic_name ?? "—" },
     { key: "report", header: "", cell: (r) => (r.mechanic_report ? <Badge variant="outline">Report</Badge> : null) },

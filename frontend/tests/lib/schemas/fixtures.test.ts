@@ -3,14 +3,14 @@ import { meResponseSchema } from "@/lib/schemas/auth"
 import { driverAssignmentHistoryResponseSchema } from "@/lib/schemas/assignment"
 import { complianceRuleCreateSchema, vehicleComplianceResponseSchema } from "@/lib/schemas/compliance"
 import { dashboardSummaryResponseSchema, fleetHealthResponseSchema } from "@/lib/schemas/dashboard"
-import { driverSchema } from "@/lib/schemas/driver"
+import { driverCreateSchema, driverSchema } from "@/lib/schemas/driver"
 import { driverReportSchema } from "@/lib/schemas/driver-report"
 import { fuelLogSchema, fuelLogCreateSchema, fuelSummaryResponseSchema } from "@/lib/schemas/fuel"
 import { incidentLogSchema, incidentLogCreateSchema } from "@/lib/schemas/incident"
 import { partsInventoryCreateSchema, lowStockResponseSchema } from "@/lib/schemas/inventory"
 import { maintenanceLogSchema, maintenanceLogCreateSchema } from "@/lib/schemas/maintenance"
 import { purchaseOrderReceiveResponseSchema } from "@/lib/schemas/purchase-order"
-import { supplierSchema } from "@/lib/schemas/supplier"
+import { supplierCreateSchema, supplierSchema } from "@/lib/schemas/supplier"
 import { timelineResponseSchema } from "@/lib/schemas/timeline"
 import { tripLogSchema, tripLogCreateSchema } from "@/lib/schemas/trip"
 import { vehicleSchema, vehicleCreateSchema } from "@/lib/schemas/vehicle"
@@ -64,6 +64,10 @@ describe("vehicle schemas", () => {
       id: "d820c40f-c9ab-470e-95cc-b4adf8e1503e",
       organization_id: "a01ee75d-3ff9-4704-ac91-eea92f475488",
       current_odometer: 0,
+      engine_number: "ENG-991",
+      chassis_number: null,
+      ownership_type: "leasing",
+      added_by: "934a4f82-a415-4327-a4a1-0d5fffbb00a9",
     }
     expect(vehicleSchema.parse(fixture)).toEqual(fixture)
   })
@@ -94,6 +98,9 @@ describe("driver / supplier schemas", () => {
         license_expiry: "2027-01-01",
         phone: "+92 300 0000000",
         status: "active",
+        license_type: "HTV",
+        license_issue_date: "2020-01-01",
+        license_current_status: null,
       })
     ).toBeTruthy()
   })
@@ -108,6 +115,8 @@ describe("driver / supplier schemas", () => {
         phone: null,
         avg_lead_time_days: 5,
         reliability_score: "0.8500",
+        address: "12 Ring Rd",
+        category: "tire_supplier",
       })
     ).toBeTruthy()
   })
@@ -129,6 +138,16 @@ describe("fuel schemas", () => {
         is_anomalous: false,
         notes: null,
         created_at: "2026-06-12T09:00:00Z",
+        po_number: "PO-77",
+        payment_method: "fuel_card",
+        card_used: null,
+        fuel_station_name: "Shell",
+        slip_id: "SLIP-1",
+        vehicle_plate: "ABC-123",
+        vehicle_make: "Toyota",
+        vehicle_model: "Hilux",
+        vehicle_name: "Toyota Hilux",
+        driver_name: "Test Driver",
       })
     ).toBeTruthy()
   })
@@ -150,10 +169,24 @@ describe("fuel schemas", () => {
     expect(
       fuelSummaryResponseSchema.parse({
         month: "2026-06",
+        period_start: "2026-06-01",
+        period_end: "2026-06-30",
+        generated_at: "2026-06-30T12:00:00Z",
         total_cost: "50000.0000",
         total_liters: "180.0000",
         avg_cost_per_km: "27.5000",
-        by_vehicle: [{ vehicle_id: "11111111-1111-4111-8111-111111111111", total_cost: "50000.0000", total_liters: "180.0000", avg_cost_per_km: "27.5000" }],
+        by_vehicle: [
+          {
+            vehicle_id: "11111111-1111-4111-8111-111111111111",
+            plate_number: "ABC-123",
+            vehicle_name: "Toyota Hilux",
+            driver_names: ["Test Driver"],
+            fill_count: 4,
+            first_fill_date: "2026-06-02",
+            last_fill_date: "2026-06-28",
+            total_cost: "50000.0000", total_liters: "180.0000", avg_cost_per_km: "27.5000",
+          },
+        ],
       })
     ).toBeTruthy()
   })
@@ -174,6 +207,11 @@ describe("trip / driver-report / incident schemas", () => {
         fuel_consumed: "11.2000",
         notes: null,
         created_at: "2026-06-12T10:16:00Z",
+        vehicle_plate: "ABC-123",
+        vehicle_make: "Toyota",
+        vehicle_model: "Hilux",
+        vehicle_name: "Toyota Hilux",
+        driver_name: "Test Driver",
       })
     ).toBeTruthy()
   })
@@ -212,9 +250,18 @@ describe("trip / driver-report / incident schemas", () => {
         vehicle_id: "11111111-1111-4111-8111-111111111111",
         incident_type: "near_miss",
         date: "2026-06-12",
+        incident_time: "2026-06-12T17:45:00Z",
         severity: "moderate",
         description: "Hard brake avoiding a pedestrian",
         location_description: null,
+        location_area: "Warehouse gate B",
+        remarks: null,
+        attachment_url: null,
+        vehicle_plate: "ABC-123",
+        vehicle_make: "Toyota",
+        vehicle_model: "Hilux",
+        vehicle_name: "Toyota Hilux",
+        driver_name: "Test Driver",
         estimated_cost: null,
         resolution_status: "open",
         resolution_notes: null,
@@ -242,6 +289,14 @@ describe("maintenance / inventory / compliance schemas", () => {
         date: "2026-06-01",
         odometer_at_service: 11000,
         service_type: "oil_change",
+        service_types: ["oil_change", "brake_service"],
+        service_scale: "major",
+        driver_id: "22222222-2222-4222-8222-222222222222",
+        vehicle_plate: "ABC-123",
+        vehicle_make: "Toyota",
+        vehicle_model: "Hilux",
+        vehicle_name: "Toyota Hilux",
+        driver_name: "Test Driver",
         description: "Routine oil change",
         cost: "3500.0000",
         mechanic_name: "Ali",
@@ -267,7 +322,7 @@ describe("maintenance / inventory / compliance schemas", () => {
       vehicle_id: "11111111-1111-4111-8111-111111111111",
       date: "2026-06-01",
       odometer_at_service: 11000,
-      service_type: "oil_change",
+      service_types: ["oil_change"],
       bogus: true,
     })
     expect(result.success).toBe(false)
@@ -369,6 +424,11 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
         driver_id: "22222222-2222-4222-8222-222222222222",
         current_assignment: {
           id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          vehicle_plate: "ABC-123",
+          vehicle_make: "Toyota",
+          vehicle_model: "Hilux",
+          vehicle_name: "Toyota Hilux",
+          driver_name: "Test Driver",
           vehicle_id: "11111111-1111-4111-8111-111111111111",
           driver_id: "22222222-2222-4222-8222-222222222222",
           assigned_at: "2026-06-01T08:00:00Z",
@@ -449,5 +509,77 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
         },
       ])
     ).toBeTruthy()
+  })
+})
+
+describe("expanded operational fields — create payloads", () => {
+  const vehicleId = "11111111-1111-4111-8111-111111111111"
+
+  it("defaults vehicle ownership to owner, accepts engine/chassis, rejects unknown ownership and added_by", () => {
+    const base = { plate_number: "A-1", make: "Toyota", model: "Hilux", year: 2022, vin: "V1", fuel_type: "diesel" }
+    expect(vehicleCreateSchema.parse(base).ownership_type).toBe("owner")
+    expect(vehicleCreateSchema.parse({ ...base, engine_number: "E1", chassis_number: "C1", ownership_type: "leasing" })).toMatchObject({
+      engine_number: "E1",
+      ownership_type: "leasing",
+    })
+    expect(vehicleCreateSchema.safeParse({ ...base, ownership_type: "stolen" }).success).toBe(false)
+    // added_by is set server-side — the client must never send it.
+    expect(vehicleCreateSchema.safeParse({ ...base, added_by: vehicleId }).success).toBe(false)
+  })
+
+  it("accepts driver license fields and has no address", () => {
+    const base = { full_name: "A", license_number: "L", license_expiry: "2030-01-01", phone: "1" }
+    expect(driverCreateSchema.parse({ ...base, license_type: "HTV", license_issue_date: "2020-01-01", license_current_status: "valid" })).toMatchObject({
+      license_type: "HTV",
+    })
+    expect(driverCreateSchema.safeParse({ ...base, address: "x" }).success).toBe(false)
+    expect(driverCreateSchema.safeParse({ ...base, license_issue_date: "" }).success).toBe(false)
+  })
+
+  it("defaults supplier category to other and rejects unknown categories", () => {
+    expect(supplierCreateSchema.parse({ name: "S" }).category).toBe("other")
+    expect(supplierCreateSchema.parse({ name: "S", address: "1 Rd", category: "workshop" })).toMatchObject({ category: "workshop" })
+    expect(supplierCreateSchema.safeParse({ name: "S", category: "bakery" }).success).toBe(false)
+  })
+
+  it("accepts fuel slip fields", () => {
+    const parsed = fuelLogCreateSchema.parse({
+      vehicle_id: vehicleId,
+      date: "2026-06-12",
+      odometer_reading: 100,
+      liters_filled: 10,
+      price_per_liter: 2,
+      total_cost: 20,
+      po_number: "PO-1",
+      payment_method: "card",
+      card_used: "**** 4242",
+      fuel_station_name: "Shell",
+      slip_id: "S-1",
+    })
+    expect(parsed.slip_id).toBe("S-1")
+  })
+
+  it("maintenance create takes many services, defaults scale to minor, and requires at least one service", () => {
+    const base = { vehicle_id: vehicleId, date: "2026-06-01", odometer_at_service: 100 }
+    const parsed = maintenanceLogCreateSchema.parse({ ...base, service_types: ["oil_change", "brake_service"], driver_id: vehicleId })
+    expect(parsed.service_types).toEqual(["oil_change", "brake_service"])
+    expect(parsed.service_scale).toBe("minor")
+    expect(maintenanceLogCreateSchema.safeParse({ ...base, service_types: [] }).success).toBe(false)
+    expect(maintenanceLogCreateSchema.safeParse({ ...base, service_types: ["oil_change"], service_scale: "huge" }).success).toBe(false)
+  })
+
+  it("incident create accepts time, area, remarks and attachment", () => {
+    const parsed = incidentLogCreateSchema.parse({
+      vehicle_id: vehicleId,
+      incident_type: "damage",
+      date: "2026-06-12",
+      incident_time: "2026-06-12T14:30:00Z",
+      severity: "minor",
+      description: "Scraped gate",
+      location_area: "Gate B",
+      remarks: "Reversed too fast",
+      attachment_url: "https://files.example.com/a.jpg",
+    })
+    expect(parsed.location_area).toBe("Gate B")
   })
 })

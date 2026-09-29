@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { dateTimeStringSchema, uuidSchema } from "./common"
+import { dateTimeStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
 import { vehicleConditionSchema } from "./enums"
 
 // Mirrors backend/app/schemas/assignment.py. Assignments are custody records
@@ -28,6 +28,7 @@ export const vehicleReleaseRequestSchema = z
 export type VehicleReleaseRequest = z.infer<typeof vehicleReleaseRequestSchema>
 
 export const vehicleAssignmentSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   vehicle_id: uuidSchema,
   driver_id: uuidSchema,

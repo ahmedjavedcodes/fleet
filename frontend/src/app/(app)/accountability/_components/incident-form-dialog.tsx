@@ -7,6 +7,8 @@ import { toast } from "sonner"
 import { useCreateIncident } from "@/lib/api/incidents"
 import { useVehicles } from "@/lib/api/vehicles"
 import { isApiError } from "@/lib/api/errors"
+import { emptyToUndefined } from "@/lib/form-utils"
+import { DriverSelect } from "@/components/fleet/driver-select"
 import { INCIDENT_TYPE_LABELS } from "@/lib/enum-labels"
 import { incidentLogCreateSchema, type IncidentLogCreate } from "@/lib/schemas/incident"
 import type { IncidentSeverity, IncidentType } from "@/lib/schemas/enums"
@@ -57,7 +59,16 @@ export function IncidentFormDialog({
   }, [open, defaultVehicleId, reset])
 
   function onSubmit(values: IncidentLogCreate) {
-    createMutation.mutate(values, {
+    // datetime-local yields a naive local time; send an absolute instant and keep
+    // date (the immutable calendar-day key) consistent with it.
+    const payload: IncidentLogCreate = values.incident_time
+      ? {
+          ...values,
+          date: values.incident_time.slice(0, 10),
+          incident_time: new Date(values.incident_time).toISOString(),
+        }
+      : values
+    createMutation.mutate(payload, {
       onSuccess: () => {
         toast.success("Incident reported")
         onOpenChange(false)
@@ -131,15 +142,38 @@ export function IncidentFormDialog({
                 </Select>
               </Field>
             </div>
-            <Field data-invalid={Boolean(errors.date)}>
-              <FieldLabel htmlFor="date">Date</FieldLabel>
-              <Input id="date" type="date" {...register("date")} />
-              <FieldError errors={[errors.date]} />
+            <Field>
+              <FieldLabel htmlFor="driver_id">Driver</FieldLabel>
+              <DriverSelect id="driver_id" value={watch("driver_id")} onChange={(v) => setValue("driver_id", v)} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field data-invalid={Boolean(errors.date)}>
+                <FieldLabel htmlFor="date">Date</FieldLabel>
+                <Input id="date" type="date" {...register("date")} />
+                <FieldError errors={[errors.date]} />
+              </Field>
+              <Field data-invalid={Boolean(errors.incident_time)}>
+                <FieldLabel htmlFor="incident_time">Time (optional)</FieldLabel>
+                <Input id="incident_time" type="datetime-local" {...register("incident_time", { setValueAs: emptyToUndefined })} />
+                <FieldError errors={[errors.incident_time]} />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="location_area">Location area</FieldLabel>
+              <Input id="location_area" placeholder="Zone, site or gate" {...register("location_area", { setValueAs: emptyToUndefined })} />
             </Field>
             <Field data-invalid={Boolean(errors.description)}>
               <FieldLabel htmlFor="description">Description</FieldLabel>
               <Textarea id="description" rows={3} {...register("description")} />
               <FieldError errors={[errors.description]} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="remarks">Remarks</FieldLabel>
+              <Textarea id="remarks" rows={2} {...register("remarks", { setValueAs: emptyToUndefined })} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="attachment_url">Attachment URL</FieldLabel>
+              <Input id="attachment_url" type="url" placeholder="https://…" {...register("attachment_url", { setValueAs: emptyToUndefined })} />
             </Field>
           </FieldGroup>
           <DialogFooter>

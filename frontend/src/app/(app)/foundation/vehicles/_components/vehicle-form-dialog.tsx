@@ -6,6 +6,9 @@ import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { useCreateVehicle, useUpdateVehicle } from "@/lib/api/vehicles"
 import { isApiError } from "@/lib/api/errors"
+import { VEHICLE_OWNERSHIP_LABELS } from "@/lib/enum-labels"
+import { emptyToUndefined } from "@/lib/form-utils"
+import type { VehicleOwnershipType } from "@/lib/schemas/enums"
 import { vehicleCreateSchema, type Vehicle, type VehicleCreate } from "@/lib/schemas/vehicle"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -15,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const FUEL_TYPES = ["diesel", "petrol", "hybrid", "electric"] as const
 const STATUSES = ["active", "maintenance", "retired"] as const
+const OWNERSHIP_TYPES = Object.keys(VEHICLE_OWNERSHIP_LABELS) as VehicleOwnershipType[]
 
 // One dialog for both create (no `vehicle`) and edit (`vehicle` set) — same
 // fields either way, just a different mutation and submit label.
@@ -51,6 +55,7 @@ export function VehicleFormDialog({
       fuel_type: "petrol",
       status: "active",
       current_odometer: 0,
+      ownership_type: "owner",
     },
   })
 
@@ -67,6 +72,9 @@ export function VehicleFormDialog({
             fuel_type: vehicle.fuel_type,
             status: vehicle.status,
             current_odometer: vehicle.current_odometer,
+            ownership_type: vehicle.ownership_type,
+            engine_number: vehicle.engine_number ?? undefined,
+            chassis_number: vehicle.chassis_number ?? undefined,
             service_interval_km: vehicle.service_interval_km ?? undefined,
             service_interval_months: vehicle.service_interval_months ?? undefined,
           }
@@ -79,6 +87,7 @@ export function VehicleFormDialog({
             fuel_type: "petrol",
             status: "active",
             current_odometer: 0,
+            ownership_type: "owner",
           }
     )
   }, [open, vehicle, reset])
@@ -187,6 +196,34 @@ export function VehicleFormDialog({
                 </Select>
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="engine_number">Engine number</FieldLabel>
+                <Input id="engine_number" {...register("engine_number", { setValueAs: emptyToUndefined })} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="chassis_number">Chassis number</FieldLabel>
+                <Input id="chassis_number" {...register("chassis_number", { setValueAs: emptyToUndefined })} />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="ownership_type">Ownership</FieldLabel>
+              <Select
+                value={watch("ownership_type")}
+                onValueChange={(v) => setValue("ownership_type", v as VehicleOwnershipType)}
+              >
+                <SelectTrigger id="ownership_type" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OWNERSHIP_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {VEHICLE_OWNERSHIP_LABELS[t]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field>
                 <FieldLabel htmlFor="service_interval_km">Service every (km)</FieldLabel>

@@ -5,7 +5,6 @@ import { useQueries } from "@tanstack/react-query"
 import { ArrowLeftRight, UserMinus, UserPlus } from "lucide-react"
 import Link from "next/link"
 import { getVehicleAssignments, useVehicles } from "@/lib/api/vehicles"
-import { useDriver } from "@/lib/api/drivers"
 import { vehicleKeys } from "@/lib/query/keys"
 import { formatDateTime } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
@@ -19,12 +18,12 @@ import { EmptyState } from "@/components/states/empty-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
 
-function CurrentDriverCell({ driverId }: { driverId: string | null }) {
-  const driverQuery = useDriver(driverId ?? "")
+// driver_name comes joined onto the assignment itself -- no per-row driver lookup.
+function CurrentDriverCell({ driverId, driverName }: { driverId: string | null; driverName: string | null }) {
   if (!driverId) return <span className="text-muted-foreground">Unassigned</span>
   return (
     <Link href={`/foundation/drivers/${driverId}`} className="font-medium text-foreground hover:underline">
-      {driverQuery.data?.full_name ?? "…"}
+      {driverName ?? "—"}
     </Link>
   )
 }
@@ -55,9 +54,14 @@ export default function AssignmentPage() {
       key: "vehicle",
       header: "Vehicle",
       cell: (row) => (
-        <Link href={`/foundation/vehicles/${row.id}`} className="font-semibold text-foreground hover:underline">
-          {row.plate_number}
-        </Link>
+        <div>
+          <Link href={`/foundation/vehicles/`} className="font-semibold text-foreground hover:underline">
+            {row.plate_number}
+          </Link>
+          <p className="text-caption text-muted-foreground">
+            {row.make} {row.model}
+          </p>
+        </div>
       ),
     },
     {
@@ -66,7 +70,7 @@ export default function AssignmentPage() {
       cell: (row) => {
         const idx = vehicles.findIndex((v) => v.id === row.id)
         const current = assignmentQueries[idx]?.data?.find((a) => a.released_at === null) ?? null
-        return <CurrentDriverCell driverId={current?.driver_id ?? null} />
+        return <CurrentDriverCell driverId={current?.driver_id ?? null} driverName={current?.driver_name ?? null} />
       },
     },
     {

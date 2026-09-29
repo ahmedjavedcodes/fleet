@@ -6,11 +6,17 @@ import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { useCreateSupplier, useUpdateSupplier } from "@/lib/api/suppliers"
 import { isApiError } from "@/lib/api/errors"
+import { SUPPLIER_CATEGORY_LABELS } from "@/lib/enum-labels"
+import { emptyToUndefined } from "@/lib/form-utils"
+import type { SupplierCategory } from "@/lib/schemas/enums"
 import { supplierCreateSchema, type Supplier, type SupplierCreate } from "@/lib/schemas/supplier"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+const CATEGORIES = Object.keys(SUPPLIER_CATEGORY_LABELS) as SupplierCategory[]
 
 export function SupplierFormDialog({
   open,
@@ -31,10 +37,12 @@ export function SupplierFormDialog({
     handleSubmit,
     reset,
     setError,
+    setValue,
+    watch,
     formState: { errors },
   } = useForm<SupplierCreate>({
     resolver: zodResolver(supplierCreateSchema),
-    defaultValues: { name: "" },
+    defaultValues: { name: "", category: "other" },
   })
 
   useEffect(() => {
@@ -46,8 +54,10 @@ export function SupplierFormDialog({
             contact_email: supplier.contact_email ?? undefined,
             phone: supplier.phone ?? undefined,
             avg_lead_time_days: supplier.avg_lead_time_days ?? undefined,
+            address: supplier.address ?? undefined,
+            category: supplier.category,
           }
-        : { name: "" }
+        : { name: "", category: "other" }
     )
   }, [open, supplier, reset])
 
@@ -87,6 +97,25 @@ export function SupplierFormDialog({
               <FieldLabel htmlFor="contact_email">Contact email</FieldLabel>
               <Input id="contact_email" type="email" {...register("contact_email")} aria-invalid={Boolean(errors.contact_email)} />
               <FieldError errors={[errors.contact_email]} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="category">Category</FieldLabel>
+              <Select value={watch("category")} onValueChange={(v) => setValue("category", v as SupplierCategory)}>
+                <SelectTrigger id="category" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {SUPPLIER_CATEGORY_LABELS[c]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="address">Address</FieldLabel>
+              <Input id="address" {...register("address", { setValueAs: emptyToUndefined })} />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field data-invalid={Boolean(errors.phone)}>

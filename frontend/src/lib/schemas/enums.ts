@@ -68,3 +68,13 @@ export type MaintenanceCalendarStatus = z.infer<typeof maintenanceCalendarStatus
 
 export const timelineRecordTypeSchema = z.enum(["trip", "report", "incident"])
 export type TimelineRecordType = z.infer<typeof timelineRecordTypeSchema>
+
+// Added with backend migration expand_fleet_operational_fields.
+export const vehicleOwnershipTypeSchema = z.enum(["leasing", "rent", "owner"])
+export type VehicleOwnershipType = z.infer<typeof vehicleOwnershipTypeSchema>
+
+export const supplierCategorySchema = z.enum(["workshop", "tire_supplier", "parts_supplier", "fuel_station", "other"])
+export type SupplierCategory = z.infer<typeof supplierCategorySchema>
+
+export const serviceScaleSchema = z.enum(["minor", "major"])
+export type ServiceScale = z.infer<typeof serviceScaleSchema>
