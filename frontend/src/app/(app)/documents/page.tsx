@@ -7,12 +7,14 @@ import { useDeleteDocument, useDocuments, useSearchDocuments, useUploadDocument 
 import { isApiError } from "@/lib/api/errors"
 import { useVehicles } from "@/lib/api/vehicles"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
+import { uploadableDocumentTypes } from "@/lib/document-types"
 import { DOCUMENT_TYPE_LABELS } from "@/lib/enum-labels"
 import { can } from "@/lib/rbac"
 import type { DocumentResponse, DocumentSearchHit } from "@/lib/schemas/document"
 import type { DocumentType } from "@/lib/schemas/enums"
 import { CitationHoverCard, CitationPill, CitationSheet } from "@/components/ai/citation-pill"
 import { DocumentLibraryTable } from "@/components/ai/document-library-table"
+import { DocumentPreviewSheet } from "@/components/ai/document-preview"
 import { DocumentUploadCard } from "@/components/ai/document-upload-card"
 import { PageHeader } from "@/components/layout/page-header"
 import { SectionPanel } from "@/components/primitives/section-panel"
@@ -37,12 +39,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 const NO_VEHICLE = "none"
 const ACCEPTED_FILES = ".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
 const SEARCH_MIN_LENGTH = 3
-
-// Mirrors the backend: admins may upload every type, fleet managers all but "legal".
-function uploadableTypes(role: string | null | undefined): DocumentType[] {
-  const all = Object.keys(DOCUMENT_TYPE_LABELS) as DocumentType[]
-  return role === "admin" ? all : all.filter((t) => t !== "legal")
-}
 
 function errorMessage(error: unknown, fallback: string): string {
   return isApiError(error) && "message" in error ? error.message : fallback
@@ -212,6 +208,7 @@ export default function DocumentsPage() {
   const vehiclesQuery = useVehicles()
   const deleteMutation = useDeleteDocument()
   const [deleting, setDeleting] = useState<DocumentResponse | undefined>()
+  const [previewing, setPreviewing] = useState<DocumentResponse | undefined>()
 
   const vehiclePlates = useMemo(
     () => Object.fromEntries((vehiclesQuery.data ?? []).map((v) => [v.id, v.plate_number])),
@@ -244,7 +241,7 @@ export default function DocumentsPage() {
     <div className="space-y-6">
       <PageHeader crumbs={[{ label: "Documents" }]} />
 
-      {canUpload ? <UploadPanel types={uploadableTypes(role)} /> : null}
+      {canUpload ? <UploadPanel types={uploadableDocumentTypes(role)} /> : null}
       {canSearch ? <SearchPanel /> : null}
 
       <SectionPanel icon={FileText} title="Library">
@@ -262,10 +259,24 @@ export default function DocumentsPage() {
           areaLabel="documents"
         >
           {(rows) => (
-            <DocumentLibraryTable documents={rows} vehiclePlates={vehiclePlates} canDelete={canDelete} onDelete={setDeleting} />
+            <DocumentLibraryTable
+              documents={rows}
+              vehiclePlates={vehiclePlates}
+              canDelete={canDelete}
+              onDelete={setDeleting}
+              onPreview={setPreviewing}
+            />
           )}
         </QueryRegion>
       </SectionPanel>
+
+      {previewing ? (
+        <DocumentPreviewSheet
+          document={{ id: previewing.id, filename: previewing.filename, document_type: previewing.document_type }}
+          open
+          onOpenChange={(open) => !open && setPreviewing(undefined)}
+        />
+      ) : null}
 
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(undefined)}>
         <AlertDialogContent>

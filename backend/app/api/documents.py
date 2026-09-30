@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_role
 from app.models.enums import DocumentType
 from app.models.user import User
-from app.schemas.document import DocumentResponse, DocumentSearchRequest, DocumentSearchResponse
+from app.schemas.document import DocumentChunkOut, DocumentResponse, DocumentSearchRequest, DocumentSearchResponse
 from app.services import document_service
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -41,13 +41,22 @@ async def upload_document(
 def search_documents(
     data: DocumentSearchRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> DocumentSearchResponse:
-    results, cached = document_service.search(db, current_user, data.query, data.document_types)
+    results, cached = document_service.search(db, current_user, data.query, data.document_types, data.document_ids)
     return DocumentSearchResponse(results=results, cached=cached)
 
 
 @router.get("", response_model=list[DocumentResponse])
 def list_documents(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[DocumentResponse]:
     return [DocumentResponse.model_validate(d) for d in document_service.list_documents(db, current_user)]
+
+
+@router.get("/{document_id}/chunks", response_model=list[DocumentChunkOut])
+def get_document_chunks(
+    document_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[DocumentChunkOut]:
+    """The document's stored passages in reading order, for the preview. Same visibility as GET /documents/{id}
+    (another organization's or a role-restricted document is a 404); empty until the document is ready."""
+    return [DocumentChunkOut(chunk_index=c.chunk_index, text=c.text) for c in document_service.list_chunks(db, current_user, document_id)]
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

@@ -126,6 +126,9 @@ class InvalidModelOutput(RuntimeError):
     """A 200 response that is not a usable answer."""
 
 
+MARKUP_LEAK = "raw tool-call markup leaked into the reply"
+
+
 def _invalid_output(result: Any) -> str | None:
     """Some hosted models return HTTP 200 with finish_reason "error" and nothing in it, or leak their
     raw internal tool-call format as the visible text instead of a structured tool call (gpt-oss
@@ -143,7 +146,7 @@ def _invalid_output(result: Any) -> str | None:
         return "provider returned finish_reason=error"
     content = getattr(result, "content", "")
     if isinstance(content, str) and has_tool_markup(content):
-        return "raw tool-call markup leaked into the reply"
+        return MARKUP_LEAK
     if meta.get("finish_reason") == "length" and not content and not getattr(result, "tool_calls", None):
         return "hit the token limit with nothing visible (hidden reasoning used the whole budget)"
     return None
@@ -264,6 +267,13 @@ class FailoverChatModel:
             if recover_calls:
                 result = _with_recovered_tool_calls(result, _name(self.models[i]))
             problem = _invalid_output(result)
+            if problem == MARKUP_LEAK and not recover_calls:
+                # A plain-text reply (no tools involved) that holds real words beside the stray markup is cleaned, not
+                # thrown away: failing the turn over a few stray tokens would leave the user with an error.
+                cleaned = strip_tool_markup(result.content)
+                if len(cleaned) >= 20 and len(cleaned.split()) >= 4:  # real prose, not two stray words
+                    logger.warning("LLM %s wrote raw tool-call markup beside its reply; removed it", _name(self.models[i]))
+                    result, problem = result.model_copy(update={"content": cleaned}), None
             if problem:
                 last_error = InvalidModelOutput(f"{_name(self.models[i])}: {problem}")
                 self._stats[i]["failures"] += 1

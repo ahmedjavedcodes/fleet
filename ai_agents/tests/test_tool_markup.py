@@ -126,8 +126,29 @@ def test_a_reply_made_of_raw_tool_markup_hands_over_to_the_next_model() -> None:
 
 def test_when_every_model_leaks_markup_the_turn_fails_instead_of_showing_it() -> None:
     llm = FailoverChatModel(_Hop("a", AIMessage(content=REPORTED)), _Hop("b", AIMessage(content=f"x {REPORTED}")))
-    with pytest.raises(InvalidModelOutput):
+    with pytest.raises(InvalidModelOutput):  # nothing but markup, or markup with a couple of stray words
         llm.invoke("log it")
+
+
+def test_a_plain_text_reply_with_real_words_beside_stray_markup_is_cleaned_not_rejected() -> None:
+    """The last model in the chain wrote a summary and some tool syntax: the user gets the summary, not an error."""
+    reply = AIMessage(content=f"The policy covers overtime approval and night shift allowances. {REPORTED}")
+    only_model = _Hop("nemotron", reply)
+
+    result = FailoverChatModel(only_model).invoke("summarize")
+
+    assert result.content == "The policy covers overtime approval and night shift allowances."
+    assert only_model.calls == 1
+
+
+def test_the_same_cleaning_never_applies_when_tools_are_bound() -> None:
+    """A planning reply with markup and words is not an answer to salvage: the call it held is recovered or it fails over."""
+    garbled = _ToolHop("deepseek", AIMessage(content=f"Let me look that up for you right now. <{BAR}DSML{BAR}tool_calls><{BAR}DSML{BAR}invoke name="))
+    good = _ToolHop("nemotron", AIMessage(content="Here you go."))
+
+    reply = FailoverChatModel(garbled, good).bind_tools([]).invoke("x")
+
+    assert reply.content == "Here you go." and good.calls == 1
 
 
 # --- recovering the call the model meant to make -----------------------------------------------------

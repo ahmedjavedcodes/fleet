@@ -11,11 +11,13 @@ const mockDocuments = vi.fn()
 const mockUpload = vi.fn()
 const mockDelete = vi.fn()
 const mockSearch = vi.fn()
+const mockChunks = vi.fn()
 vi.mock("@/lib/api/documents", () => ({
   useDocuments: () => mockDocuments(),
   useUploadDocument: () => mockUpload(),
   useDeleteDocument: () => mockDelete(),
   useSearchDocuments: () => mockSearch(),
+  useDocumentChunks: (id: string, enabled: boolean) => mockChunks(id, enabled),
 }))
 vi.mock("@/lib/api/vehicles", () => ({
   useVehicles: () => ({ data: [{ id: "veh-1", plate_number: "AB-1234" }], isPending: false, error: null }),
@@ -154,5 +156,66 @@ describe("DocumentsPage", () => {
     mockSearch.mockReturnValue({ ...idleMutation(), data: { cached: false, results: [] } })
     render(<DocumentsPage />)
     expect(screen.getByText("No matching passages")).toBeInTheDocument()
+  })
+
+  describe("document preview", () => {
+    const CHUNKS = [
+      { chunk_index: 2, text: "2.0 Incident Protocols\nIntro passage before the answer." },
+      { chunk_index: 3, text: "2.0 Incident Protocols\nReplace brake pads every 40,000 km." },
+    ]
+
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn()
+      mockChunks.mockReset().mockReturnValue({ data: CHUNKS, isPending: false, isError: false })
+    })
+
+    it("opens a ready document's text from the library and closes again", async () => {
+      mockUseCurrentUser.mockReturnValue({ role: "driver" })
+      const user = userEvent.setup()
+      render(<DocumentsPage />)
+
+      await user.click(screen.getByRole("button", { name: "Preview hilux-manual.pdf" }))
+
+      const region = screen.getByRole("region", { name: "Document text" })
+      expect(within(region).getByRole("heading", { level: 3, name: "2.0 Incident Protocols" })).toBeInTheDocument()
+      expect(mockChunks).toHaveBeenCalledWith("doc-1", true)
+      expect(document.querySelector("mark")).toBeNull() // no search, so nothing highlighted
+
+      await user.click(screen.getByRole("button", { name: "Close" }))
+      expect(screen.queryByRole("region", { name: "Document text" })).not.toBeInTheDocument()
+    })
+
+    it("has no Preview for a document that failed to process", () => {
+      mockUseCurrentUser.mockReturnValue({ role: "driver" })
+      render(<DocumentsPage />)
+
+      expect(screen.queryByRole("button", { name: "Preview scan.pdf" })).not.toBeInTheDocument()
+    })
+
+    it("opening a search hit shows the document with the matching passage and the search terms highlighted", async () => {
+      mockUseCurrentUser.mockReturnValue({ role: "driver" })
+      mockSearch.mockReturnValue({
+        ...idleMutation(),
+        data: {
+          cached: false,
+          results: [
+            { document_id: "doc-1", filename: "hilux-manual.pdf", document_type: "manual", chunk_index: 3, text: "Replace brake pads every 40,000 km.", relevance: 0.87 },
+          ],
+        },
+      })
+      const user = userEvent.setup()
+      render(<DocumentsPage />)
+      await user.type(screen.getByRole("textbox", { name: "Search documents" }), "when are brake pads replaced")
+      await user.click(screen.getByRole("button", { name: "Search" }))
+
+      await user.click(screen.getAllByRole("button", { name: /hilux-manual\.pdf/ })[0]!)
+
+      const region = screen.getByRole("region", { name: "Document text" })
+      const passage = region.querySelector('[data-hit="true"]') as HTMLElement
+      expect(passage).toHaveAttribute("data-chunk", "3")
+      expect(passage).toHaveClass("bg-primary-soft")
+      expect(Array.from(region.querySelectorAll("mark")).map((m) => m.textContent?.toLowerCase())).toContain("brake")
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    })
   })
 })

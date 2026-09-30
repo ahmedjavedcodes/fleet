@@ -42,4 +42,31 @@ describe("DocumentLibraryTable", () => {
     screen.getByRole("button", { name: "Delete" }).click()
     expect(onDelete).toHaveBeenCalledWith(DOC)
   })
+
+  it("offers Preview for a ready document, calling back with it", () => {
+    const onPreview = vi.fn()
+    render(<DocumentLibraryTable documents={[DOC]} onPreview={onPreview} />)
+
+    screen.getByRole("button", { name: "Preview fleet-policy.pdf" }).click()
+
+    expect(onPreview).toHaveBeenCalledWith(DOC)
+  })
+
+  it("offers no Preview while a document is processing or after it failed (there is no text yet)", () => {
+    render(
+      <DocumentLibraryTable
+        documents={[{ ...DOC, id: "d2", filename: "a.pdf", status: "processing" }, { ...DOC, id: "d3", filename: "b.pdf", status: "failed" }]}
+        onPreview={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole("button", { name: /Preview/ })).not.toBeInTheDocument()
+  })
+
+  it("keeps Delete beside Preview for those who may delete", () => {
+    render(<DocumentLibraryTable documents={[DOC]} canDelete onDelete={vi.fn()} onPreview={vi.fn()} />)
+
+    expect(screen.getByRole("button", { name: "Preview fleet-policy.pdf" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument()
+  })
 })

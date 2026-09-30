@@ -134,6 +134,7 @@ export const dashboardKeys = {
 export const documentKeys = {
   all: ["documents"] as const,
   list: () => [...documentKeys.all, "list"] as const,
+  chunks: (id: string) => [...documentKeys.all, "chunks", id] as const,
 }
 
 export const notificationKeys = {

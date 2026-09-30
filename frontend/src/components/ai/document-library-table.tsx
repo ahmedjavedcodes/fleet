@@ -21,11 +21,14 @@ export function DocumentLibraryTable({
   vehiclePlates,
   canDelete,
   onDelete,
+  onPreview,
 }: {
   documents: DocumentResponse[]
   vehiclePlates?: Record<string, string>
   canDelete?: boolean
   onDelete?: (doc: DocumentResponse) => void
+  // Opens the document's text. Offered for documents that are ready (the others have no text yet).
+  onPreview?: (doc: DocumentResponse) => void
 }) {
   const columns: DataTableColumn<DocumentResponse>[] = [
     {
@@ -66,15 +69,24 @@ export function DocumentLibraryTable({
     { key: "updated", header: "Updated", cell: (row) => formatDateTime(row.updated_at) },
   ]
 
-  if (canDelete) {
+  if (canDelete || onPreview) {
     columns.push({
       key: "actions",
       header: "",
       align: "right",
       cell: (row) => (
-        <Button variant="ghost" size="sm" onClick={() => onDelete?.(row)}>
-          Delete
-        </Button>
+        <div className="flex justify-end gap-1">
+          {onPreview && row.status === "ready" ? (
+            <Button variant="ghost" size="sm" onClick={() => onPreview(row)} aria-label={`Preview ${row.filename}`}>
+              Preview
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button variant="ghost" size="sm" onClick={() => onDelete?.(row)}>
+              Delete
+            </Button>
+          ) : null}
+        </div>
       ),
     })
   }

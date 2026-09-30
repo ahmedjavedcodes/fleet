@@ -1,5 +1,6 @@
 "use client"
 
+import { FileText } from "lucide-react"
 import { lazy, memo, Suspense, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { resolveAttachmentUrl } from "@/lib/api/uploads"
@@ -61,6 +62,19 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
       >
         <MarkdownOrPlain text={text} />
       </div>
+      {message.documents && message.documents.length > 0 ? (
+        <ul aria-label="Referenced documents" className="flex flex-wrap justify-end gap-1.5">
+          {message.documents.map((doc) => (
+            <li
+              key={doc.id}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-card px-2.5 py-0.5 text-caption text-foreground"
+            >
+              <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="truncate">{doc.filename}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {message.citations && message.citations.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {message.citations.map((hit) => (

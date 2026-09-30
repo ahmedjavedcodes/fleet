@@ -65,4 +65,4 @@ def format_document_observation(results: list[dict]) -> str:
     header = f"search_documents returned {len(safe)} passage(s)"
     if dropped:
         header += f"; {dropped} more withheld by the injection filter"
-    return header + ". Cite the source filename when you use them.\n" + "\n".join(blocks)
+    return header + ". Use them as evidence for the specific fact asked, not as text to copy; cite the source filename and section.\n" + "\n".join(blocks)

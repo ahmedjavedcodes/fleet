@@ -151,3 +151,46 @@ def test_if_the_model_only_ever_reasons_the_user_gets_a_plain_apology_never_the_
 def test_the_sanitized_text_is_what_reaches_chat_history() -> None:
     result, _ = _turn("<think>x</think>**Fuel used:** 155 L.")
     assert result.state["chat_history"][-1] == {"role": "assistant", "content": "**Fuel used:** 155 L."}
+
+
+THINKING_DUMP = """Here's a thinking process:
+
+1. **Analyze User Input:**
+ - User wants a summary of the document.
+ - I've already called `search_documents` and got 3 passages back.
+
+2. **Determine the Core Task:**
+ - Summarize the PDF based on the search results.
+
+3. **Draft the Summary (adhering to constraints):**
+ - Sentence one: summarizing the document's purpose.
+
+Let's draft:
+"The policy establishes overtime approval, shift limits"""
+
+
+def test_a_written_out_thinking_process_is_dropped_so_the_turn_regenerates() -> None:
+    cleaned = sanitize_response(THINKING_DUMP)
+
+    assert cleaned.text == "" and cleaned.leaked  # empty: the synthesis node retries with the strict instruction
+
+
+def test_the_answer_after_a_final_answer_marker_is_kept() -> None:
+    text = THINKING_DUMP + "\n\nFinal answer: The policy covers **overtime approval** and night shifts."
+
+    assert clean_response(text) == "The policy covers **overtime approval** and night shifts."
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "The policy covers overtime approval and night shifts.",
+        "Here is the summary: overtime needs 24 hours' approval.",
+        "**Overtime:** approval 24 hours ahead. **Night shifts:** start at 22:00.",
+        "1. **Approval** - 24 hours ahead\n2. **Night shifts** - 22:00",
+        "The user asked about this earlier, and the answer is unchanged: 35 PSI.",
+    ],
+)
+def test_ordinary_answers_are_not_mistaken_for_a_thinking_process(answer) -> None:
+    assert clean_response(answer) == answer
+

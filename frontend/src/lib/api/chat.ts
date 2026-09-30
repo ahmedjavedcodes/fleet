@@ -195,9 +195,16 @@ export function sendChatMessage(
   sessionId: string,
   message: string,
   signal?: AbortSignal,
-  attachmentUrl?: string
+  attachmentUrl?: string,
+  documentIds?: string[]
 ): AsyncGenerator<ChatEvent> {
-  const body = attachmentUrl ? { message, attachment_url: attachmentUrl } : { message }
+  // `documentIds` are the documents the user @-mentioned or attached as a PDF: the server checks them against the
+  // caller's access and restricts this turn's document search to exactly them.
+  const body = {
+    message,
+    ...(attachmentUrl ? { attachment_url: attachmentUrl } : {}),
+    ...(documentIds && documentIds.length > 0 ? { document_ids: documentIds } : {}),
+  }
   return streamTurn(`/chat/sessions/${sessionId}/messages`, body, signal)
 }
 

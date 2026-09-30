@@ -116,14 +116,26 @@ Raw markdown tables degrade semantic vector similarity.
 
 ### 2.3 Chunking & Dual-Vector Generation
 
-- **Semantic Boundary Splitting:** The ordered text array is processed by a LangChain `SemanticChunker` to break at natural thematic transitions.
+- **Small, section-aware chunks (superseded the `SemanticChunker`, see the correction below):** text is split with the algorithm of LangChain's `RecursiveCharacterTextSplitter` into 350-character chunks with 50 characters of overlap, each carrying its section heading.
 - **Dual Encoding:** Each chunk generates a Dense vector (`nomic-embed-text-v1.5`, 768-dim) and a Sparse lexical vector (`pinecone-text` SPLADE/BM25).
 
 **Corrections (all three verified live):**
-- **Chunking:** the same algorithm as `SemanticChunker` (95th-percentile breakpoints on
-  adjacent-sentence cosine distance, plus a 2,000-character cap), implemented in about
-  40 lines rather than adding `langchain_experimental` + LangChain to the backend.
-  A table is always exactly one chunk.
+- **Chunking (changed after live use).** The first implementation copied `SemanticChunker`
+  (95th-percentile breakpoints, 2,000-character cap). Its chunks were whole pages, so a question
+  about accident reporting came back with the tyre-pressure section beside it and the model pasted
+  both. It is replaced by `RecursiveCharacterTextSplitter`'s algorithm (paragraph, line, sentence,
+  word), implemented in about 70 lines in `services/document_chunking.py` rather than adding
+  LangChain to the backend: **350 characters, 50 of overlap** (`RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`),
+  the overlap taken from a sentence start when there is one. Each chunk is prefixed with its
+  heading breadcrumb ("2.0 Company Incident Protocols › Mandatory Incident Reporting Timelines"),
+  so a short chunk keeps its context and an answer can cite its section; a chunk never spans two
+  sections. Headings come from the PDF's **font sizes** (`services/document_extraction.py`: text
+  much larger than the body is a heading, twice the size is the title; a short standalone Title
+  Case line at body size is a sub-heading; wrapped lines, which many PDFs store one block each,
+  are stitched back into paragraphs; "Page 1 of 2" footers are dropped), and from the text itself
+  for plain-text documents. A table is always exactly one chunk, with its section and the text
+  the extraction folded into it. Documents ingested before this change keep their old chunks until
+  they are uploaded again.
 - **Dense:** Pinecone Inference `llama-text-embed-v2` at 768 dims. That's the same key
   and dimension as agent memory; no nomic runtime exists here.
 - **Sparse:** Pinecone Inference `pinecone-sparse-english-v0`, a hosted learned-sparse
@@ -185,7 +197,13 @@ When a sub-agent executes the `search_documents` tool, the retrieval pipeline ex
      | Live end-to-end, real PDF: "How often do brake pads need replacing?" | **0.541** | — |
 
      With 0.65, two of these correct answers would have returned a null payload. The
-     threshold is **0.30** (`RAG_RERANK_THRESHOLD`), inside a wide gap on both sides.
+     threshold was **0.30** (`RAG_RERANK_THRESHOLD`), inside a wide gap on both sides.
+   - **Re-calibrated for small chunks: 0.10.** On 350-character chunks a correct passage scores
+     lower for a conversational question (0.296 and 0.155 measured for "what does it say about
+     night shifts?", one correct chunk at 0.032) while unrelated questions still score 0.000 to 0.010
+     against every chunk of the real manual, so the threshold is **0.10**. A passage below it still
+     counts when it clearly wins: at least `RAG_RERANK_FLOOR` (0.02) and `RAG_RERANK_DOMINANCE` (5x)
+     the runner-up. Two sections, "chunk size" and "threshold", move together.
      `pinecone-rerank-v0` separated worse, and Cohere isn't enabled on this project.
    - If the reranker or Pinecone fails mid-search, the API returns a **503**, never
      unreranked results. Skipping precision scoring would hand the LLM exactly the

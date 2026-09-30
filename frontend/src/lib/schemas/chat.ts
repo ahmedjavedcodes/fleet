@@ -67,6 +67,8 @@ export const chatMessageSchema = z.object({
   citations: z.array(documentSearchHitSchema).optional(),
   // A photo sent with a user message, as the uploaded file's path.
   imageUrl: z.string().optional(),
+  // Documents a user message referenced with @ or attached as a PDF, shown as chips under it.
+  documents: z.array(z.object({ id: z.string(), filename: z.string() })).optional(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 

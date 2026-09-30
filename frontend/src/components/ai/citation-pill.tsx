@@ -1,39 +1,12 @@
 "use client"
 
 import { FileText } from "lucide-react"
-import Link from "next/link"
 import { DOCUMENT_TYPE_LABELS } from "@/lib/enum-labels"
 import type { DocumentSearchHit } from "@/lib/schemas/document"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-
-// Passages are untrusted text from a document, never markdown or HTML —
-// CLAUDE.md §4.5. Highlighting below is plain string splitting into text
-// nodes, never dangerouslySetInnerHTML.
-function escapeRegExp(term: string): string {
-  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-export function highlightTerms(text: string, query: string): (string | { mark: string })[] {
-  const terms = query
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 1)
-  if (terms.length === 0) return [text]
-  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi")
-  return text.split(pattern).map((part) => (terms.some((t) => t.toLowerCase() === part.toLowerCase()) ? { mark: part } : part))
-}
-
-function HighlightedText({ text, query }: { text: string; query: string }) {
-  return (
-    <>
-      {highlightTerms(text, query).map((part, i) =>
-        typeof part === "string" ? <span key={i}>{part}</span> : <mark key={i}>{part.mark}</mark>
-      )}
-    </>
-  )
-}
+import { DocumentPreviewSheet } from "@/components/ai/document-preview"
+import { HighlightedText, highlightTerms } from "@/components/ai/highlight"
 
 // A small chip: file icon, filename, type badge (plans/07 §2).
 export function CitationPill({ hit, className }: { hit: DocumentSearchHit; className?: string }) {
@@ -69,24 +42,20 @@ export function CitationHoverCard({ hit, query, children }: { hit: DocumentSearc
   )
 }
 
-// The full passage as plain text, plus a link back to the library.
+// A search hit opened in the document preview: the whole document as readable text, scrolled to the matching passage,
+// which is highlighted along with the search terms. The passage itself is the fallback if the text can't be loaded.
 export function CitationSheet({ hit, query, open, onOpenChange }: { hit: DocumentSearchHit; query: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>{hit.filename}</SheetTitle>
-        </SheetHeader>
-        <div className="space-y-3 px-4">
-          <Badge variant="outline">{DOCUMENT_TYPE_LABELS[hit.document_type]}</Badge>
-          <p className="text-sm text-foreground">
-            <HighlightedText text={hit.text} query={query} />
-          </p>
-          <Link href={`/documents?id=${hit.document_id}`} className="text-sm font-medium text-primary-strong hover:underline">
-            Open in the document library
-          </Link>
-        </div>
-      </SheetContent>
-    </Sheet>
+    <DocumentPreviewSheet
+      document={{ id: hit.document_id, filename: hit.filename, document_type: hit.document_type }}
+      highlightChunk={hit.chunk_index}
+      query={query}
+      fallbackText={hit.text}
+      open={open}
+      onOpenChange={onOpenChange}
+    />
   )
 }
+
+// Kept for callers that import it from here.
+export { highlightTerms }

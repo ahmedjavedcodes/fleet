@@ -275,7 +275,7 @@ def _ingest(document_id: uuid.UUID, organization_id: uuid.UUID, version: int, ki
             db.add(DocumentIngestFailure(organization_id=organization_id, document_id=document_id, stage="table_summary",
                                          error_message=failure["error"], payload=failure))
 
-        chunks = build_chunks(units, summaries.texts, lambda sentences: inference.embed_dense(sentences, "passage"))
+        chunks = build_chunks(units, summaries.texts, chunk_size=settings.rag_chunk_size, chunk_overlap=settings.rag_chunk_overlap)
         if not chunks:
             raise ValueError("document produced no chunks")
         embed_inputs = [c.embed_text for c in chunks]
@@ -340,15 +340,25 @@ def _ingest(document_id: uuid.UUID, organization_id: uuid.UUID, version: int, ki
 # --- retrieval (spec §3) ------------------------------------------------------------
 
 
-def search(db: Session, user: User, query: str, document_types: list[DocumentType] | None = None) -> tuple[list[dict], bool]:
+def search(
+    db: Session,
+    user: User,
+    query: str,
+    document_types: list[DocumentType] | None = None,
+    document_ids: list[uuid.UUID] | None = None,
+) -> tuple[list[dict], bool]:
     """Returns (results, served_from_cache). An empty list is the spec's
     "null payload": nothing cleared the relevance threshold.
+
+    document_ids restricts the search to exactly those documents (the chat's "@" mentions): the vector query is
+    filtered to them and every hit is re-checked against them in Postgres, so a mention can only narrow what the
+    caller may see.
 
     If embedding, Pinecone or the reranker fails mid-search, this is a 503 --
     never unreranked results: skipping precision scoring would hand the LLM
     exactly the low-relevance context the threshold exists to keep out."""
     try:
-        return _search(db, user, query, document_types)
+        return _search(db, user, query, document_types, document_ids)
     except (HTTPException, VectorSecurityViolation):
         raise
     except Exception as exc:  # noqa: BLE001
@@ -356,7 +366,9 @@ def search(db: Session, user: User, query: str, document_types: list[DocumentTyp
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Document search temporarily unavailable")
 
 
-def _search(db: Session, user: User, query: str, document_types: list[DocumentType] | None) -> tuple[list[dict], bool]:
+def _search(
+    db: Session, user: User, query: str, document_types: list[DocumentType] | None, document_ids: list[uuid.UUID] | None = None
+) -> tuple[list[dict], bool]:
     settings = get_settings()
     permitted = allowed_types(user)
     scope = permitted & set(document_types) if document_types else permitted
@@ -367,7 +379,8 @@ def _search(db: Session, user: User, query: str, document_types: list[DocumentTy
         raise _unavailable()
 
     dense_query = inference.embed_dense([query], "query")[0]
-    cache_key = (str(user.organization_id), tuple(sorted(t.value for t in scope)))
+    only = sorted({str(i) for i in document_ids}) if document_ids else []
+    cache_key = (str(user.organization_id), tuple(sorted(t.value for t in scope)), tuple(only))
     cached = search_cache.get(cache_key, dense_query)
     if cached is not None:
         return cached, True
@@ -375,7 +388,10 @@ def _search(db: Session, user: User, query: str, document_types: list[DocumentTy
     # Stage 2: convex hybrid search.
     sparse_query = inference.embed_sparse([query], "query")[0]
     dense_scaled, sparse_scaled = hybrid_scale(dense_query, sparse_query, settings.rag_alpha)
-    filters = org_filter(user.organization_id, {"document_type": {"$in": sorted(t.value for t in scope)}})
+    clauses: list[dict] = [{"document_type": {"$in": sorted(t.value for t in scope)}}]
+    if only:
+        clauses.append({"document_id": {"$in": only}})
+    filters = org_filter(user.organization_id, *clauses)
     matches = store.query(dense_scaled, settings.rag_candidate_k, filters, settings.documents_namespace, sparse_vector=sparse_scaled)
 
     # Re-check every hit against Postgres: org, allowed type, ready, current version.
@@ -383,7 +399,10 @@ def _search(db: Session, user: User, query: str, document_types: list[DocumentTy
     for match in matches:
         meta = match["metadata"]
         try:
-            wanted.setdefault(uuid.UUID(meta["document_id"]), set()).add((int(meta["version"]), int(meta["chunk_index"])))
+            hit_document = uuid.UUID(meta["document_id"])
+            if document_ids and hit_document not in set(document_ids):
+                continue  # the vector filter already guarantees this; Postgres is the authority
+            wanted.setdefault(hit_document, set()).add((int(meta["version"]), int(meta["chunk_index"])))
         except (KeyError, ValueError):
             continue
     if not wanted:
@@ -409,8 +428,13 @@ def _search(db: Session, user: User, query: str, document_types: list[DocumentTy
 
     # Stage 3: cross-encoder precision scoring.
     scored = inference.rerank(query, [c.text for c in chunks])
-    kept = sorted(((score, chunks[i]) for i, score in scored if score >= settings.rag_rerank_threshold),
-                  key=lambda pair: pair[0], reverse=True)[: settings.rag_max_chunks]
+    ranked = sorted(((score, chunks[i]) for i, score in scored), key=lambda pair: pair[0], reverse=True)
+    kept = [pair for pair in ranked if pair[0] >= settings.rag_rerank_threshold][: settings.rag_max_chunks]
+    if not kept and ranked:
+        top = ranked[0][0]
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        if top >= settings.rag_rerank_floor and top >= settings.rag_rerank_dominance * max(runner_up, 0.001):
+            kept = [ranked[0]]  # below the bar, but clearly the one passage that answers it
     results = [
         {
             "document_id": str(chunk.document_id),
@@ -439,6 +463,21 @@ def list_documents(db: Session, user: User) -> list[Document]:
             select(Document)
             .where(Document.organization_id == user.organization_id, Document.document_type.in_(allowed_types(user)))
             .order_by(Document.created_at.desc())
+        ).scalars()
+    )
+
+
+def list_chunks(db: Session, user: User, document_id: uuid.UUID) -> list[DocumentChunk]:
+    """The stored passages of a document the caller may see, in reading order. Empty while it is not ready: the
+    chunks of an earlier version are replaced at the very end of ingestion, so a half-processed document shows none."""
+    document = get_document(db, user, document_id)
+    if document.status != DocumentStatus.ready:
+        return []
+    return list(
+        db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document.id, DocumentChunk.organization_id == user.organization_id)
+            .order_by(DocumentChunk.chunk_index)
         ).scalars()
     )
 

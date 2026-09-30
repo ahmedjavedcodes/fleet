@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { MessageSquare, PanelLeft } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   approveChatAction,
@@ -17,15 +17,20 @@ import {
   useRenameChatSession,
   type ChatEvent,
 } from "@/lib/api/chat"
+import { uploadDocument, useDocuments, waitForDocumentReady } from "@/lib/api/documents"
 import { isApiError } from "@/lib/api/errors"
 import { uploadImage } from "@/lib/api/uploads"
-import { chatKeys } from "@/lib/query/keys"
+import { useCurrentUser } from "@/lib/auth/use-current-user"
+import { uploadableDocumentTypes } from "@/lib/document-types"
+import { chatKeys, documentKeys } from "@/lib/query/keys"
+import { can } from "@/lib/rbac"
 import type { ChatMessage, HitlState } from "@/lib/schemas/chat"
 import { AgentActivity, HaltedCard, type ActivityStep } from "@/components/ai/agent-panels"
 import { ChatSessionSidebar } from "@/components/ai/chat-session-sidebar"
 import { ChatThread } from "@/components/ai/chat-thread"
 import { preloadMarkdown } from "@/components/ai/message-bubble"
-import { Composer } from "@/components/ai/composer"
+import { Composer, type ComposerExtras, type MentionableDocument } from "@/components/ai/composer"
+import { DocumentUploadCard, type UploadPhase } from "@/components/ai/document-upload-card"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
 import { Button } from "@/components/ui/button"
@@ -49,6 +54,8 @@ function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...a
 
 // Sent when a photo goes out with no typed text, so the turn still has a request to act on.
 const IMAGE_ONLY_MESSAGE = "Please process the attached image."
+// Likewise for a PDF sent with no typed text.
+const PDF_ONLY_MESSAGE = "Summarize this document."
 
 type HistoryState ={ status: "idle" } | { status: "loading" } | { status: "error"; message: string }
 
@@ -80,8 +87,27 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<HistoryState>({ status: "idle" })
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // A PDF attached to the message being sent: uploaded, then waited on until it has been processed.
+  const [pdfUpload, setPdfUpload] = useState<{ filename: string; phase: UploadPhase } | null>(null)
   const nextId = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  const uploadAbortRef = useRef<AbortController | null>(null)
+
+  // "@" mentions list the documents the user can search (ready ones only); a PDF can be attached only by roles
+  // that may upload documents. The backend enforces both; this only decides what the composer offers.
+  const { role } = useCurrentUser()
+  const canSearchDocuments = Boolean(role && can(role, "document:search"))
+  const documentsQuery = useDocuments({ enabled: canSearchDocuments })
+  const mentionable = useMemo<MentionableDocument[] | undefined>(
+    () =>
+      canSearchDocuments
+        ? (documentsQuery.data ?? [])
+            .filter((d) => d.status === "ready")
+            .map((d) => ({ id: d.id, filename: d.filename, document_type: d.document_type }))
+        : undefined,
+    [canSearchDocuments, documentsQuery.data]
+  )
+  const pdfTypes = useMemo(() => uploadableDocumentTypes(role), [role])
   // The conversation whose messages this page currently holds, and a counter bumped whenever it
   // is left. A turn still streaming for a conversation that was left must not touch the new one.
   const heldRef = useRef<string | null>(null)
@@ -95,6 +121,8 @@ export default function ChatPage() {
   const resetConversation = useCallback(() => {
     epochRef.current += 1
     abortRef.current?.abort()
+    uploadAbortRef.current?.abort()
+    setPdfUpload(null)
     setMessages([])
     setIsStreaming(false)
     setActivity([])
@@ -186,10 +214,40 @@ export default function ChatPage() {
 
   // Resolves once the message is accepted (photo uploaded, session known) — false if it
   // wasn't, so the composer keeps the text and photo. The reply then streams on its own.
-  async function handleSend(typed: string, image: File | null): Promise<boolean> {
+  async function handleSend(typed: string, image: File | null, extras?: ComposerExtras): Promise<boolean> {
     setError(null)
     setHaltedReason(null)
     const epoch = epochRef.current
+
+    // Documents this message is about: the ones @-mentioned, plus an attached PDF once it has been processed
+    // (a turn can only search a document that has finished ingestion, so this waits for it).
+    let referenced: MentionableDocument[] = extras?.documents ?? []
+    if (extras?.pdf) {
+      const { file, documentType } = extras.pdf
+      const controller = new AbortController()
+      uploadAbortRef.current = controller
+      try {
+        setPdfUpload({ filename: file.name, phase: "uploading" })
+        const uploaded = await uploadDocument({ file, document_type: documentType })
+        setPdfUpload({ filename: file.name, phase: "extracting" })
+        const ready = await waitForDocumentReady(uploaded.id, { signal: controller.signal })
+        void queryClient.invalidateQueries({ queryKey: documentKeys.all })
+        referenced = [
+          ...referenced.filter((d) => d.id !== ready.id),
+          { id: ready.id, filename: ready.filename, document_type: ready.document_type },
+        ]
+      } catch (err) {
+        if (epoch === epochRef.current) {
+          setError(
+            `Couldn't add ${file.name}: ${isApiError(err) && "message" in err ? err.message : err instanceof Error ? err.message : "something went wrong."}`
+          )
+        }
+        return false
+      } finally {
+        if (epoch === epochRef.current) setPdfUpload(null)
+      }
+      if (epoch !== epochRef.current) return false
+    }
 
     let attachmentUrl: string | undefined
     if (image) {
@@ -204,12 +262,22 @@ export default function ChatPage() {
       if (epoch !== epochRef.current) return false
     }
 
-    const text = typed || IMAGE_ONLY_MESSAGE
+    // An attached PDF is named in the text, like a mention, so the transcript shows what the question was about.
+    const pdfName = extras?.pdf?.file.name
+    const base = typed || (extras?.pdf ? PDF_ONLY_MESSAGE : IMAGE_ONLY_MESSAGE)
+    const text = pdfName && !base.includes(`@${pdfName}`) ? `${base} @${pdfName}` : base
+    const documentIds = referenced.map((d) => d.id)
     const userId = newId()
     const assistantId = newId()
     setMessages((prev) => [
       ...prev,
-      { id: userId, role: "user", text, ...(attachmentUrl ? { imageUrl: attachmentUrl } : {}) },
+      {
+        id: userId,
+        role: "user",
+        text,
+        ...(attachmentUrl ? { imageUrl: attachmentUrl } : {}),
+        ...(referenced.length > 0 ? { documents: referenced.map((d) => ({ id: d.id, filename: d.filename })) } : {}),
+      },
       { id: assistantId, role: "assistant", text: "" },
     ])
     setIsStreaming(true)
@@ -239,7 +307,11 @@ export default function ChatPage() {
     const streamSessionId = sid
     void (async () => {
       try {
-        await consume(sendChatMessage(streamSessionId, text, controller.signal, attachmentUrl), assistantId, epoch)
+        const events =
+          documentIds.length > 0
+            ? sendChatMessage(streamSessionId, text, controller.signal, attachmentUrl, documentIds)
+            : sendChatMessage(streamSessionId, text, controller.signal, attachmentUrl)
+        await consume(events, assistantId, epoch)
       } catch (err) {
         if (epoch !== epochRef.current) return
         setIsStreaming(false)
@@ -391,6 +463,7 @@ export default function ChatPage() {
                   description="Ask about vehicles, maintenance, fuel, drivers or compliance."
                 />
               ) : null}
+              {pdfUpload ? <DocumentUploadCard filename={pdfUpload.filename} phase={pdfUpload.phase} /> : null}
               {isStreaming && activity.length > 0 ? <AgentActivity steps={activity} /> : null}
               {hitlState ? (
                 <Suspense fallback={<Skeleton className="h-28 w-full" aria-label="Loading approval" />}>
@@ -418,6 +491,8 @@ export default function ChatPage() {
           isStreaming={isStreaming}
           disabled={isStreaming || Boolean(hitlState) || composerBlocked}
           disabledReason={hitlState ? "Waiting on your approval above…" : undefined}
+          documents={mentionable}
+          pdfTypes={pdfTypes}
         />
       </section>
 

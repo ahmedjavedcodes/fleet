@@ -158,10 +158,13 @@ class OrchestratorSession:
         image_bytes: bytes | None = None,
         mime_type: str | None = None,
         attachment_url: str | None = None,
+        referenced_documents: list[dict[str, str]] | None = None,
     ) -> TurnResult:
         """image_bytes/mime_type: a photo attached to this turn, handed to
         whichever vision sub-agent the planner routes it to. attachment_url:
-        where that photo is stored, so e.g. a filed incident can link it."""
+        where that photo is stored, so e.g. a filed incident can link it.
+        referenced_documents: [{"id", "filename"}] the user @-mentioned (already checked against their access):
+        document search this turn is restricted to exactly them."""
         if self.deps.observer is not None:
             self.deps.observer.start_turn()  # FR 4: a fresh trace_id per session turn
 
@@ -169,7 +172,12 @@ class OrchestratorSession:
         # BEFORE build_orchestrator_graph is ever invoked -- no LLM call,
         # no state mutation beyond appending the rejected turn to history.
         violation = _await_sync(
-            scan_user_input(message, config=self.security_config, has_attachment=image_bytes is not None, guard_llm=self.deps.guard_llm)
+            scan_user_input(
+                message, config=self.security_config, guard_llm=self.deps.guard_llm,
+                # A photo or a mentioned document says what the message is about, so "summarize this" is on-topic;
+                # the injection checks still apply.
+                has_attachment=image_bytes is not None or bool(referenced_documents),
+            )
         )
         if violation is not None:
             logger.warning("Security pre-hook rejected input: %s", violation.reason)
@@ -199,6 +207,7 @@ class OrchestratorSession:
             "_pending_memory_facts": None,
             "_turn_wrote": False,
             "_pending_attachment_url": attachment_url,
+            "_referenced_documents": list(referenced_documents or []),
         }
         self._record("user", message)
         try:
@@ -310,7 +319,7 @@ class OrchestratorSession:
             # The one place every reply passes before it is saved (agent_messages) or streamed to the UI. Only
             # natural language gets through: a model that printed its raw tool-call syntax as text is cleaned
             # here even if an earlier layer missed it.
-            final = result_state["final_response"]
+            final = result_state.get("final_response") or ""
             cleaned = strip_tool_markup(final)
             if cleaned != final:
                 memory_logger.warning("raw tool-call markup removed from the final response")

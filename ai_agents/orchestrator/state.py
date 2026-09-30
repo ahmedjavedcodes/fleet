@@ -68,3 +68,6 @@ class OrchestratorState(TypedDict, total=False):
     # Site-relative path of this turn's uploaded image (/uploads/incidents/...),
     # so a filed incident can link the photo the vision model just read.
     _pending_attachment_url: str | None
+    # Documents the user @-mentioned this turn ([{"id", "filename"}], already checked against their access):
+    # search_documents is restricted to exactly these, and the first hop searches them without asking the model.
+    _referenced_documents: list[dict[str, str]]

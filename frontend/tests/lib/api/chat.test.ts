@@ -69,6 +69,23 @@ describe("lib/api/chat sendChatMessage", () => {
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ message: "hello again" })
   })
 
+  it("sends the referenced documents as document_ids, and nothing extra when there are none", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(sseResponse(['event: done\ndata: {"status": "done"}\n\n']))
+      .mockResolvedValueOnce(sseResponse(['event: done\ndata: {"status": "done"}\n\n']))
+
+    await collect(sendChatMessage("s1", "what does @Manual.pdf say", undefined, "/uploads/incidents/x.jpg", ["doc-1", "doc-2"]))
+    await collect(sendChatMessage("s1", "hello", undefined, undefined, []))
+
+    expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      message: "what does @Manual.pdf say",
+      attachment_url: "/uploads/incidents/x.jpg",
+      document_ids: ["doc-1", "doc-2"],
+    })
+    expect(JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string)).toEqual({ message: "hello" })
+  })
+
   it("silently drops a frame that fails schema validation instead of throwing", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       sseResponse(['event: token\ndata: {"not_text": "oops"}\n\n', 'event: done\ndata: {"status": "done"}\n\n'])

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { deleteDocument, getDocument, listDocuments, searchDocuments, uploadDocument } from "@/lib/api/documents"
+import {
+  deleteDocument,
+  getDocument,
+  getDocumentChunks,
+  listDocuments,
+  searchDocuments,
+  uploadDocument,
+  waitForDocumentReady,
+} from "@/lib/api/documents"
 
 const DOC = {
   id: "8f6c1d7e-3b0a-4a51-9d6e-0a1b2c3d4e5f",
@@ -84,5 +92,71 @@ describe("lib/api/documents", () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe("/api/proxy/documents/search")
     expect(JSON.parse(init.body)).toEqual({ query: "brake pads" })
+  })
+
+  it("reads a document's passages from /documents/{id}/chunks", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([{ chunk_index: 0, text: "2.0 Incident\nReport within 1 hour." }]))
+
+    await expect(getDocumentChunks(DOC.id)).resolves.toEqual([{ chunk_index: 0, text: "2.0 Incident\nReport within 1 hour." }])
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/proxy/documents/${DOC.id}/chunks`)
+  })
+
+  it("rejects chunks that don't match the contract", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([{ chunk_index: "zero", text: 5 }]))
+
+    await expect(getDocumentChunks(DOC.id)).rejects.toThrow()
+  })
+
+  it("restricts a search to the given documents", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ results: [], cached: false }))
+
+    await searchDocuments({ query: "tyre pressure", document_ids: [DOC.id] })
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ query: "tyre pressure", document_ids: [DOC.id] })
+  })
+})
+
+describe("waitForDocumentReady", () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("polls until the document is ready, reporting each status", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(DOC))
+      .mockResolvedValueOnce(jsonResponse(DOC))
+      .mockResolvedValueOnce(jsonResponse({ ...DOC, status: "ready", chunk_count: 9 }))
+    const seen: string[] = []
+
+    const doc = await waitForDocumentReady(DOC.id, { intervalMs: 1, onStatus: (d) => seen.push(d.status) })
+
+    expect(doc.status).toBe("ready")
+    expect(seen).toEqual(["processing", "processing", "ready"])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it("rejects with the reason when processing failed", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ...DOC, status: "failed", error_message: "no extractable text (scanned PDFs are not supported)" }))
+
+    await expect(waitForDocumentReady(DOC.id, { intervalMs: 1 })).rejects.toThrow("no extractable text")
+  })
+
+  it("gives up with a clear message instead of polling forever", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(DOC))) // a Response body can only be read once
+
+    await expect(waitForDocumentReady(DOC.id, { intervalMs: 5, timeoutMs: 12 })).rejects.toThrow("taking too long")
+  })
+
+  it("stops as soon as it is aborted", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(DOC))
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(waitForDocumentReady(DOC.id, { signal: controller.signal, intervalMs: 1 })).rejects.toThrow("Aborted")
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

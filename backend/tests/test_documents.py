@@ -152,6 +152,68 @@ def test_nothing_above_threshold_returns_a_null_payload(rag, client: TestClient,
     assert _search(client, users[UserRole.admin], "quarterly cafeteria menu")["results"] == []
 
 
+# Small chunks score lower with the reranker for a conversational question, so the bar is 0.10, not 0.30 -- and one
+# clearly dominant passage counts even below it. (Calibrated on the real manual; see core/config.py.)
+
+
+def _long_policy() -> str:
+    return "\n\n".join(f"Section {i}: " + "brake pad wear inspection note " * 11 for i in range(6))
+
+
+def _with_scores(rag, scores_by_rank: list[float]):
+    """Makes the reranker return these scores, best first, over however many passages it is given."""
+    def rerank(query, documents):
+        scores = (scores_by_rank + [0.0] * len(documents))[: len(documents)]
+        return list(enumerate(scores))
+
+    rag["inference"].rerank = rerank
+
+
+def _hits(client, user, rag, scores) -> list[dict]:
+    _with_scores(rag, scores)
+    return _search(client, user, "brake pad wear inspection")["results"]
+
+
+def test_a_correct_passage_with_a_modest_rerank_score_is_kept(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "notes.txt", _long_policy(), "manual")
+
+    assert len(_hits(client, manager, rag, [0.15, 0.001])) == 1  # 0.15 would have been dropped at the old 0.30 bar
+
+
+def test_a_passage_below_the_bar_that_clearly_dominates_is_still_the_answer(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "notes.txt", _long_policy(), "manual")
+
+    assert len(_hits(client, manager, rag, [0.03, 0.002, 0.001])) == 1
+
+
+@pytest.mark.parametrize(
+    "scores",
+    [
+        [0.03, 0.02, 0.001],  # not clearly ahead of the runner-up
+        [0.01, 0.0, 0.0],  # too low to mean anything
+        [0.0, 0.0, 0.0],
+    ],
+    ids=["ambiguous", "too-low", "unrelated"],
+)
+def test_weak_or_ambiguous_scores_stay_a_null_payload(rag, client: TestClient, users, scores) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "notes.txt", _long_policy(), "manual")
+
+    assert _hits(client, manager, rag, scores) == []
+
+
+def test_passages_above_the_bar_are_capped_at_the_configured_maximum(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "notes.txt", _long_policy(), "manual")
+
+    hits = _hits(client, manager, rag, [0.9, 0.8, 0.7, 0.6, 0.5, 0.4])
+
+    assert len(hits) == get_settings().rag_max_chunks
+    assert [h["relevance"] for h in hits] == sorted((h["relevance"] for h in hits), reverse=True)
+
+
 def test_at_most_three_chunks_are_returned(rag, client: TestClient, users) -> None:
     text = "\n\n".join(f"Brake pad note {i}: brake pads wear on route {i}." for i in range(12))
     _upload(client, users[UserRole.admin], "notes.txt", text, "manual")
@@ -183,6 +245,142 @@ def test_empty_results_are_never_cached(rag, client: TestClient, users) -> None:
     assert _search(client, manager, "brake pads replaced")["results"] == []
     _upload(client, manager, "brakes.txt", BRAKES, "manual")
     assert _search(client, manager, "brake pads replaced")["results"]
+
+
+# ---- small chunks ----
+
+
+def test_ingested_chunks_are_small_and_keep_their_section_heading(rag, client: TestClient, db_session: Session, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    text = (
+        "1.0 Tyre Pressure\n\n"
+        + " ".join(f"Tyre rule {i}: keep the pressure at {30 + i} PSI when lightly loaded." for i in range(12))
+        + "\n\n2.0 Incident Reporting\n\nAll severe accidents must be reported within 1 hour to the fleet manager."
+    )
+    doc_id = _upload(client, manager, "manual.txt", text, "manual").json()["id"]
+
+    chunks = list(db_session.execute(select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(doc_id))).scalars())
+    assert len(chunks) >= 4 and all(len(c.text) <= 350 for c in chunks)
+    assert not any("PSI" in c.text and "accidents" in c.text for c in chunks)
+    incident = next(c for c in chunks if "accidents" in c.text)
+    assert incident.text.startswith("2.0 Incident Reporting\n")
+
+
+# ---- "@" mentions: search restricted to chosen documents ----
+
+
+def _ids(client, user, *names) -> dict:
+    by_name = {d["filename"]: d["id"] for d in client.get("/api/v1/documents", headers=auth_headers(user)).json()}
+    return {n: by_name[n] for n in names}
+
+
+def test_document_ids_restrict_a_search_to_exactly_those_documents(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "brakes.txt", BRAKES, "manual")
+    _upload(client, manager, "fuel.txt", FUEL_POLICY, "policy")
+    ids = _ids(client, manager, "brakes.txt", "fuel.txt")
+
+    everything = {h["filename"] for h in _search(client, manager, "brake pads fuel receipts")["results"]}
+    only_fuel = _search(client, manager, "brake pads fuel receipts", document_ids=[ids["fuel.txt"]])["results"]
+    only_brakes = _search(client, manager, "brake pads fuel receipts", document_ids=[ids["brakes.txt"]])["results"]
+
+    assert everything == {"brakes.txt", "fuel.txt"}
+    assert only_fuel and {h["filename"] for h in only_fuel} == {"fuel.txt"}
+    assert only_brakes and {h["filename"] for h in only_brakes} == {"brakes.txt"}
+
+
+def test_the_vector_query_itself_is_filtered_to_the_mentioned_documents(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "brakes.txt", BRAKES, "manual")
+    target = _ids(client, manager, "brakes.txt")["brakes.txt"]
+    seen: list[dict] = []
+    original = rag["store"].query
+
+    def spy(vector, top_k, filters, namespace, **kwargs):
+        seen.append(filters)
+        return original(vector, top_k, filters, namespace, **kwargs)
+
+    rag["store"].query = spy
+    _search(client, manager, "brake pads replaced", document_ids=[target])
+
+    assert {"document_id": {"$in": [target]}} in seen[0]["$and"]  # precision is enforced in Pinecone, not only afterwards
+
+
+def test_a_mention_can_never_widen_what_the_caller_may_see(rag, client: TestClient, db_session: Session, users) -> None:
+    admin, driver = users[UserRole.admin], users[UserRole.driver]
+    _upload(client, admin, "invoice.txt", INVOICE, "supplier_invoice")  # drivers may not see invoices
+    invoice = _ids(client, admin, "invoice.txt")["invoice.txt"]
+
+    assert _search(client, driver, "brake pad sets price", document_ids=[invoice])["results"] == []
+
+    other_org = Organization(id=uuid.uuid4(), name="Other", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db_session.add(other_org)
+    db_session.commit()
+    outsider = make_user(db_session, other_org, role=UserRole.admin)
+    assert _search(client, outsider, "brake pad sets price", document_ids=[invoice])["results"] == []
+    assert _search(client, admin, "brake pad sets price", document_ids=[str(uuid.uuid4())])["results"] == []  # unknown id
+
+
+def test_the_cache_does_not_leak_between_different_mentions(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    _upload(client, manager, "brakes.txt", BRAKES, "manual")
+    _upload(client, manager, "fuel.txt", FUEL_POLICY, "policy")
+    ids = _ids(client, manager, "brakes.txt", "fuel.txt")
+
+    first = _search(client, manager, "brake pads replaced", document_ids=[ids["brakes.txt"]])
+    second = _search(client, manager, "brake pads replaced", document_ids=[ids["fuel.txt"]])
+    repeat = _search(client, manager, "brake pads replaced", document_ids=[ids["brakes.txt"]])
+
+    assert first["results"] and second["results"] == []
+    assert repeat["cached"] is True and repeat["results"] == first["results"]
+
+
+@pytest.mark.parametrize("bad", [["not-a-uuid"], [str(uuid.uuid4())] * 11])
+def test_document_ids_are_validated(rag, client: TestClient, users, bad) -> None:
+    response = client.post("/api/v1/documents/search", json={"query": "brake pads", "document_ids": bad}, headers=auth_headers(users[UserRole.admin]))
+
+    assert response.status_code == 422
+
+
+# ---- the preview: a document's passages ----
+
+
+def test_a_documents_chunks_come_back_in_reading_order(rag, client: TestClient, users) -> None:
+    manager = users[UserRole.fleet_manager]
+    doc_id = _upload(client, manager, "brakes.txt", BRAKES, "manual").json()["id"]
+
+    response = client.get(f"/api/v1/documents/{doc_id}/chunks", headers=auth_headers(manager))
+
+    assert response.status_code == 200
+    chunks = response.json()
+    assert [c["chunk_index"] for c in chunks] == list(range(len(chunks))) and chunks
+    assert "Brake pads" in " ".join(c["text"] for c in chunks)
+
+
+def test_chunks_follow_the_same_visibility_as_the_document(rag, client: TestClient, db_session: Session, users) -> None:
+    admin = users[UserRole.admin]
+    invoice = _upload(client, admin, "invoice.txt", INVOICE, "supplier_invoice").json()["id"]
+    manual = _upload(client, admin, "brakes.txt", BRAKES, "manual").json()["id"]
+
+    assert client.get(f"/api/v1/documents/{invoice}/chunks", headers=auth_headers(users[UserRole.driver])).status_code == 404
+    assert client.get(f"/api/v1/documents/{manual}/chunks", headers=auth_headers(users[UserRole.driver])).status_code == 200
+
+    other_org = Organization(id=uuid.uuid4(), name="Other", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db_session.add(other_org)
+    db_session.commit()
+    outsider = make_user(db_session, other_org, role=UserRole.admin)
+    assert client.get(f"/api/v1/documents/{manual}/chunks", headers=auth_headers(outsider)).status_code == 404
+    assert client.get(f"/api/v1/documents/{uuid.uuid4()}/chunks", headers=auth_headers(admin)).status_code == 404
+
+
+def test_a_document_that_is_still_processing_has_no_chunks_yet(rag, client: TestClient, db_session: Session, users) -> None:
+    admin = users[UserRole.admin]
+    doc_id = _upload(client, admin, "brakes.txt", BRAKES, "manual").json()["id"]
+    document = db_session.get(Document, uuid.UUID(doc_id))
+    document.status = DocumentStatus.processing
+    db_session.commit()
+
+    assert client.get(f"/api/v1/documents/{doc_id}/chunks", headers=auth_headers(admin)).json() == []
 
 
 # ---- §1.2 versioning, lease, pre-purge ----

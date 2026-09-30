@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import DocumentStatus, DocumentType
 
+MAX_DOCUMENT_IDS = 10
+
 
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -30,6 +32,9 @@ class DocumentSearchRequest(BaseModel):
     query: str = Field(min_length=3, max_length=500)
     # Optional narrowing -- always intersected with what the caller's role may see.
     document_types: list[DocumentType] | None = None
+    # Restrict the search to exactly these documents (the chat's "@" mentions). Ids the caller may not see, or that
+    # are not ready, simply match nothing -- this can only narrow a search, never widen it.
+    document_ids: list[uuid.UUID] | None = Field(default=None, max_length=MAX_DOCUMENT_IDS)
 
 
 class DocumentSearchHit(BaseModel):
@@ -39,6 +44,13 @@ class DocumentSearchHit(BaseModel):
     chunk_index: int
     text: str
     relevance: float
+
+
+class DocumentChunkOut(BaseModel):
+    """One stored passage, for the document preview."""
+
+    chunk_index: int
+    text: str
 
 
 class DocumentSearchResponse(BaseModel):

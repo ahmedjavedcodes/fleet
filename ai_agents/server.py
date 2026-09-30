@@ -74,7 +74,7 @@ from core.llm_budget import get_tracker  # noqa: E402
 from core.llm_failover import get_guard_chat_model  # noqa: E402
 from core.tool_markup import strip_tool_markup  # noqa: E402
 from mcp_server import memory_tools  # noqa: E402
-from mcp_server.document_tools import BackendDocumentRetriever  # noqa: E402
+from mcp_server.document_tools import BackendDocumentRetriever, get_document_tool  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
 from orchestrator.cache import ExecutionCache  # noqa: E402
 from orchestrator.callbacks import ORCHESTRATOR_AGENT, FleetLiveObserver  # noqa: E402
@@ -277,11 +277,36 @@ def _get_session(session_id: str, authorization: str | None) -> OrchestratorSess
 # (never an arbitrary URL -- no SSRF).
 _ATTACHMENT_PATH = r"^/uploads/incidents/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$"
 _ATTACHMENT_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+MAX_REFERENCED_DOCUMENTS = 10
 
 
 class MessageRequest(BaseModel):
     message: str = Field(max_length=4000)
     attachment_url: str | None = Field(default=None, pattern=_ATTACHMENT_PATH)
+    # Documents the user @-mentioned (or attached as a PDF): document search this turn is restricted to exactly them.
+    document_ids: list[uuid.UUID] | None = Field(default=None, max_length=MAX_REFERENCED_DOCUMENTS)
+
+
+def _resolve_documents(token: str, context: AgentContext, ids: list[uuid.UUID]) -> list[dict[str, str]]:
+    """[{"id", "filename"}] for each mentioned document, read under the caller's own access (the backend answers 404
+    for another organization's or a role-restricted document, exactly as if it did not exist). A document still being
+    processed or that failed cannot be searched, so it is refused here with a reason rather than silently matching nothing."""
+    resolved: list[dict[str, str]] = []
+    for document_id in dict.fromkeys(ids):
+        try:
+            document = get_document_tool(context, str(document_id))
+        except BackendAPIError as exc:
+            if exc.status_code in (403, 404):
+                raise HTTPException(status_code=422, detail="A document you referenced wasn't found, or you don't have access to it.") from exc
+            _raise_for_backend(exc)
+            raise
+        filename = str(document.get("filename", "document"))
+        if document.get("status") == "processing":
+            raise HTTPException(status_code=409, detail=f"{filename} is still being processed. Try again in a moment.")
+        if document.get("status") != "ready":
+            raise HTTPException(status_code=422, detail=f"{filename} couldn't be processed, so it can't be searched.")
+        resolved.append({"id": str(document_id), "filename": filename})
+    return resolved
 
 
 def _load_attachment(path: str) -> tuple[bytes, str]:
@@ -474,12 +499,28 @@ async def send_message(
 ) -> EventSourceResponse:
     # Resolving may call the backend (to resume), so keep it off the event loop.
     session = await asyncio.to_thread(_get_session, session_id, authorization)
+    # Checked before streaming starts too, so a bad mention is a plain 4xx, not an error in the middle of a stream.
+    referenced: list[dict[str, str]] = []
+    if body.document_ids:
+        token, context = _authenticate(authorization)
+        referenced = await asyncio.to_thread(_resolve_documents, token, context, body.document_ids)
+    # The mention argument is passed only when there is one, so a turn without mentions runs exactly as before.
     if body.attachment_url is None:
+        if referenced:
+            return await _stream_turn(session, lambda: session.run(body.message, referenced_documents=referenced))
         return await _stream_turn(session, lambda: session.run(body.message))
 
     # Read before streaming starts, so a missing/bad image is a plain 4xx the
     # client can show, not an error in the middle of a stream.
     image_bytes, mime_type = await asyncio.to_thread(_load_attachment, body.attachment_url)
+    if referenced:
+        return await _stream_turn(
+            session,
+            lambda: session.run(
+                body.message, image_bytes=image_bytes, mime_type=mime_type, attachment_url=body.attachment_url,
+                referenced_documents=referenced,
+            ),
+        )
     return await _stream_turn(
         session,
         lambda: session.run(body.message, image_bytes=image_bytes, mime_type=mime_type, attachment_url=body.attachment_url),

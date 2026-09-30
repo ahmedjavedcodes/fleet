@@ -24,6 +24,22 @@ describe("MessageBubble", () => {
     expect(container.textContent).not.toMatch(/DSML|tool_calls|invoke|parameter/)
   })
 
+  it("lists the documents a user message referenced as chips under it", () => {
+    render(
+      <MessageBubble
+        message={{
+          id: "6",
+          role: "user",
+          text: "What does @Fleet Manual.pdf say about tyres?",
+          documents: [{ id: "d1", filename: "Fleet Manual.pdf" }, { id: "d2", filename: "Fuel Policy.pdf" }],
+        }}
+      />
+    )
+
+    const chips = screen.getByRole("list", { name: "Referenced documents" })
+    expect(Array.from(chips.querySelectorAll("li")).map((li) => li.textContent)).toEqual(["Fleet Manual.pdf", "Fuel Policy.pdf"])
+  })
+
   it("renders nothing at all for a reply that was only raw markup", () => {
     const dsml = `<｜DSML｜tool_calls><｜DSML｜invoke name="fuel"></｜DSML｜invoke></｜DSML｜tool_calls>`
     const { container } = render(<MessageBubble message={{ id: "4", role: "assistant", text: dsml }} />)

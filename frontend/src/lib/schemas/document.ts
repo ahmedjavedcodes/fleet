@@ -24,8 +24,17 @@ export type DocumentResponse = z.infer<typeof documentResponseSchema>
 export const documentSearchRequestSchema = z.object({
   query: z.string().min(3).max(500),
   document_types: z.array(documentTypeSchema).optional(),
+  // Restrict the search to exactly these documents (the backend also enforces the caller's own access).
+  document_ids: z.array(uuidSchema).max(10).optional(),
 })
 export type DocumentSearchRequest = z.infer<typeof documentSearchRequestSchema>
+
+// One stored passage of a document, in reading order (GET /documents/{id}/chunks), for the preview.
+export const documentChunkSchema = z.object({
+  chunk_index: z.number().int(),
+  text: z.string(),
+})
+export type DocumentChunk = z.infer<typeof documentChunkSchema>
 
 export const documentSearchHitSchema = z.object({
   document_id: uuidSchema,

@@ -28,6 +28,24 @@ _RECORD_BLOB = re.compile(r"\{[^{}]*['\"][\w .-]+['\"]\s*:[^{}]*\}")
 # A list of such records: [{...}, {...}] (after the blobs inside were removed it is just [, ]).
 _EMPTY_LIST = re.compile(r"\[\s*(?:,\s*)*\]")
 
+# A reasoning model that writes its whole chain of thought into the reply ("Here's a thinking process: 1. **Analyze
+# User Input:** ..."). It is not a fact-by-fact monologue to trim: the reply is reasoning, so it is dropped (and the
+# turn regenerates) unless the model also marked where its real answer starts.
+_THINKING_START = re.compile(
+    r"^\s*(?:here(?:'s| is)\s+(?:a|my|the)\s+(?:thinking|reasoning|thought)\s+process|(?:thinking|reasoning)\s+process\s*:|"
+    r"thinking\s*:|let me think|okay,?\s+(?:so\s+)?(?:the user|let me)|first,?\s+(?:i need|let me))",
+    re.I,
+)
+# "The user wants..." opens a reasoning leak, but could also open an honest sentence: it counts only with the model
+# talking about its own work elsewhere in the text ("I need to", "let me", "my draft").
+_WEAK_THINKING_START = re.compile(r"^\s*the user\s+(?:wants|is asking|asks|asked|said)", re.I)
+_FIRST_PERSON_WORK = re.compile(r"\b(?:i|we)\s+(?:need|should|must|have to|will|'ll)\b|\bi've\b|\blet me\b|\blet's\b|\bmy (?:answer|reply|response|draft)\b", re.I)
+_ANALYSIS_HEADING = re.compile(
+    r"^\s*(?:\d+[.)]\s*)?\*\*(?:analy[sz]e|determine|extract|draft|understand|identify|plan|review|constraints?)\b[^*\n]{0,60}\*\*",
+    re.I | re.M,
+)
+_FINAL_MARKER = re.compile(r"^\s*(?:\*\*)?(?:final\s+(?:answer|reply|response)|answer)(?:\*\*)?\s*:\s*(?:\*\*)?", re.I | re.M)
+
 _MONOLOGUE = re.compile(
     r"\b(?:"
     r"wait\s*[,.…!:—-]"                       # "wait, ..." (not "waiting for parts")
@@ -52,8 +70,23 @@ class Sanitized(NamedTuple):
     leaked: bool  # something reasoning-like or raw was found (and removed)
 
 
+def _drop_thinking_process(text: str) -> str:
+    """The reply with a written-out thinking process removed: what follows the last "Final answer:" marker, or
+    nothing if the model never said where its answer starts."""
+    leaked = (
+        _THINKING_START.search(text)
+        or (_WEAK_THINKING_START.search(text) and _FIRST_PERSON_WORK.search(text))
+        or len(_ANALYSIS_HEADING.findall(text)) >= 2
+    )
+    if not leaked:
+        return text
+    markers = list(_FINAL_MARKER.finditer(text))
+    return text[markers[-1].end():] if markers else ""
+
+
 def _light_clean(text: str) -> str:
     text = strip_tool_markup(text)  # raw tool-call syntax (DSML, <tool_call>, harmony, bare JSON calls)
+    text = _drop_thinking_process(text)
     text = _THINK_BLOCK.sub("", text)
     text = _UNCLOSED_THINK.sub("", text)
     text = _STRAY_TAG.sub("", text)

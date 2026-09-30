@@ -32,13 +32,21 @@ class Settings(BaseSettings):
     rag_dense_model: str = "llama-text-embed-v2"
     rag_sparse_model: str = "pinecone-sparse-english-v0"
     rag_rerank_model: str = "bge-reranker-v2-m3"
-    # Calibrated live on bge-reranker-v2-m3: correct passages 0.576-0.997,
-    # wrong ones <= 0.010. The spec's 0.65 (for bge-reranker-base) would drop
-    # a correct paraphrase match at 0.576.
-    rag_rerank_threshold: float = 0.30
+    # Calibrated live on bge-reranker-v2-m3. On page-sized chunks correct passages scored 0.576-0.997 and wrong
+    # ones <= 0.010 (so 0.30 was safe). On 350-character chunks a correct passage scores lower for a
+    # conversational question ("what does it say about night shifts?" -> 0.296 and 0.155; one correct chunk
+    # 0.032), while unrelated questions still score 0.000-0.010 against every chunk, so the bar is 0.10.
+    rag_rerank_threshold: float = 0.10
+    # A passage below the threshold still counts when it clearly wins: at least this score, and at least
+    # rag_rerank_dominance times the runner-up's. (A correct chunk at 0.032 beside others at 0.003.)
+    rag_rerank_floor: float = 0.02
+    rag_rerank_dominance: float = 5.0
     rag_alpha: float = 0.5
     rag_candidate_k: int = 10
     rag_max_chunks: int = 3
+    # Small chunks (roughly one fact each) so an answer is a sentence, not a page; see services/document_chunking.py.
+    rag_chunk_size: int = 350
+    rag_chunk_overlap: int = 50
     rag_max_summarized_tables: int = 15
     rag_max_upload_mb: int = 20
     # Table summarization LLM (Groq, OpenAI-compatible). Unset key = tables are
