@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 
 // The reference's rounded colored square with a glyph (plans/00 §5) —
 // generalized beyond the KPI tile colors so states/* (EmptyState,
-// ErrorState, AccessDenied, NotAvailableYet) can reuse it with a muted or
+// ErrorState, AccessDenied) can reuse it with a muted or
 // status tone instead of inventing their own icon-square markup.
 export type IconTileTone =
   | "brand"

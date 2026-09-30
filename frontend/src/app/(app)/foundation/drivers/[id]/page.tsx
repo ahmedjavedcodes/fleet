@@ -21,6 +21,7 @@ import { ErrorState } from "@/components/states/error-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
 import type { VehicleAssignment } from "@/lib/schemas/assignment"
+import { DriverTimelineItem } from "./_components/driver-timeline-item"
 
 export default function DriverDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -120,13 +121,7 @@ export default function DriverDetailPage() {
           >
             {(items) => (
               <TimelineList items={items} getKey={(item) => item.id}>
-                {(item) => (
-                  <div className="text-sm">
-                    <p className="font-medium text-foreground">
-                      {formatDateTime(item.date)} · {item.record_type[0]!.toUpperCase() + item.record_type.slice(1)}
-                    </p>
-                  </div>
-                )}
+                {(item) => <DriverTimelineItem entry={item} />}
               </TimelineList>
             )}
           </QueryRegion>

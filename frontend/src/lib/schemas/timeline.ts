@@ -9,7 +9,14 @@ import { incidentResolutionStatusSchema, incidentSeveritySchema, incidentTypeSch
 // modeling it as a discriminated union here catches a shape drift as a
 // schema-parse error instead of letting `any`-shaped data reach the UI.
 
+// Every branch also carries the joined display fields (see timeline_service.py).
+const timelineVehicleShape = {
+  vehicle_name: z.string(),
+  vehicle_plate: z.string(),
+}
+
 const tripSummarySchema = z.object({
+  ...timelineVehicleShape,
   driver_id: uuidSchema,
   vehicle_id: uuidSchema,
   start_time: dateTimeStringSchema,
@@ -21,16 +28,22 @@ const tripSummarySchema = z.object({
   notes: z.string().nullable(),
 })
 
+// `odometer` is the vehicle's last logged trip odometer at or before the event;
+// null when it had no trip by then.
 const reportSummarySchema = z.object({
+  ...timelineVehicleShape,
   driver_id: uuidSchema,
   vehicle_id: uuidSchema,
   shift_date: z.string(),
   vehicle_condition: vehicleConditionSchema,
   handover_notes: z.string().nullable(),
   issues_reported: z.string().nullable(),
+  odometer: z.number().int().nullable(),
 })
 
 const incidentSummarySchema = z.object({
+  ...timelineVehicleShape,
+  odometer: z.number().int().nullable(),
   driver_id: uuidSchema.nullable(),
   vehicle_id: uuidSchema,
   incident_type: incidentTypeSchema,

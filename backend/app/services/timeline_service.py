@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import DateTime, String, cast, func, literal, select, union_all
 from sqlalchemy.orm import Session
@@ -7,6 +8,24 @@ from app.models.accountability import DriverReport, IncidentLog, TripLog
 from app.models.driver import Driver
 from app.models.vehicle import Vehicle
 from app.schemas.accountability import TimelineEntry
+
+
+def _odometer_snapshot(model, event_end):
+    """Reports and incidents carry no odometer column, so the snapshot is the
+    vehicle's last logged trip end-odometer at or before the event (NULL when
+    the vehicle had no trip by then)."""
+    return (
+        select(TripLog.end_odometer)
+        .where(TripLog.vehicle_id == model.vehicle_id, TripLog.is_deleted.is_(False), TripLog.end_time <= event_end)
+        .order_by(TripLog.end_time.desc())
+        .limit(1)
+        .correlate(model)
+        .scalar_subquery()
+    )
+
+
+def _end_of_day(day_column):
+    return cast(day_column, DateTime(timezone=True)) + timedelta(days=1)
 
 
 def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = None, driver_id: uuid.UUID | None = None):
@@ -79,6 +98,7 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
                 "vehicle_condition", DriverReport.vehicle_condition,
                 "handover_notes", DriverReport.handover_notes,
                 "issues_reported", DriverReport.issues_reported,
+                "odometer", _odometer_snapshot(DriverReport, _end_of_day(DriverReport.shift_date)),
             ).label("summary"),
         ),
         DriverReport,
@@ -107,6 +127,9 @@ def _build_timeline_query(org_id: uuid.UUID, *, vehicle_id: uuid.UUID | None = N
                 "remarks", IncidentLog.remarks,
                 "attachment_url", IncidentLog.attachment_url,
                 "resolution_notes", IncidentLog.resolution_notes,
+                "odometer", _odometer_snapshot(
+                    IncidentLog, func.coalesce(IncidentLog.incident_time, _end_of_day(IncidentLog.date))
+                ),
             ).label("summary"),
         ),
         IncidentLog,

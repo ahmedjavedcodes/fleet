@@ -13,6 +13,10 @@ vi.mock("@/lib/auth/use-current-user", () => ({ useCurrentUser: () => mockUseCur
 
 const mutate = vi.fn()
 vi.mock("@/lib/api/incidents", () => ({ useCreateIncident: () => ({ mutate, isPending: false }) }))
+vi.mock("@/lib/api/uploads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/uploads")>()),
+  useUploadImage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
 vi.mock("@/lib/api/fuel", () => ({ useCreateFuelLog: () => ({ mutate, isPending: false }) }))
 vi.mock("@/lib/api/vehicles", () => ({
   useVehicles: () => ({ data: [{ id: VEHICLE_ID, plate_number: "ABC-123" }] }),

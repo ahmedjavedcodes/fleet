@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.assignments import router as assignments_router
 from app.api.auth import router as auth_router
@@ -18,8 +19,10 @@ from app.api.notifications import router as notifications_router
 from app.api.purchase_orders import router as purchase_orders_router
 from app.api.suppliers import router as suppliers_router
 from app.api.trips import router as trips_router
+from app.api.uploads import router as uploads_router
 from app.api.vehicles import router as vehicles_router
 from app.core.config import get_settings
+from app.services.upload_service import INCIDENT_IMAGE_URL_PREFIX, incident_image_dir
 
 settings = get_settings()
 
@@ -51,3 +54,9 @@ app.include_router(assignments_router)
 app.include_router(memory_router)
 app.include_router(documents_router)
 app.include_router(notifications_router)
+app.include_router(uploads_router)
+
+# Only the incidents folder is public (unguessable UUID names); fuel receipts and
+# documents under the same upload_dir stay private.
+incident_image_dir().mkdir(parents=True, exist_ok=True)
+app.mount(INCIDENT_IMAGE_URL_PREFIX, StaticFiles(directory=incident_image_dir()), name="incident-images")

@@ -6,7 +6,6 @@ import type { Notification } from "@/lib/schemas/notification"
 import { PageHeader } from "@/components/layout/page-header"
 import { NotificationItem } from "@/components/notifications/notification-item"
 import { EmptyState } from "@/components/states/empty-state"
-import { NotAvailableYet } from "@/components/states/not-available-yet"
 import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -61,7 +60,6 @@ export default function NotificationsPage() {
           <TabsTrigger value="events">
             <TabLabel label="Notified events" count={unreadCount(notificationsQuery.data, "event")} />
           </TabsTrigger>
-          <TabsTrigger value="triggers">Triggers</TabsTrigger>
         </TabsList>
 
         <TabsContent value="warnings">
@@ -86,10 +84,6 @@ export default function NotificationsPage() {
               )
             }
           </QueryRegion>
-        </TabsContent>
-
-        <TabsContent value="triggers">
-          <NotAvailableYet feature="Triggers" />
         </TabsContent>
       </Tabs>
     </div>

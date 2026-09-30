@@ -92,10 +92,9 @@ describe("NotificationsPage", () => {
     expect(screen.getByText("No notified events")).toBeInTheDocument()
   })
 
-  it("keeps Triggers honest: it has no backend, so it still says so", async () => {
-    const user = userEvent.setup()
+  it("only offers the Warnings and Notified events tabs (no Triggers)", () => {
     render(<NotificationsPage />)
-    await user.click(screen.getByRole("tab", { name: "Triggers" }))
-    expect(screen.getByText("Triggers isn't available yet")).toBeInTheDocument()
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Warnings1", "Notified events1"])
+    expect(screen.queryByRole("tab", { name: /Triggers/ })).not.toBeInTheDocument()
   })
 })

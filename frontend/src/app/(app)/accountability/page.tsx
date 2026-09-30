@@ -5,6 +5,7 @@ import { ClipboardList, Plus, ShieldAlert } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useIncidents } from "@/lib/api/incidents"
 import { useDriverReports } from "@/lib/api/driver-reports"
+import { resolveAttachmentUrl } from "@/lib/api/uploads"
 import { formatMoney } from "@/lib/api/decimal"
 import { formatDate, formatDateTime } from "@/lib/format-date"
 import { INCIDENT_RESOLUTION_LABELS, INCIDENT_SEVERITY_LABELS, INCIDENT_SEVERITY_TONE, INCIDENT_TYPE_LABELS, VEHICLE_CONDITION_LABELS } from "@/lib/enum-labels"
@@ -61,7 +62,7 @@ export default function AccountabilityPage() {
       header: "",
       cell: (r) =>
         r.attachment_url ? (
-          <a href={r.attachment_url} target="_blank" rel="noreferrer" className="text-sm text-foreground underline">
+          <a href={resolveAttachmentUrl(r.attachment_url)} target="_blank" rel="noreferrer" className="text-sm text-foreground underline">
             Attachment
           </a>
         ) : null,

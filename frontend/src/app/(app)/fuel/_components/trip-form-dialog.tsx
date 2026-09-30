@@ -149,6 +149,18 @@ export function TripFormDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                 <FieldError errors={[errors.end_odometer]} />
               </Field>
             </div>
+            <Field data-invalid={Boolean(errors.fuel_consumed)}>
+              <FieldLabel htmlFor="fuel_consumed">Fuel used (L) (optional)</FieldLabel>
+              <Input
+                id="fuel_consumed"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                {...register("fuel_consumed", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+              />
+              <FieldError errors={[errors.fuel_consumed]} />
+            </Field>
           </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

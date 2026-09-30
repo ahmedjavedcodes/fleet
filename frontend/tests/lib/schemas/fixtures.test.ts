@@ -460,6 +460,8 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
         id: "99999999-9999-4999-8999-999999999999",
         date: "2026-06-12T08:00:00Z",
         summary: {
+          vehicle_name: "Toyota Hilux",
+          vehicle_plate: "LEA-1001",
           driver_id: "22222222-2222-4222-8222-222222222222",
           vehicle_id: "11111111-1111-4111-8111-111111111111",
           start_time: "2026-06-12T08:00:00Z",
@@ -476,6 +478,9 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
         id: "88888888-8888-4888-8888-888888888888",
         date: "2026-06-13T08:00:00Z",
         summary: {
+          vehicle_name: "Toyota Hilux",
+          vehicle_plate: "LEA-1001",
+          odometer: null,
           driver_id: null,
           vehicle_id: "11111111-1111-4111-8111-111111111111",
           incident_type: "damage",
@@ -488,8 +493,24 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
           resolution_notes: null,
         },
       },
+      {
+        record_type: "report",
+        id: "77777777-7777-4777-8777-777777777777",
+        date: "2026-06-14T00:00:00Z",
+        summary: {
+          vehicle_name: "Toyota Hilux",
+          vehicle_plate: "LEA-1001",
+          odometer: 198,
+          driver_id: "22222222-2222-4222-8222-222222222222",
+          vehicle_id: "11111111-1111-4111-8111-111111111111",
+          shift_date: "2026-06-14",
+          vehicle_condition: "good",
+          handover_notes: null,
+          issues_reported: null,
+        },
+      },
     ]
-    expect(timelineResponseSchema.parse(fixture)).toHaveLength(2)
+    expect(timelineResponseSchema.parse(fixture)).toHaveLength(3)
   })
 
   it("parses a DashboardSummaryResponse and a FleetHealthResponse with null signals", () => {

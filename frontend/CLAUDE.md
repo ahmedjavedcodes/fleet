@@ -218,7 +218,7 @@ role **and** render the Access Denied state if the URL is opened directly.
 | `/assignment` | Vehicle ↔ driver custody: assign, release, history | A, FM (write + all history); D (own history, vehicle history) | `POST /vehicles/{id}/assign`, `/release`, `GET /drivers/{id}/assignments`, `/vehicles/{id}/assignments?target_date=` |
 | `/insights` | Analytics and custom reporting | A, FM | Dashboard endpoints today; NL→SQL search **to be built** (§5.5) |
 | `/documents` | RAG knowledge base: list, search, upload, manage | all (list/search, scoped by role); A/FM (upload/delete) | Documents API (**to be built**, §5.5 — lives only on the `backend` branch, never merged into `frontend`; see plan 07 §0) |
-| `/notifications` | Tabs: Warnings, Notified Events, Triggers | all | Notifications API (**to be built**, §5.5) |
+| `/notifications` | Tabs: Warnings, Notified Events (no Triggers tab — no rules engine in this release) | all | Notifications API |
 
 All paths are under `${API_BASE}/api/v1`. Read-only helper: `GET /health`.
 
@@ -287,7 +287,7 @@ src/
 │   ├── layout/                     # Sidebar, SidebarNav, MobileSidebar, Topbar, TopbarSlotsProvider,
 │   │   │                           #   PageHeader, NotificationBell, UserMenu, RouteGuard, nav-items.ts
 │   ├── states/                     # PageSkeleton (+ Skeleton* shape helpers), EmptyState, ErrorState,
-│   │   │                           #   AccessDenied, NotAvailableYet, QueryRegion, RouteErrorBoundary,
+│   │   │                           #   AccessDenied, QueryRegion, RouteErrorBoundary,
 │   │   │                           #   RoutePlaceholder (see note below)
 │   ├── charts/                     # AreaTrendChart (recharts, generic over series), HealthGauge (hand-rolled SVG semicircle)
 │   ├── fleet/                      # DueRow, TimelineList, AssignDriverDialog/ReleaseDriverFlow (promoted here in plan 06
@@ -366,16 +366,15 @@ tests/                               # mirrors src/ path-for-path — see §7's 
   wasn't: between `lg` and `xl` the container CSS-shrank to icon width while the JS state
   still said "expanded," so full label text tried to render inside an 80px column and
   overflowed. Caught by an actual browser screenshot at 1024px, not by the test suite.
-- **`RoutePlaceholder` vs `NotAvailableYet`:** every route in §2.1 is scaffolded and kept
+- **`RoutePlaceholder`:** every route in §2.1 is scaffolded and kept
   in the nav now (all of CLAUDE.md §3's sidebar, filtered by role), rather than hidden
   until a later phase builds it. `RoutePlaceholder` ("… is being built") is currently
-  unused — every scaffolded route has either a real backend and a built UI, or no backend
-  and a `NotAvailableYet` state (plan 07). `/dashboard` (plan 04), `/foundation/*` (plan 05),
+  unused — every scaffolded route has a real backend and a built UI (the former
+  `NotAvailableYet` state has been removed). `/dashboard` (plan 04), `/foundation/*` (plan 05),
   `/fuel`, `/maintenance`, `/accountability`, `/assignment` (plan 06, reduced scope — see
   that plan's notes for what's deferred within each), `/insights` (plan 07, the analytics
   regions; its NL search box is presentational only) and `/chat` (plan 07, a real integration
-  with `ai_agents/server.py`) are built and live. `/documents` and `/notifications` render
-  `NotAvailableYet` — their backends genuinely don't exist (see §5.5).
+  with `ai_agents/server.py`), `/documents` and `/notifications` are built and live.
 - **Dashboard greeting is time-of-day, not literally "Good morning."** Plan 04 §1's copy
   ("Good morning, {first name}") was written before considering that a fleet manager
   checking in at 4pm shouldn't be told good morning; `_components/greeting.tsx` derives

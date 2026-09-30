@@ -168,3 +168,80 @@ def test_timeline_org_scoping(db_session: Session, organization: Organization, a
     db_session.commit()
 
     assert timeline_service.get_vehicle_timeline(db_session, other_org.id, vehicle.id) == []
+
+
+def test_timeline_entries_carry_vehicle_identity_and_trip_odometers(
+    db_session: Session, organization: Organization, admin, driver_profile
+) -> None:
+    vehicle = make_vehicle(db_session, organization, plate_number="LEA-1234", make="Toyota", model="Hilux")
+    trip_service.create_trip(
+        db_session, organization.id,
+        TripLogCreate(
+            driver_id=driver_profile.id, vehicle_id=vehicle.id,
+            start_time=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc), end_time=datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+            start_odometer=45000, end_odometer=45250,
+        ),
+        admin.id,
+    )
+    driver_report_service.create_driver_report(
+        db_session, organization.id,
+        DriverReportCreate(driver_id=driver_profile.id, vehicle_id=vehicle.id, shift_date=date(2026, 6, 2), vehicle_condition=VehicleCondition.good),
+        admin.id,
+    )
+    incident_service.create_incident(
+        db_session, organization.id,
+        IncidentLogCreate(driver_id=driver_profile.id, vehicle_id=vehicle.id, incident_type=IncidentType.damage, date=date(2026, 6, 3), severity=IncidentSeverity.minor, description="Scratch"),
+        admin.id,
+    )
+
+    timeline = timeline_service.get_driver_timeline(db_session, organization.id, driver_profile.id)
+    assert {e.record_type for e in timeline} == {"trip", "report", "incident"}
+    for entry in timeline:
+        assert entry.summary["vehicle_plate"] == "LEA-1234"
+        assert entry.summary["vehicle_name"] == "Toyota Hilux"
+    trip_entry = next(e for e in timeline if e.record_type == "trip")
+    assert (trip_entry.summary["start_odometer"], trip_entry.summary["end_odometer"]) == (45000, 45250)
+
+
+def test_timeline_odometer_snapshot_uses_last_trip_at_or_before_the_event(
+    db_session: Session, organization: Organization, admin, driver_profile
+) -> None:
+    vehicle = make_vehicle(db_session, organization)
+
+    def _trip(day: int, start: int, end: int) -> None:
+        trip_service.create_trip(
+            db_session, organization.id,
+            TripLogCreate(
+                driver_id=driver_profile.id, vehicle_id=vehicle.id,
+                start_time=datetime(2026, 6, day, 9, 0, tzinfo=timezone.utc), end_time=datetime(2026, 6, day, 12, 0, tzinfo=timezone.utc),
+                start_odometer=start, end_odometer=end,
+            ),
+            admin.id,
+        )
+
+    def _report(day: int):
+        return driver_report_service.create_driver_report(
+            db_session, organization.id,
+            DriverReportCreate(driver_id=driver_profile.id, vehicle_id=vehicle.id, shift_date=date(2026, 6, day), vehicle_condition=VehicleCondition.good),
+            admin.id,
+        )
+
+    before_any_trip = _report(1)  # no trip has ended by the end of 1 June
+    _trip(2, 1000, 1100)
+    same_day = _report(2)  # the 2 June trip ended at 12:00, inside the report's day
+    _trip(4, 1100, 1300)
+    between = _report(3)  # the 4 June trip must not leak backwards
+    incident = incident_service.create_incident(
+        db_session, organization.id,
+        IncidentLogCreate(
+            driver_id=driver_profile.id, vehicle_id=vehicle.id, incident_type=IncidentType.damage,
+            incident_time=datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc), severity=IncidentSeverity.minor, description="Mid-trip scrape",
+        ),
+        admin.id,
+    )  # 10:00 is before the 12:00 trip end, so the earlier trip's 1100 applies
+
+    by_id = {e.id: e for e in timeline_service.get_vehicle_timeline(db_session, organization.id, vehicle.id)}
+    assert by_id[before_any_trip.id].summary["odometer"] is None
+    assert by_id[same_day.id].summary["odometer"] == 1100
+    assert by_id[between.id].summary["odometer"] == 1100
+    assert by_id[incident.id].summary["odometer"] == 1100
