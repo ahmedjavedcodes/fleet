@@ -102,7 +102,7 @@ def test_status_reports_per_model_calls_tokens_and_the_last_error() -> None:
 # --- the deterministic no-LLM fallback --------------------------------------------------------
 
 
-from orchestrator.offline import PREAMBLE, answer_offline, plan_offline_read  # noqa: E402
+from orchestrator.offline import FOOTNOTE, answer_offline, format_fallback_response, plan_offline_read  # noqa: E402
 from orchestrator.runner import RunResult  # noqa: E402
 
 TODAY = date(2026, 9, 30)
@@ -147,42 +147,85 @@ def test_writes_memory_changes_and_unmatched_messages_are_never_answered_offline
     assert plan_offline_read(message) is None
 
 
-def test_the_fuel_question_from_the_failing_screenshot_is_computed_directly() -> None:
-    rows = [
-        {"vehicle_plate": "CD-5678", "date": "2026-09-20", "liters_filled": "40.0", "total_cost": "11200", "cost_per_km": "28.00"},
-        {"vehicle_plate": "CD-5678", "date": "2026-09-25", "liters_filled": "35.5", "total_cost": "9940", "cost_per_km": "30.00"},
-        {"vehicle_plate": "CD-5678", "date": "2026-07-01", "liters_filled": "50", "total_cost": "14000", "cost_per_km": "99.00"},  # too old
-        {"vehicle_plate": "AB-1234", "date": "2026-09-21", "liters_filled": "10", "total_cost": "2800", "cost_per_km": "1.00"},  # other vehicle
-    ]
-    runner = _Runner(rows)
-    text = answer_offline(
-        "Show me the total fuel consumed and average cost per kilometer for vehicle CD-5678 over the last month.", runner, "tok", today=TODAY
-    )
+FUEL_LOGS = [
+    {"vehicle_plate": "AB-1234", "date": "2026-09-05", "liters_filled": "60.0", "total_cost": "16800", "odometer_reading": 45000, "vin": "SECRET"},
+    {"vehicle_plate": "AB-1234", "date": "2026-09-14", "liters_filled": "50.0", "total_cost": "14000", "odometer_reading": 45500},
+    {"vehicle_plate": "AB-1234", "date": "2026-09-27", "liters_filled": "45.0", "total_cost": "12700", "odometer_reading": 46000},
+    {"vehicle_plate": "AB-1234", "date": "2026-07-01", "liters_filled": "50", "total_cost": "14000", "odometer_reading": 30000},  # outside the month
+    {"vehicle_plate": "CD-5678", "date": "2026-09-20", "liters_filled": "10", "total_cost": "2800", "odometer_reading": 1000},  # another vehicle
+]
+FUEL_QUESTION = "Show me the total fuel consumed and average cost per kilometer for vehicle AB-1234 over the last month."
+
+
+def test_the_fuel_question_gets_the_clean_computed_summary_not_a_log_dump() -> None:
+    runner = _Runner(FUEL_LOGS)
+    text = answer_offline(FUEL_QUESTION, runner, "tok", today=TODAY)
+
     assert runner.calls == [("fuel", {"query_entity": "fuel_logs"})]  # a read, and only that
-    assert text.startswith(PREAMBLE)
-    assert "CD-5678, the last 30 days: 2 fill(s), 75.5 L in total, Rs 21,140 spent, average cost per km Rs 29.00." in text
+    assert text == (
+        "**Fuel & Cost Summary for Vehicle AB-1234 (Past Month)**\n"
+        "* **Total Fuel Consumed:** 155 Liters\n"
+        "* **Total Fuel Cost:** Rs 43,500\n"
+        "* **Total Distance Covered:** 1,000 km (45,000 km → 46,000 km)\n"
+        "* **Average Cost per km:** Rs 43.50 / km\n\n"
+        f"{FOOTNOTE}"
+    )
+    for leaked in ("vehicle_plate", "odometer_reading", "liters_filled", "SECRET", "=", "The AI model is unavailable"):
+        assert leaked not in text
 
 
-def test_fuel_totals_say_so_when_there_is_no_data() -> None:
-    text = answer_offline("Show fuel used by CD-5678 last month", _Runner([]), "tok", today=TODAY)
-    assert "No fuel logs found for CD-5678 in the last 30 days." in text
+def test_fuel_summary_is_honest_when_distance_cannot_be_computed_or_there_is_no_data() -> None:
+    text = format_fallback_response("fuel_logs", [FUEL_LOGS[0]], plate="AB-1234", message="fuel for AB-1234", today=TODAY)
+    assert "not available (needs at least two fills)" in text and "Average Cost per km:** not available" in text
+
+    empty = format_fallback_response("fuel_logs", [], plate="CD-5678", message="fuel used by CD-5678 last month", today=TODAY)
+    assert "No fuel logs recorded for this period." in empty and "Rs 0" not in empty
 
 
-def test_service_due_lists_overdue_and_upcoming() -> None:
-    data = {"overdue": [{"plate_number": "ABC-123", "service_type": "oil_change", "km_remaining": -250, "vehicle_id": "hidden"}],
-            "upcoming": [{"plate_number": "DEF-456", "service_type": "brake_service", "next_due_km": 45800}]}
+def test_service_due_renders_readable_lines_without_ids_or_field_names() -> None:
+    data = {
+        "overdue": [{"plate_number": "ABC-123", "service_type": "oil_change", "km_remaining": -250, "next_due_date": "2026-09-01", "vehicle_id": "hidden"}],
+        "upcoming": [{"plate_number": "DEF-456", "service_type": "brake_service", "km_remaining": 800}],
+    }
     text = answer_offline("Which vehicles are due for service?", _Runner(data), "tok")
-    assert "overdue service (1):" in text and "plate_number=ABC-123" in text and "upcoming service (1):" in text
-    assert "vehicle_id" not in text  # internal ids are not shown
+    assert "**Overdue service (1)**\n* **ABC-123** — Oil change · 250 km overdue · by 1 Sep 2026" in text
+    assert "**Upcoming service (1)**\n* **DEF-456** — Brake service · due in 800 km" in text
+    for leaked in ("plate_number", "service_type", "km_remaining", "vehicle_id", "hidden", "="):
+        assert leaked not in text
+
+
+@pytest.mark.parametrize(
+    ("entity", "row", "expected"),
+    [
+        ("vehicles", {"plate_number": "AB-1234", "make": "Toyota", "model": "Hilux", "status": "active", "current_odometer": 46000, "vin": "V1N"}, "**AB-1234** — Toyota Hilux · Active · 46,000 km"),
+        ("drivers", {"full_name": "Sara Khan", "status": "active", "license_expiry": "2030-01-12"}, "**Sara Khan** — Active · licence expires 12 Jan 2030"),
+        ("inventory", {"name": "Brake Pad", "part_number": "BP-1", "qty_on_hand": 3, "reorder_threshold": 5}, "**Brake Pad** (BP-1) — 3 in stock · reorder at 5"),
+        ("maintenance_logs", {"vehicle_plate": "AB-1234", "date": "2026-01-05", "service_types": ["oil_change", "brake_service"], "cost": "8000"}, "**AB-1234** (5 Jan 2026) — Oil change, Brake service · Rs 8,000"),
+        ("incidents", {"vehicle_plate": "AB-1234", "date": "2026-09-29", "incident_type": "damage", "severity": "severe", "resolution_status": "open", "description": "Bumper"}, "**AB-1234** (29 Sep 2026) — Damage · **severe** · Open · Bumper"),
+        ("fleet_health", {"plate_number": "AB-1234", "health_score": 76}, "**AB-1234** — health score 76/100"),
+    ],
+)
+def test_each_record_type_renders_as_one_readable_markdown_bullet(entity, row, expected) -> None:
+    text = format_fallback_response(entity, [row])
+    assert f"* {expected}" in text
+    assert "V1N" not in text and "_id" not in text
+
+
+def test_dashboard_summary_and_unknown_records_use_human_labels() -> None:
+    text = format_fallback_response("dashboard_summary", {"total_vehicles": 11, "active_drivers": 5, "month_fuel_cost": "120000.0000", "open_incidents_count": 0})
+    assert "* **Vehicles:** 11" in text and "* **Fuel cost this month:** Rs 120,000" in text and "* **Open incidents:** 0" in text
+
+    generic = format_fallback_response("something_new", [{"id": "x", "supplier_id": "y", "lead_time": 4, "notes": "on_hold"}])
+    assert "Lead time: 4, Notes: On hold" in generic and "supplier_id" not in generic
 
 
 def test_long_lists_are_truncated_and_a_refused_lookup_is_explained() -> None:
-    many = [{"plate_number": f"AA-{n:04d}", "make": "Toyota"} for n in range(1000, 1020)]
+    many = [{"plate_number": f"AA-{n:04d}", "make": "Toyota", "model": "Hilux"} for n in range(1000, 1020)]
     text = answer_offline("Which vehicles do we have?", _Runner(many), "tok")
-    assert "vehicles (20):" in text and "(showing 8 of 20)" in text
+    assert "**Vehicles (20)**" in text and "* …and 12 more" in text and text.count("\n* **AA-") == 8
 
     refused = answer_offline("Show the dashboard summary", _Runner(status="halted", halt="insights is not permitted for role driver"), "tok")
-    assert "couldn't fetch the dashboard summary: insights is not permitted for role driver" in refused
+    assert refused.startswith("**Couldn't fetch the dashboard summary.** insights is not permitted for role driver")
 
 
 # --- OrchestratorSession: all models down -> offline answer, otherwise the original error ----
@@ -215,7 +258,7 @@ def test_when_every_model_is_down_a_plain_read_is_still_answered() -> None:
     result = session.run("Which vehicles are due for service?")
 
     assert result.status == "done"
-    assert result.final_response.startswith(PREAMBLE)
+    assert result.final_response.endswith(FOOTNOTE) and "**Overdue service" in result.final_response
     assert session.state["chat_history"][-1]["content"] == result.final_response  # it joins the conversation
 
 
@@ -310,3 +353,24 @@ def test_compact_tool_schemas_keep_the_contract_and_stay_within_the_token_budget
 
     tokens = len(tiktoken.get_encoding("cl100k_base").encode(encoded))
     assert tokens < 3300, tokens  # was 3,911 before compaction
+
+
+def test_with_the_llm_down_the_fuel_question_is_answered_as_a_calculated_markdown_summary(monkeypatch) -> None:
+    """The bug report's scenario end to end: offline LLM, fuel question, real session. The user
+    gets a clean computed summary, never a `fuel logs (3): vehicle_plate=...` dump."""
+    import orchestrator.offline as offline
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return TODAY
+
+    monkeypatch.setattr(offline, "date", _Frozen)
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=_DeadLLM(openai.APITimeoutError(request=httpx.Request("POST", "https://x"))), runner=_Runner(FUEL_LOGS)))
+
+    result = session.run(FUEL_QUESTION)
+
+    assert result.status == "done"
+    assert result.final_response.startswith("**Fuel & Cost Summary for Vehicle AB-1234 (Past Month)**\n* **Total Fuel Consumed:** 155 Liters")
+    assert "* **Average Cost per km:** Rs 43.50 / km" in result.final_response
+    assert "vehicle_plate=" not in result.final_response and "fuel logs (" not in result.final_response

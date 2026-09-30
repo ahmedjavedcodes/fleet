@@ -48,6 +48,7 @@ from orchestrator.tool_schemas import (
     SearchDocumentsInput,
     UpdateMemoryInput,
 )
+from orchestrator.sanitize_output import sanitize_response
 from orchestrator.tool_errors import tool_failure_observation
 from orchestrator.tools import build_llm_tools
 from orchestrator.turn_profile import classify_turn
@@ -76,7 +77,8 @@ _MEMORY_FETCH_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="memor
 # Static text first (system prompt -> tool schemas -> per-turn memory/history) so providers can
 # cache the prefix. Kept dense: ~330 tokens. Each agent carries the tool name the model sees.
 _SYSTEM_PROMPT = """You are the Grand Orchestrator of a fleet platform. Answer through tools.
-Rules: run dependent steps in order and resolve names/plates to IDs with a read before any write; never invent IDs or facts (only use tool observations); if a tool halted or failed don't retry it identically, explain; answer without tools once you have enough information.
+Rules: run dependent steps in order and resolve names/plates to IDs with a read before any write (a read that already returns plate/name needs no lookup); never invent IDs or facts (only use tool observations); if a tool halted or failed don't retry it identically, explain; answer without tools once you have enough information.
+Reply style: lead with the answer in sentence one; answer ONLY what was asked (no specs, VIN, status or record dumps unless requested); **bold** key figures, short bullets, under 150 words; never show reasoning, self-corrections, raw records or field names.
 Structured operational data, live database records and fleet metrics ALWAYS go to these six tools:
 1. Fleet Registry (`foundation`): vehicles (plate, make/model, VIN, ownership, status, odometer), drivers, suppliers, onboarding from documents.
 2. Fuel Log (`fuel`): fuel use, refills, slips, purchase orders, stations, cost-per-km, trends, trip logs.
@@ -104,9 +106,16 @@ _IMAGE_ATTACHED_PROMPT = (
 )
 
 _SYNTHESIS_PROMPT = (
-    "Write a concise, natural-language confirmation of what happened, based "
-    "only on the tool observations above. If anything halted or was "
-    "rejected, say so plainly -- do not claim success for a failed step."
+    "Write the final reply to the user's last question from the tool observations only. "
+    "Sentence one states the result or key answer. Answer ONLY what was asked: lookups such as "
+    "vehicles or drivers were just to find IDs, so never report their specs, VIN, status or IDs "
+    "unless requested. Use **bold** key figures and short bullets, under 150 words. No reasoning, "
+    "self-corrections, raw records or field names -- final answer only. If a step halted, failed "
+    "or returned no data, say so in one plain sentence; never claim success for a failed step."
+)
+_STRICT_RETRY_SUFFIX = (
+    " Your previous draft contained internal reasoning or raw data. Output ONLY the final answer, "
+    "starting directly with the result."
 )
 
 
@@ -599,20 +608,32 @@ def _make_synthesize_node(deps: OrchestratorDeps):
                 "observations above -- do not invent or guess any number, ID, or name."
             )
 
-        messages = _history_to_messages(state, documents_enabled=deps.documents is not None) + [HumanMessage(content=prompt)]
-        start = time.monotonic()
-        response = deps.llm.invoke(messages, **_caps(deps.llm, SYNTHESIS_MAX_TOKENS))
-        latency_ms = int((time.monotonic() - start) * 1000)
+        base_messages = _history_to_messages(state, documents_enabled=deps.documents is not None)
+        sanitized = None
+        for attempt in range(2):
+            attempt_prompt = prompt if attempt == 0 else prompt + _STRICT_RETRY_SUFFIX
+            start = time.monotonic()
+            response = deps.llm.invoke(base_messages + [HumanMessage(content=attempt_prompt)], **_caps(deps.llm, SYNTHESIS_MAX_TOKENS))
+            latency_ms = int((time.monotonic() - start) * 1000)
 
-        if deps.observer is not None:
-            prompt_tokens, completion_tokens = _llm_usage(response)
-            deps.observer.record_llm(
-                model_name=getattr(deps.llm, "model_name", "unknown"),
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, latency_ms=latency_ms,
-            )
+            if deps.observer is not None:
+                prompt_tokens, completion_tokens = _llm_usage(response)
+                deps.observer.record_llm(
+                    model_name=getattr(deps.llm, "model_name", "unknown"),
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, latency_ms=latency_ms,
+                )
+            # Strip <think> blocks, raw records and self-corrections before anything downstream
+            # (fact-check, memory, the user) sees the text. A draft that still has an answer after
+            # cleaning is used as is; only a draft that was nothing BUT reasoning costs a second call.
+            sanitized = sanitize_response(response.content if isinstance(response.content, str) else str(response.content))
+            if sanitized.leaked:
+                logger.warning("synthesis leaked reasoning/raw data (attempt %d); cleaned", attempt + 1)
+            if sanitized.text:
+                break
 
+        text = sanitized.text or "I couldn't produce a reliable answer to that. Please try rephrasing or asking again."
         final_stage = "halted" if state.get("stage") == "halted" else "done"
-        return {**state, "final_response": response.content, "stage": final_stage, "_fact_check_warning": None}
+        return {**state, "final_response": text, "stage": final_stage, "_fact_check_warning": None}
 
     return synthesize
 
