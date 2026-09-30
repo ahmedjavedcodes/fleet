@@ -17,9 +17,8 @@ const STEP_ORDER = STEPS.map((s) => s.phase)
 
 // The upload flow's transfer + processing UI (plans/07 §2.2) — entirely
 // prop-driven (`phase`, `uploadProgress`), no XMLHttpRequest or polling
-// inside it. The real version wires those against `/documents/upload` and
-// `GET /documents/{id}` once that endpoint exists; today this only renders
-// in tests / fixture stories.
+// inside it. `uploadProgress` is optional: fetch reports no upload progress, so
+// callers without a real figure omit it and only "Uploading…" is shown.
 export function DocumentUploadCard({
   filename,
   phase,
@@ -45,7 +44,7 @@ export function DocumentUploadCard({
       {phase === "uploading" ? (
         <div className="space-y-1.5">
           <Progress value={uploadProgress ?? 0} />
-          <p className="text-caption text-muted-foreground">Uploading… {uploadProgress ?? 0}%</p>
+          <p className="text-caption text-muted-foreground">Uploading…{uploadProgress !== undefined ? ` ${uploadProgress}%` : ""}</p>
         </div>
       ) : phase === "failed" ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive-soft p-3">

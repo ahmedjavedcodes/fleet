@@ -2,12 +2,7 @@ import { z } from "zod"
 import { dateTimeStringSchema, uuidSchema } from "./common"
 import { documentStatusSchema, documentTypeSchema } from "./enums"
 
-// Mirrors backend/app/schemas/document.py on the `backend` branch. That
-// branch is never merged into `frontend` (plans/07 constraint, 2026-09-29),
-// so nothing here is verifiable against a live backend today — kept as the
-// target contract for whenever `/documents` actually ships. lib/api/documents.ts
-// never calls fetch against these; every function resolves to `{ status:
-// "unavailable" }` regardless of input.
+// Mirrors backend/app/schemas/document.py (the /api/v1/documents contract).
 
 export const documentResponseSchema = z.object({
   id: uuidSchema,

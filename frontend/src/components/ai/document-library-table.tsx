@@ -15,13 +15,15 @@ function formatSize(bytes: number): string {
 }
 
 // The Library table (plans/07 §2.1). Pure presentational — takes `documents`
-// as a prop, never fetches. Exercised only in tests until `/documents` ships.
+// as a prop, never fetches. `vehiclePlates` maps vehicle ids to plate numbers.
 export function DocumentLibraryTable({
   documents,
+  vehiclePlates,
   canDelete,
   onDelete,
 }: {
   documents: DocumentResponse[]
+  vehiclePlates?: Record<string, string>
   canDelete?: boolean
   onDelete?: (doc: DocumentResponse) => void
 }) {
@@ -37,13 +39,14 @@ export function DocumentLibraryTable({
       ),
     },
     { key: "type", header: "Type", cell: (row) => DOCUMENT_TYPE_LABELS[row.document_type] },
-    { key: "vehicle", header: "Vehicle", cell: (row) => row.vehicle_id ?? "—" },
+    { key: "vehicle", header: "Vehicle", cell: (row) => (row.vehicle_id ? (vehiclePlates?.[row.vehicle_id] ?? row.vehicle_id) : "—") },
     { key: "version", header: "Version", align: "right", cell: (row) => `v${row.version}` },
     { key: "size", header: "Size", align: "right", cell: (row) => formatSize(row.size_bytes) },
     {
       key: "status",
       header: "Status",
       cell: (row) => (
+        <div>
         <StatusPill tone={DOCUMENT_STATUS_TONE[row.status]}>
           {row.status === "processing" ? (
             <span className="flex items-center gap-1">
@@ -54,6 +57,10 @@ export function DocumentLibraryTable({
             row.status[0]!.toUpperCase() + row.status.slice(1)
           )}
         </StatusPill>
+          {row.status === "failed" && row.error_message ? (
+            <p className="mt-1 max-w-xs text-caption text-destructive">{row.error_message}</p>
+          ) : null}
+        </div>
       ),
     },
     { key: "updated", header: "Updated", cell: (row) => formatDateTime(row.updated_at) },

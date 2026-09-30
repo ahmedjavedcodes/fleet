@@ -130,3 +130,8 @@ export const dashboardKeys = {
       : ([...dashboardKeys.all, "maintenance-calendar", windowDays] as const),
   fleetHealth: () => [...dashboardKeys.all, "fleet-health"] as const,
 }
+
+export const documentKeys = {
+  all: ["documents"] as const,
+  list: () => [...documentKeys.all, "list"] as const,
+}
