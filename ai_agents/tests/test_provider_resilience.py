@@ -102,6 +102,7 @@ def test_status_reports_per_model_calls_tokens_and_the_last_error() -> None:
 # --- the deterministic no-LLM fallback --------------------------------------------------------
 
 
+from agents.fuel.summary import summarize_fuel  # noqa: E402
 from orchestrator.offline import FOOTNOTE, answer_offline, format_fallback_response, plan_offline_read  # noqa: E402
 from orchestrator.runner import RunResult  # noqa: E402
 
@@ -136,7 +137,24 @@ class _Runner:
 )
 def test_plain_reads_map_to_one_read_only_sub_agent_query(message, agent, entity) -> None:
     plan = plan_offline_read(message)
-    assert (plan.agent, plan.args) == (agent, {"query_entity": entity})
+    assert (plan.agent, plan.args["query_entity"]) == (agent, entity)
+
+
+@pytest.mark.parametrize(
+    ("message", "args"),
+    [
+        ("Show me the total fuel consumed and average cost per kilometer for vehicle AB-1234 over the last month.", {"query_plate": "AB-1234", "query_days": 30}),
+        ("What was our total fuel cost?", {}),
+        ("Show the fuel logs for AB-1234", {"query_plate": "AB-1234"}),
+        ("How much did we spend on fuel in the past 14 days?", {"query_days": 14}),
+        ("Show the fuel cost for the last week", {"query_days": 7}),
+        ("Show me the total fuel used by ab-1234", {"query_plate": "AB-1234"}),
+        ("What is the average cost per km?", {}),
+    ],
+)
+def test_fuel_totals_questions_ask_the_deterministic_summary_for_the_right_vehicle_and_period(message, args) -> None:
+    plan = plan_offline_read(message)
+    assert (plan.agent, plan.args) == ("fuel", {"query_entity": "fuel_summary", **args})
 
 
 @pytest.mark.parametrize(
@@ -155,13 +173,14 @@ FUEL_LOGS = [
     {"vehicle_plate": "CD-5678", "date": "2026-09-20", "liters_filled": "10", "total_cost": "2800", "odometer_reading": 1000},  # another vehicle
 ]
 FUEL_QUESTION = "Show me the total fuel consumed and average cost per kilometer for vehicle AB-1234 over the last month."
+FUEL_SUMMARY = summarize_fuel(FUEL_LOGS, plate="AB-1234", days=30, today=TODAY)  # what the fuel agent's fuel_summary query returns
 
 
 def test_the_fuel_question_gets_the_clean_computed_summary_not_a_log_dump() -> None:
-    runner = _Runner(FUEL_LOGS)
-    text = answer_offline(FUEL_QUESTION, runner, "tok", today=TODAY)
+    runner = _Runner(FUEL_SUMMARY)
+    text = answer_offline(FUEL_QUESTION, runner, "tok")
 
-    assert runner.calls == [("fuel", {"query_entity": "fuel_logs"})]  # a read, and only that
+    assert runner.calls == [("fuel", {"query_entity": "fuel_summary", "query_plate": "AB-1234", "query_days": 30})]  # a read, and only that
     assert text == (
         "**Fuel & Cost Summary for Vehicle AB-1234 (Past Month)**\n"
         "* **Total Fuel Consumed:** 155 Liters\n"
@@ -175,11 +194,20 @@ def test_the_fuel_question_gets_the_clean_computed_summary_not_a_log_dump() -> N
 
 
 def test_fuel_summary_is_honest_when_distance_cannot_be_computed_or_there_is_no_data() -> None:
-    text = format_fallback_response("fuel_logs", [FUEL_LOGS[0]], plate="AB-1234", message="fuel for AB-1234", today=TODAY)
+    text = format_fallback_response("fuel_summary", summarize_fuel([FUEL_LOGS[0]], plate="AB-1234", today=TODAY))
     assert "not available (needs at least two fills)" in text and "Average Cost per km:** not available" in text
 
-    empty = format_fallback_response("fuel_logs", [], plate="CD-5678", message="fuel used by CD-5678 last month", today=TODAY)
+    empty = format_fallback_response("fuel_summary", summarize_fuel([], plate="CD-5678", days=30, today=TODAY))
     assert "No fuel logs recorded for this period." in empty and "Rs 0" not in empty
+    assert empty.endswith(FOOTNOTE)
+
+
+def test_a_plain_fuel_log_request_still_lists_rows_and_never_computes_totals() -> None:
+    runner = _Runner([FUEL_LOGS[1]])
+    text = answer_offline("Show the fuel logs", runner, "tok")
+
+    assert runner.calls == [("fuel", {"query_entity": "fuel_logs"})]
+    assert "**AB-1234**" in text and "Total Fuel Consumed" not in text
 
 
 def test_service_due_renders_readable_lines_without_ids_or_field_names() -> None:
@@ -355,18 +383,10 @@ def test_compact_tool_schemas_keep_the_contract_and_stay_within_the_token_budget
     assert tokens < 3300, tokens  # was 3,911 before compaction
 
 
-def test_with_the_llm_down_the_fuel_question_is_answered_as_a_calculated_markdown_summary(monkeypatch) -> None:
+def test_with_the_llm_down_the_fuel_question_is_answered_as_a_calculated_markdown_summary() -> None:
     """The bug report's scenario end to end: offline LLM, fuel question, real session. The user
     gets a clean computed summary, never a `fuel logs (3): vehicle_plate=...` dump."""
-    import orchestrator.offline as offline
-
-    class _Frozen(date):
-        @classmethod
-        def today(cls):
-            return TODAY
-
-    monkeypatch.setattr(offline, "date", _Frozen)
-    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=_DeadLLM(openai.APITimeoutError(request=httpx.Request("POST", "https://x"))), runner=_Runner(FUEL_LOGS)))
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=_DeadLLM(openai.APITimeoutError(request=httpx.Request("POST", "https://x"))), runner=_Runner(FUEL_SUMMARY)))
 
     result = session.run(FUEL_QUESTION)
 

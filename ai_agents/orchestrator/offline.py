@@ -15,12 +15,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Callable
 
 from orchestrator.turn_profile import classify_turn
 
 _PLATE = re.compile(r"\b([A-Z]{2,3}-\d{3,4})\b")
+# a fuel question about totals/costs/averages (or about one named vehicle) is answered by the
+# deterministic fuel_summary query; only a plain "show the logs" request lists individual rows
+_FUEL_AGGREGATE = re.compile(r"\b(total|average|avg|spen[dt]|consum\w*|cost\w*|how much|summary)\b|per k", re.I)
+_PERIOD = [
+    (re.compile(r"\b(last|past|this)\s+week\b", re.I), 7),
+    (re.compile(r"\b(last|past|this)\s+month\b", re.I), 30),
+    (re.compile(r"\b(last|past|this)\s+year\b", re.I), 365),
+]
+_LAST_N_DAYS = re.compile(r"\b(?:last|past)\s+(\d{1,3})\s+days?\b", re.I)
 MAX_ROWS = 8
 CURRENCY = "Rs"
 FOOTNOTE = "_The AI assistant is unavailable, so this was compiled directly from the fleet records._"
@@ -50,13 +59,32 @@ _RULES: list[tuple[re.Pattern[str], OfflineRead]] = [
 ]
 
 
+def _period_days(message: str) -> int | None:
+    match = _LAST_N_DAYS.search(message)
+    if match:
+        return int(match[1]) or None
+    return next((days for pattern, days in _PERIOD if pattern.search(message)), None)
+
+
 def plan_offline_read(message: str) -> OfflineRead | None:
     if classify_turn(message) != "read":
         return None  # writes, memory changes and anything ambiguous are never guessed at
-    return next((rule for pattern, rule in _RULES if pattern.search(message)), None)
+    rule = next((rule for pattern, rule in _RULES if pattern.search(message)), None)
+    if rule is None or rule.args["query_entity"] != "fuel_logs":
+        return rule
+    plate = (_PLATE.search(message.upper()) or [None, None])[1]
+    if not plate and not _FUEL_AGGREGATE.search(message):
+        return rule
+    args: dict[str, Any] = {"query_entity": "fuel_summary"}
+    if plate:
+        args["query_plate"] = plate
+    days = _period_days(message)
+    if days:
+        args["query_days"] = days
+    return OfflineRead("fuel", args, "fuel summary")
 
 
-def answer_offline(message: str, runner: Any, token: str, *, today: date | None = None) -> str | None:
+def answer_offline(message: str, runner: Any, token: str) -> str | None:
     plan = plan_offline_read(message)
     if plan is None:
         return None
@@ -65,19 +93,16 @@ def answer_offline(message: str, runner: Any, token: str, *, today: date | None 
         reason = result.state.get("halt_reason") or "the lookup did not complete"
         return f"**Couldn't fetch the {plan.label}.** {reason}\n\n{FOOTNOTE}"
     plate = (_PLATE.search(message.upper()) or [None, None])[1]
-    return format_fallback_response(
-        plan.args["query_entity"], result.state.get("query_result"), plate=plate, message=message, today=today or date.today()
-    )
+    return format_fallback_response(plan.args["query_entity"], result.state.get("query_result"), plate=plate)
 
 
 # --------------------------------------------------------------------------- formatting
 
 
-def format_fallback_response(entity: str, data: Any, *, plate: str | None = None, message: str = "", today: date | None = None) -> str:
+def format_fallback_response(entity: str, data: Any, *, plate: str | None = None) -> str:
     """Markdown for a sub-agent read result. Pure Python, no LLM."""
-    today = today or date.today()
-    if entity == "fuel_logs" and plate:
-        body = _fuel_summary(data or [], plate, message, today)
+    if entity == "fuel_summary" and isinstance(data, dict):
+        body = str(data.get("answer_markdown") or "No fuel logs recorded for this period.")  # computed by agents/fuel/summary.py
     elif entity == "service_due" and isinstance(data, dict):
         body = "\n\n".join([_list("Overdue service", data.get("overdue"), "service_due", plate, "none overdue"),
                             _list("Upcoming service", data.get("upcoming"), "service_due", plate, "none upcoming")])
@@ -128,37 +153,6 @@ def _nice(value: Any) -> str:
 
 def _humanize(key: str) -> str:
     return _nice(key)
-
-
-def _fuel_summary(rows: list[dict[str, Any]], plate: str, message: str, today: date) -> str:
-    """Totals for one vehicle. Distance is the odometer span between its first and last fill in
-    the window, and cost per km is total cost over that distance. (The first fill in a window
-    pays for driving that happened before it, so this slightly overstates cost per km.)"""
-    mine = [r for r in rows if str(r.get("vehicle_plate", "")).upper() == plate]
-    period = ""
-    if re.search(r"\b(last|past|this)\s+month\b", message, re.I):
-        since = (today - timedelta(days=30)).isoformat()
-        mine = [r for r in mine if str(r.get("date", "")) >= since]
-        period = " (Past Month)"
-    title = f"**Fuel & Cost Summary for Vehicle {plate}{period}**"
-    if not mine:
-        return f"{title}\n* No fuel logs recorded for this period."
-
-    litres = sum(_num(r.get("liters_filled")) or 0 for r in mine)
-    cost = sum(_num(r.get("total_cost")) or 0 for r in mine)
-    odometers = [v for v in (_num(r.get("odometer_reading")) for r in mine) if v is not None]
-    distance = (max(odometers) - min(odometers)) if len(odometers) >= 2 else 0
-    lines = [
-        f"* **Total Fuel Consumed:** {_quantity(litres)} Liters",
-        f"* **Total Fuel Cost:** {CURRENCY} {cost:,.0f}",
-    ]
-    if distance > 0:
-        lines.append(f"* **Total Distance Covered:** {distance:,.0f} km ({min(odometers):,.0f} km → {max(odometers):,.0f} km)")
-        lines.append(f"* **Average Cost per km:** {CURRENCY} {cost / distance:,.2f} / km")
-    else:
-        lines.append("* **Total Distance Covered:** not available (needs at least two fills)")
-        lines.append("* **Average Cost per km:** not available")
-    return "\n".join([title, *lines])
 
 
 def _dashboard(data: dict[str, Any]) -> str:

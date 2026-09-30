@@ -40,6 +40,32 @@ def get_fuel_logs_tool(context: AgentContext) -> list[dict[str, Any]]:
     return call_backend("GET", "/api/v1/fuel", token=context.token)
 
 
+FUEL_PAGE_SIZE = 500  # the backend's maximum
+MAX_FUEL_PAGES = 20  # 10,000 rows: a hard stop, reported as "incomplete" rather than looping forever
+
+
+def get_fuel_logs_window_tool(
+    context: AgentContext, *, vehicle_id: str | None = None, date_from: str | None = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Every fuel log for a vehicle and/or since a date, as (rows, complete).
+
+    get_fuel_logs_tool returns only the backend's default first page (100 rows, OLDEST first), so
+    totals computed from it silently ignore recent fills once an organization has more than 100
+    logs. This filters on the server and follows the pages."""
+    rows: list[dict[str, Any]] = []
+    for page in range(MAX_FUEL_PAGES):
+        params: dict[str, Any] = {"limit": FUEL_PAGE_SIZE, "skip": page * FUEL_PAGE_SIZE}
+        if vehicle_id:
+            params["vehicle_id"] = vehicle_id
+        if date_from:
+            params["date_from"] = date_from
+        batch = call_backend("GET", "/api/v1/fuel", token=context.token, params=params) or []
+        rows.extend(batch)
+        if len(batch) < FUEL_PAGE_SIZE:
+            return rows, True
+    return rows, False
+
+
 def create_fuel_log_tool(context: AgentContext, data: FuelLogCreateInput) -> dict[str, Any]:
     _require_role(context, _LOG_WRITE_ROLES, "create_fuel_log_tool")
     return call_backend("POST", "/api/v1/fuel", token=context.token, json=data.model_dump(mode="json"))

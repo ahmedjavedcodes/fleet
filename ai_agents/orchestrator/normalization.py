@@ -78,6 +78,7 @@ def _normalize_date_like(value: Any) -> Any:
 
 _FIELD_NORMALIZERS: dict[str, Callable[[Any], Any]] = {
     "vehicle_plate": _normalize_plate,
+    "query_plate": _normalize_plate,
     "phone_number": _normalize_phone,
     "month": _normalize_date_like,
     "query_target_date": _normalize_date_like,

@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 Intent = Literal["receipt_onboard", "trip_log", "fuel_log", "query"]
-QueryEntity = Literal["fuel_logs", "trip_logs", "fuel_trends"]
+QueryEntity = Literal["fuel_logs", "trip_logs", "fuel_trends", "fuel_summary"]
 
 Stage = Literal[
     "routing",
@@ -68,6 +68,9 @@ class FuelAgentState(TypedDict, total=False):
 
     # query input/output
     query_entity: QueryEntity | None
+    # fuel_summary: one vehicle (None = whole fleet) over the last N days (None = all time)
+    query_plate: str | None
+    query_days: int | None
     query_result: Any | None
 
     # terminal

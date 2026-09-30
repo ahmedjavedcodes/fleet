@@ -107,18 +107,25 @@ class FuelToolInput(BaseModel):
     it must hold a complete log (vehicle_id, date, odometer_reading,
     liters_filled, price_per_liter, total_cost).
 
-    Set query_entity for a read; fuel rows include slip_id, po_number,
-    payment_method, card_used, fuel_station_name, cost_per_km, vehicle_name,
-    vehicle_plate and driver_name; trip rows include vehicle_name,
-    vehicle_plate, driver_name, start_time, start/end odometers and
-    fuel_consumed (liters, may be null)."""
+    Set query_entity for a read. For totals use query_entity="fuel_summary":
+    Use this tool to calculate total fuel consumed, total cost, and average cost per kilometer. Do NOT manually add up individual fuel logs.
+    Add query_plate for one vehicle (omit for the whole fleet) and query_days
+    ("last month" = 30). It returns the computed totals plus answer_markdown, a
+    ready-made summary to present as is.
+    "fuel_logs" only lists individual logs (slip_id, po_number, payment_method,
+    card_used, fuel_station_name, cost_per_km, vehicle_name, vehicle_plate,
+    driver_name); "trip_logs" rows include vehicle_name, vehicle_plate,
+    driver_name, start_time, start/end odometers and fuel_consumed (liters,
+    may be null)."""
 
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["receipt"] | None = None
     trip_fields: TripFields | None = None
     fuel_fields: FuelFields | None = None
-    query_entity: Literal["fuel_logs", "trip_logs", "fuel_trends"] | None = None
+    query_entity: Literal["fuel_logs", "trip_logs", "fuel_trends", "fuel_summary"] | None = None
+    query_plate: str | None = Field(default=None, max_length=20)
+    query_days: int | None = Field(default=None, ge=1, le=366)
 
 
 class MaintenanceToolInput(BaseModel):

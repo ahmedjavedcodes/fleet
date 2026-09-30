@@ -55,7 +55,7 @@ SUB_AGENT_REGISTRY: dict[str, SubAgentSpec] = {
             "Fuel Agent: log a fuel receipt (photo and/or slip details such as slip_id, "
             "po_number, payment_method, card_used, fuel_station_name) or a trip "
             "(driver_id/vehicle_id already resolved), or query fuel logs, trip logs, "
-            "or fuel trends."
+            "fuel trends, or fuel_summary (computed fuel/cost/cost-per-km totals)."
         ),
     ),
     "maintenance": SubAgentSpec(

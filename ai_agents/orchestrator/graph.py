@@ -25,7 +25,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
@@ -36,7 +36,7 @@ from orchestrator.callbacks import FleetLiveObserver
 from orchestrator.fact_check import MAX_FACT_CHECK_RETRIES, check_response_against_scratchpad, _scratchpad_to_text
 from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
-from orchestrator.retry import MAX_RETRIES, ToolValidationError, validate_tool_args
+from orchestrator.retry import ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
 from memory.service import AgentMemory
 from orchestrator.state import OrchestratorState

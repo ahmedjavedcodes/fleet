@@ -19,6 +19,7 @@ closures, so tests can substitute fakes without a live backend or Groq key
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -27,11 +28,13 @@ from pydantic import ValidationError
 
 from agents.fuel.efficiency_auditor import OdometerContinuityError, check_odometer_continuity
 from agents.fuel.state import FuelAgentState
+from agents.fuel.summary import summarize_fuel
 from mcp_server.fuel_tools import (
     PermissionDeniedError,
     create_fuel_log_tool,
     create_trip_log_tool,
     get_fuel_logs_tool,
+    get_fuel_logs_window_tool,
     get_fuel_trends_tool,
     get_trip_logs_tool,
 )
@@ -68,6 +71,8 @@ class FuelAgentDeps:
     get_fuel_logs: Lister = get_fuel_logs_tool
     get_trip_logs: Lister = get_trip_logs_tool
     get_fuel_trends: Callable[[AgentContext], dict[str, Any]] = get_fuel_trends_tool
+    get_fuel_logs_window: Callable[..., tuple[list[dict[str, Any]], bool]] = get_fuel_logs_window_tool
+    today: Callable[[], date] = date.today
     create_fuel_log: Creator = create_fuel_log_tool
     create_trip_log: Creator = create_trip_log_tool
 
@@ -250,6 +255,29 @@ def _make_create_trip_node(deps: FuelAgentDeps):
     return create_trip
 
 
+def _fuel_summary(state: FuelAgentState, context: AgentContext, deps: FuelAgentDeps) -> dict[str, Any] | str:
+    """Deterministic totals (see agents/fuel/summary.py). Returns the summary, or a halt reason."""
+    plate = state.get("query_plate")
+    days = state.get("query_days")
+    vehicle_id = None
+    vehicle_plate = None
+    if plate:
+        wanted = sanitize_plate_number(plate)
+        vehicle = next((v for v in deps.get_vehicles(context) if sanitize_plate_number(v.get("plate_number")) == wanted), None)
+        if vehicle is None:
+            return f"No vehicle on file matches plate {wanted!r}."
+        vehicle_id, vehicle_plate = vehicle["id"], vehicle["plate_number"]
+
+    today = deps.today()
+    date_from = (today - timedelta(days=days)).isoformat() if days else None
+    rows, complete = deps.get_fuel_logs_window(context, vehicle_id=vehicle_id, date_from=date_from)
+    summary = summarize_fuel(rows, plate=vehicle_plate, days=days, today=today)
+    summary["complete"] = complete
+    if not complete:
+        summary["answer_markdown"] += "\n\n_Based on the first 10,000 fuel logs only; older or additional logs were not included._"
+    return summary
+
+
 def _make_query_node(deps: FuelAgentDeps):
     def query(state: FuelAgentState) -> FuelAgentState:
         entity = state.get("query_entity")
@@ -262,6 +290,11 @@ def _make_query_node(deps: FuelAgentDeps):
                 result = deps.get_trip_logs(context)
             elif entity == "fuel_trends":
                 result = deps.get_fuel_trends(context)
+            elif entity == "fuel_summary":
+                outcome = _fuel_summary(state, context, deps)
+                if isinstance(outcome, str):
+                    return {**state, "stage": "halted", "halt_reason": outcome}
+                result = outcome
             else:
                 return {**state, "stage": "halted", "halt_reason": f"Unsupported or missing query_entity: {entity!r}."}
         except PermissionDeniedError as exc:
