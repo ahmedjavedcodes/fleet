@@ -269,3 +269,54 @@ def test_org_scoping(db_session: Session, organization: Organization, admin) -> 
     assert summary.total_vehicles == 0
     assert dashboard_service.get_fleet_health(db_session, other_org.id) == []
     assert dashboard_service.get_maintenance_calendar(db_session, other_org.id) == []
+
+
+# --- fuel cost-per-km periods behind the fuel_efficiency signal ------------------
+
+
+def _fuel_log(db_session: Session, organization: Organization, vehicle, day: date, cost_per_km: str) -> None:
+    from app.models.fuel import FuelLog
+
+    db_session.add(
+        FuelLog(
+            id=uuid.uuid4(), organization_id=organization.id, vehicle_id=vehicle.id, date=day, odometer_reading=1000,
+            liters_filled=Decimal("40"), price_per_liter=Decimal("280"), total_cost=Decimal("11200"),
+            cost_per_km=Decimal(cost_per_km),
+        )
+    )
+    db_session.commit()
+
+
+def test_cost_per_km_current_period_includes_today_and_later_slip_dates(db_session: Session, organization: Organization) -> None:
+    from app.services import fuel_service
+
+    vehicle = make_vehicle(db_session, organization)
+    _fuel_log(db_session, organization, vehicle, TODAY, "30.00")
+    _fuel_log(db_session, organization, vehicle, TODAY + timedelta(days=2), "28.00")
+
+    current, previous = fuel_service.get_vehicle_cost_per_km_periods(db_session, organization.id, vehicle.id, as_of=TODAY)
+    assert current == Decimal("29.0000")
+    assert previous is None
+
+
+def test_fleet_health_exposes_cost_per_km_even_without_a_previous_period(
+    db_session: Session, organization: Organization, monkeypatch
+) -> None:
+    from app.services import fuel_service
+
+    vehicle = make_vehicle(db_session, organization)
+    real = fuel_service.get_vehicle_cost_per_km_periods
+    monkeypatch.setattr(
+        fuel_service, "get_vehicle_cost_per_km_periods", lambda db, org_id, vehicle_id: real(db, org_id, vehicle_id, as_of=TODAY)
+    )
+    _fuel_log(db_session, organization, vehicle, TODAY - timedelta(days=10), "31.50")
+
+    entry = next(r for r in dashboard_service.get_fleet_health(db_session, organization.id) if r.vehicle_id == vehicle.id)
+    assert entry.signals.fuel_efficiency is None  # nothing to compare against: still excluded from the score
+    assert entry.current_cost_per_km == Decimal("31.5000")
+    assert entry.previous_cost_per_km is None
+
+    _fuel_log(db_session, organization, vehicle, TODAY - timedelta(days=120), "35.00")
+    entry = next(r for r in dashboard_service.get_fleet_health(db_session, organization.id) if r.vehicle_id == vehicle.id)
+    assert entry.previous_cost_per_km == Decimal("35.0000")
+    assert entry.signals.fuel_efficiency == 100  # cheaper per km than before

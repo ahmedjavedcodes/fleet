@@ -3,8 +3,9 @@
 import { HeartPulse } from "lucide-react"
 import Link from "next/link"
 import { useFleetHealth } from "@/lib/api/dashboard"
-import { formatInt } from "@/lib/api/decimal"
+import { formatInt, formatRate } from "@/lib/api/decimal"
 import { healthScoreLabel } from "@/lib/health-score"
+import type { VehicleHealthScore } from "@/lib/schemas/dashboard"
 import { HealthGauge } from "@/components/charts/health-gauge"
 import { InnerCard } from "@/components/primitives/inner-card"
 import { SectionPanel } from "@/components/primitives/section-panel"
@@ -19,6 +20,19 @@ const SIGNALS = [
   { key: "maintenance_currency", title: "Maintenance", detail: "Overdue or upcoming service", href: "/maintenance" },
   { key: "fuel_efficiency", title: "Fuel efficiency", detail: "Cost per km vs the previous period", href: "/fuel" },
 ] as const
+
+// With no previous period to compare, the trend score is null (and rightly
+// excluded from the health score) — show the current cost per km on its own,
+// or say plainly that there isn't enough fuel history yet.
+function fuelFallback(entry: VehicleHealthScore): { value: string; detail: string; muted: boolean } {
+  if (entry.current_cost_per_km !== null) {
+    return { value: `${formatRate(entry.current_cost_per_km)}/km`, detail: "Last 3 months · no earlier period to compare", muted: false }
+  }
+  if (entry.previous_cost_per_km !== null) {
+    return { value: "Insufficient historical data", detail: "No fuel logs in the last 3 months", muted: true }
+  }
+  return { value: "Insufficient historical data", detail: "No fuel logs with a cost per km yet", muted: true }
+}
 
 // A/FM only — dashboard/fleet-health is gated (plans/05 §2.6). The page
 // only mounts this component for those roles, so calling the hook here is
@@ -48,16 +62,21 @@ export function HealthPanel({ vehicleId }: { vehicleId: string }) {
               <div className="space-y-2">
                 {SIGNALS.map((s) => {
                   const value = entry.signals[s.key]
+                  const fallback = value === null && s.key === "fuel_efficiency" ? fuelFallback(entry) : null
                   const row = (
-                    <InnerCard key={s.key} className="flex items-center justify-between p-3">
-                      <div>
+                    <InnerCard key={s.key} className="flex items-center justify-between gap-3 p-3">
+                      <div className="min-w-0">
                         <p className="text-sm font-medium text-foreground">{s.title}</p>
-                        <p className="text-caption text-muted-foreground">{s.detail}</p>
+                        <p className="text-caption text-muted-foreground">{fallback?.detail ?? s.detail}</p>
                       </div>
-                      {value === null ? (
-                        <span className="text-sm text-muted-foreground">n/a</span>
+                      {value !== null ? (
+                        <span className="shrink-0 text-sm font-semibold text-foreground">{formatInt(value)}</span>
+                      ) : fallback ? (
+                        <span className={fallback.muted ? "shrink-0 text-right text-caption text-muted-foreground" : "shrink-0 text-sm font-semibold text-foreground"}>
+                          {fallback.value}
+                        </span>
                       ) : (
-                        <span className="text-sm font-semibold text-foreground">{formatInt(value)}</span>
+                        <span className="text-sm text-muted-foreground">n/a</span>
                       )}
                     </InnerCard>
                   )

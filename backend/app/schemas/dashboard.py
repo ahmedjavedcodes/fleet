@@ -62,6 +62,11 @@ class VehicleHealthScore(BaseModel):
     plate_number: str
     health_score: int
     signals: VehicleHealthSignals
+    # Raw inputs behind the fuel_efficiency signal (average cost per km over the
+    # last 3 months and the 3 months before). The signal is null unless both
+    # exist, so these let the UI still show the current figure on its own.
+    current_cost_per_km: Decimal | None = None
+    previous_cost_per_km: Decimal | None = None
 
 
 FleetHealthResponse = list[VehicleHealthScore]

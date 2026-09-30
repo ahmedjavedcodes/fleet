@@ -454,16 +454,18 @@ def get_vehicle_cost_per_km_periods(
     current_start = _months_before(as_of, ROLLING_WINDOW_MONTHS)
     prior_start = _months_before(current_start, ROLLING_WINDOW_MONTHS)
 
-    def _avg(start: date_type, end: date_type) -> Decimal | None:
-        return db.execute(
-            select(cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))).where(
-                FuelLog.organization_id == org_id,
-                FuelLog.vehicle_id == vehicle_id,
-                FuelLog.is_deleted.is_(False),
-                FuelLog.cost_per_km.is_not(None),
-                FuelLog.date >= start,
-                FuelLog.date < end,
-            )
-        ).scalar_one()
+    def _avg(start: date_type, end: date_type | None) -> Decimal | None:
+        stmt = select(cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))).where(
+            FuelLog.organization_id == org_id,
+            FuelLog.vehicle_id == vehicle_id,
+            FuelLog.is_deleted.is_(False),
+            FuelLog.cost_per_km.is_not(None),
+            FuelLog.date >= start,
+        )
+        if end is not None:
+            stmt = stmt.where(FuelLog.date < end)
+        return db.execute(stmt).scalar_one()
 
-    return _avg(current_start, as_of), _avg(prior_start, current_start)
+    # The current window is open-ended so a log dated today (or keyed in with a
+    # slightly later slip date) still counts instead of silently vanishing.
+    return _avg(current_start, None), _avg(prior_start, current_start)

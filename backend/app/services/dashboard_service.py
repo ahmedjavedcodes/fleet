@@ -213,6 +213,8 @@ def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]
                 plate_number=vehicle.plate_number,
                 health_score=_weighted_health_score(signals),
                 signals=VehicleHealthSignals(**signals),
+                current_cost_per_km=current_avg,
+                previous_cost_per_km=prior_avg,
             )
         )
     return results

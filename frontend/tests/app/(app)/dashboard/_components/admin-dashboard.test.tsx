@@ -65,6 +65,8 @@ describe("AdminDashboard", () => {
           plate_number: "AB-1234",
           health_score: 80,
           signals: { compliance: null, incidents: 90, maintenance_currency: null, fuel_efficiency: 70 },
+          current_cost_per_km: "30.9000",
+          previous_cost_per_km: "32.1000",
         },
       ])
     )

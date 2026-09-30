@@ -60,6 +60,10 @@ export const vehicleHealthScoreSchema = z.object({
   plate_number: z.string(),
   health_score: z.number().int(),
   signals: vehicleHealthSignalsSchema,
+  // Average cost per km, last 3 months and the 3 before. fuel_efficiency is
+  // null unless both exist; these let the UI still show the current figure.
+  current_cost_per_km: decimalStringSchema.nullable(),
+  previous_cost_per_km: decimalStringSchema.nullable(),
 })
 export type VehicleHealthScore = z.infer<typeof vehicleHealthScoreSchema>
 

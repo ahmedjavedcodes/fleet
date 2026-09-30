@@ -532,6 +532,8 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
           plate_number: "XYZ-789",
           health_score: 76,
           signals: { compliance: 90, incidents: null, maintenance_currency: 60, fuel_efficiency: null },
+          current_cost_per_km: "30.9000",
+          previous_cost_per_km: null,
         },
       ])
     ).toBeTruthy()

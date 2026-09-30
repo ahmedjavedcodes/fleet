@@ -31,15 +31,17 @@ export function DueRow({
         className
       )}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
+      {/* The title takes the remaining width and wraps rather than truncating;
+          the due text + pill on the right never shrink, so they stay aligned. */}
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
-          {subtitle ? <p className="truncate text-caption text-muted-foreground">{subtitle}</p> : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium wrap-break-word text-foreground">{title}</p>
+          {subtitle ? <p className="text-caption wrap-break-word text-muted-foreground">{subtitle}</p> : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span className="text-caption text-muted-foreground">{dueText}</span>
+        <span className="text-caption whitespace-nowrap text-muted-foreground">{dueText}</span>
         <StatusPill tone={status === "overdue" ? "destructive" : "warning"}>
           {status === "overdue" ? "Overdue" : "Upcoming"}
         </StatusPill>

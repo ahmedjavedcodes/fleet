@@ -17,6 +17,15 @@ describe("DueRow", () => {
     expect(screen.getByText("Overdue")).toBeInTheDocument()
   })
 
+  it("lets a long title wrap instead of truncating it, while the status side never shrinks", () => {
+    render(<DueRow icon={Wrench} title="General inspection and fluid top-up" dueText="Never performed" status="overdue" />)
+    const title = screen.getByText("General inspection and fluid top-up")
+    expect(title).not.toHaveClass("truncate")
+    expect(title).toHaveClass("wrap-break-word")
+    expect(title.parentElement).toHaveClass("min-w-0", "flex-1")
+    expect(screen.getByText("Never performed").parentElement).toHaveClass("shrink-0")
+  })
+
   it("renders as a link when href is given, and a plain row otherwise", () => {
     const { rerender } = render(<DueRow icon={Wrench} title="Oil change" dueText="—" status="upcoming" href="/foundation/vehicles/abc" />)
     expect(screen.getByRole("link")).toHaveAttribute("href", "/foundation/vehicles/abc")
