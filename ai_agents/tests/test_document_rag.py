@@ -92,9 +92,10 @@ def test_empty_results_become_an_explicit_null_result() -> None:
     assert only_bad.startswith(NULL_RESULT) and "withheld" in only_bad
 
 
-def test_document_questions_pass_the_domain_allowlist() -> None:
-    assert scan_user_input("What does the manual say about tyre pressure?") is None
-    assert scan_user_input("Summarize our overtime policy.") is None
+@pytest.mark.asyncio
+async def test_document_questions_pass_the_domain_allowlist() -> None:
+    assert await scan_user_input("What does the manual say about tyre pressure?") is None
+    assert await scan_user_input("Summarize our overtime policy.") is None
 
 
 # ---- orchestrator integration ----

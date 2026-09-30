@@ -164,6 +164,10 @@ class OrchestratorDeps:
     # should be an explicit opt-in, not a silent extra LLM call/cost on
     # every turn just because OrchestratorDeps() was default-constructed.
     fact_checker_llm: Any = None
+    # Optional per execution-pre_hooks.md §2 -- the small, fast model behind the semantic input guard
+    # (SecurityConfig.enable_llm_guard). None means the keyword allowlist alone decides the domain check,
+    # which is how every pre-existing test still runs unchanged; same explicit opt-in as fact_checker_llm.
+    guard_llm: Any = None
     # Optional per agent-memory.md -- None means no fetch_memory work, no
     # update_memory tool offered to the LLM, and no staleness post-hook.
     memory: AgentMemory | None = None

@@ -59,6 +59,7 @@ load_dotenv()
 
 import io  # noqa: E402
 import math  # noqa: E402
+import os  # noqa: E402
 import re  # noqa: E402
 
 import openai  # noqa: E402
@@ -70,6 +71,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
 from core.llm_budget import get_tracker  # noqa: E402
+from core.llm_failover import get_guard_chat_model  # noqa: E402
 from mcp_server import memory_tools  # noqa: E402
 from mcp_server.document_tools import BackendDocumentRetriever  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
@@ -171,6 +173,15 @@ def _fact_checker_llm():
         return None
 
 
+@lru_cache(maxsize=1)
+def _guard_llm():
+    """The semantic input guard's model (orchestrator/security.py). Fail-open like the fact-checker: if it can't
+    be built, or LLM_GUARD=off, the keyword allowlist alone decides the domain check."""
+    if os.environ.get("LLM_GUARD", "on").strip().lower() in ("off", "0", "false", "no"):
+        return None
+    return get_guard_chat_model()
+
+
 def _build_deps(context: AgentContext) -> OrchestratorDeps:
     return OrchestratorDeps(
         memory=_shared_memory(),
@@ -182,6 +193,7 @@ def _build_deps(context: AgentContext) -> OrchestratorDeps:
         ),
         webhooks=AlertDispatcher(),
         fact_checker_llm=_fact_checker_llm(),
+        guard_llm=_guard_llm(),
         documents=_DOCUMENT_RETRIEVER,
         rag_evaluator=_RAG_EVALUATOR,
     )

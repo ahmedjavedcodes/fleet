@@ -18,7 +18,10 @@ hop or synthesize).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +49,20 @@ class TurnResult:
     final_response: str | None
     hitl_state: dict[str, Any] | None
     state: OrchestratorState
+
+
+def _await_sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run a coroutine to completion from synchronous code. OrchestratorSession.run is synchronous (the server
+    runs it on a worker thread and the LangGraph graph is invoked synchronously), but the security pre-hook is
+    async so it can await the guard model under a strict timeout. A plain asyncio.run suffices on a worker
+    thread; if a caller does have an event loop running on this thread, the coroutine gets a thread of its own
+    rather than failing with "asyncio.run() cannot be called from a running event loop"."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _is_model_outage(exc: BaseException) -> bool:
@@ -132,7 +149,9 @@ class OrchestratorSession:
         # Security pre-hook (execution-pre_hooks.md §2): a violation halts
         # BEFORE build_orchestrator_graph is ever invoked -- no LLM call,
         # no state mutation beyond appending the rejected turn to history.
-        violation = scan_user_input(message, config=self.security_config, has_attachment=image_bytes is not None)
+        violation = _await_sync(
+            scan_user_input(message, config=self.security_config, has_attachment=image_bytes is not None, guard_llm=self.deps.guard_llm)
+        )
         if violation is not None:
             logger.warning("Security pre-hook rejected input: %s", violation.reason)
             chat_history = list(self.state.get("chat_history") or []) + [

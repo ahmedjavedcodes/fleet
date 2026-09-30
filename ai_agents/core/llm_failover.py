@@ -65,6 +65,10 @@ OPENROUTER_TIMEOUT_SECONDS = float(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", 
 FREE_TIMEOUT_SECONDS = float(os.environ.get("FREE_TIMEOUT_SECONDS", "8"))
 OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "1.5"))
 OLLAMA_PROBE_TIMEOUT_SECONDS = 1.0
+GUARD_TIMEOUT_SECONDS = float(os.environ.get("GUARD_TIMEOUT_SECONDS", "0.8"))
+# A dedicated classification model, not the planner's gpt-oss-20b: Groq meters quota per model, so the guard's
+# ~400 tokens per message never eat into the planner's daily budget, and it answers in ~150-200 ms (vs ~400-700).
+DEFAULT_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
 
 
 class BudgetExhausted(RuntimeError):
@@ -303,3 +307,25 @@ def get_resilient_chat_model(*, groq_model: str, claude_only: bool = False, **ov
         if free:
             add(LLMProvider.CLAUDE_OPENROUTER, FREE_TIMEOUT_SECONDS, model=free)
     return FailoverChatModel(*chain)
+
+
+def get_guard_chat_model(timeout: float = GUARD_TIMEOUT_SECONDS) -> Any | None:
+    """The small, fast chain behind the semantic input guard (orchestrator/security.py), or None if it can't be built.
+
+    Tier 0 local Ollama when it is running, then Groq gpt-oss-safeguard-20b (GUARD_MODEL overrides) -- and
+    deliberately nothing else: no second Groq model and no paid OpenRouter tier, because the guard runs on every message and
+    must be both fast and free. Each hop's HTTP timeout is the guard's own budget, so a slow hop is abandoned
+    within that time rather than lingering. When the guard can't answer, the caller falls back to keywords."""
+    chain: list[Any] = []
+    try:
+        local = _ollama_model()
+        if local:
+            chain.append(get_chat_model(LLMProvider.LOCAL_LLAMA, model=local, max_retries=0, timeout=timeout))
+        if os.environ.get("GROQ_API_KEY"):
+            model = os.environ.get("GUARD_MODEL", DEFAULT_GUARD_MODEL).strip() or DEFAULT_GUARD_MODEL
+            chain.append(get_chat_model(LLMProvider.GROQ, model=model, max_retries=0, timeout=timeout, **_reasoning_kwargs(LLMProvider.GROQ, model)))
+    except Exception:  # noqa: BLE001 -- a guard that can't start means "keywords only", never a failed startup
+        logger.exception("LLM guard model could not be built; the keyword allowlist will be used")
+        return None
+    return FailoverChatModel(*chain) if chain else None
+
