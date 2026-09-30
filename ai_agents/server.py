@@ -72,6 +72,7 @@ from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
 from core.llm_budget import get_tracker  # noqa: E402
 from core.llm_failover import get_guard_chat_model  # noqa: E402
+from core.tool_markup import strip_tool_markup  # noqa: E402
 from mcp_server import memory_tools  # noqa: E402
 from mcp_server.document_tools import BackendDocumentRetriever  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
@@ -315,6 +316,49 @@ def _sse(event: str, data: dict) -> dict:
     return {"event": event, "data": json.dumps(data)}
 
 
+# The approval card needs the question and the tool name. The paused sub-agent's own state also carries the caller's
+# JWT and, in any photo flow, the raw image bytes: neither belongs in a browser, and bytes are not even JSON (they
+# crashed the stream, so a receipt never reached its approval step).
+_HITL_HIDDEN_KEYS = frozenset({"token", "image_bytes", "mime_type"})
+
+
+def _amount(value: object) -> str:
+    try:
+        return f"{float(value):,.2f}".rstrip("0").rstrip(".")  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _describe_pending_fuel_log(state: dict) -> str | None:
+    """What the user is about to approve, for a fuel log the agent has prepared: they should see the figures, not a
+    generic prompt."""
+    record = state.get("sanitized")
+    if not isinstance(record, dict) or "liters_filled" not in record or "total_cost" not in record:
+        return None
+    vehicle = state.get("vehicle_plate") or "this vehicle"
+    parts = [f"{_amount(record['liters_filled'])} L"]
+    if record.get("price_per_liter") is not None:
+        parts.append(f"at Rs {_amount(record['price_per_liter'])}/L")
+    parts.append(f"= Rs {_amount(record['total_cost'])}")
+    when = f" on {record['date']}" if record.get("date") else ""
+    return f"Record this fuel fill for {vehicle}: {' '.join(parts)}{when}?"
+
+
+def _client_hitl_state(hitl: dict | None) -> dict | None:
+    """The approval payload as the browser may see it: no secrets or binary data, only JSON types."""
+    if not hitl:
+        return hitl
+    safe = dict(hitl)
+    if isinstance(safe.get("state"), dict):
+        safe["state"] = {k: v for k, v in safe["state"].items() if k not in _HITL_HIDDEN_KEYS}
+    safe = json.loads(json.dumps(safe, default=str))  # dates and Decimals become strings
+    if not safe.get("approval_prompt"):
+        prompt = _describe_pending_fuel_log(safe.get("state") or {})
+        if prompt:
+            safe["approval_prompt"] = prompt
+    return safe
+
+
 _GENERIC_TURN_ERROR = "The AI assistant hit an unexpected error. Please try again."
 _RETRY_AFTER = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", re.IGNORECASE)
 
@@ -409,7 +453,7 @@ async def _stream_turn(session: OrchestratorSession, run_turn) -> EventSourceRes
         yield _activity(current, done=True)
 
         if result.status == "awaiting_approval":
-            yield _sse("approval_required", {"hitl_state": result.hitl_state})
+            yield _sse("approval_required", {"hitl_state": _client_hitl_state(result.hitl_state)})
             return
 
         text = result.final_response or ""
@@ -499,15 +543,30 @@ def list_sessions(authorization: str | None = Header(default=None)) -> list[dict
         raise
 
 
+def _visible_messages(rows: list[dict]) -> list[dict]:
+    """Assistant replies saved before the tool-markup guard may still hold raw tool-call syntax; the transcript
+    shows only the natural language (a reply that was nothing else is left out)."""
+    visible: list[dict] = []
+    for row in rows:
+        if row.get("role") == "assistant":
+            content = strip_tool_markup(row.get("content") or "")
+            if not content:
+                continue
+            row = {**row, "content": content}
+        visible.append(row)
+    return visible
+
+
 @app.get("/api/v1/chat/sessions/{session_id}/messages", response_model=list[ChatMessageOut])
 def get_session_messages(session_id: str, authorization: str | None = Header(default=None)) -> list[dict]:
     """The stored transcript, for showing a past conversation when it is opened."""
     _, context = _authenticate(authorization)
     try:
-        return memory_tools.get_session_messages_tool(context, session_id)
+        rows = memory_tools.get_session_messages_tool(context, session_id)
     except BackendAPIError as exc:
         _raise_for_backend(exc)
         raise
+    return _visible_messages(rows)
 
 
 @app.patch("/api/v1/chat/sessions/{session_id}", response_model=RenameSessionResponse)

@@ -1,8 +1,9 @@
 "use client"
 
-import { lazy, memo, Suspense } from "react"
+import { lazy, memo, Suspense, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { resolveAttachmentUrl } from "@/lib/api/uploads"
+import { stripToolMarkup } from "@/lib/sanitize-message"
 import type { ChatMessage } from "@/lib/schemas/chat"
 import { CitationPill } from "./citation-pill"
 
@@ -29,6 +30,12 @@ function PlainText({ text }: { text: string }) {
 // without windowing the list.
 export const MessageBubble = memo(function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user"
+  // Safeguard: whatever reaches here from the stream or a stored transcript, a person never sees a model's raw
+  // tool-call syntax (<｜DSML｜…>, <tool_call>, {"name": …, "arguments": …}). The server already strips it; this is
+  // the last line of defence.
+  const text = useMemo(() => (isUser ? message.text : stripToolMarkup(message.text)), [isUser, message.text])
+  // A reply that was nothing but markup has nothing to show (the server replaces such replies with plain text).
+  if (!isUser && text === "" && message.text !== "" && !message.imageUrl) return null
   return (
     <div
       className={cn(
@@ -52,7 +59,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
           isUser ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground"
         )}
       >
-        <MarkdownOrPlain text={message.text} />
+        <MarkdownOrPlain text={text} />
       </div>
       {message.citations && message.citations.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">

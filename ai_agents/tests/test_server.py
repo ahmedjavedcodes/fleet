@@ -137,6 +137,41 @@ def test_awaiting_approval_streams_hitl_state_instead_of_tokens(client, monkeypa
     assert not any(f["event"] == "token" for f in frames)
 
 
+def test_a_photo_flow_approval_reaches_the_browser_without_secrets_or_raw_bytes(client, monkeypatch):
+    """The receipt scenario: the paused fuel agent's state holds the JWT, the photo's bytes and date/Decimal values.
+    json.dumps of that raised a TypeError mid-stream, so the approval card never arrived."""
+    import datetime
+    import decimal
+
+    monkeypatch.setattr(server, "OrchestratorSession", _FakeSession)
+    resp = client.post("/api/v1/chat/sessions", headers={"Authorization": f"Bearer {_token()}"})
+    session_id = resp.json()["session_id"]
+    hitl_state = {
+        "agent_name": "fuel", "thread_id": "t9", "tool_name": "fuel", "pending_node": "creating",
+        "state": {
+            "token": "eyJ.secret.jwt", "image_bytes": b"JPEG-BYTES", "mime_type": "image/jpeg", "vehicle_plate": "AB-1234",
+            "sanitized": {"liters_filled": decimal.Decimal("50.0"), "price_per_liter": decimal.Decimal("280.0000"),
+                          "total_cost": decimal.Decimal("14000.00"), "date": datetime.date(2026, 9, 24)},
+        },
+    }
+    server._SESSIONS[session_id].results.append(TurnResult(status="awaiting_approval", final_response=None, hitl_state=hitl_state, state={}))
+
+    resp = client.post(f"/api/v1/chat/sessions/{session_id}/messages", json={"message": "log this fuel fill"}, headers=_auth())
+
+    (frame,) = [f for f in _parse_sse(resp.text) if f["event"] == "approval_required"]
+    sent = __import__("json").loads(frame["data"])["hitl_state"]
+    assert sent["agent_name"] == "fuel" and sent["thread_id"] == "t9" and sent["pending_node"] == "creating"
+    assert sent["approval_prompt"] == "Record this fuel fill for AB-1234: 50 L at Rs 280/L = Rs 14,000 on 2026-09-24?"
+    assert not {"token", "image_bytes", "mime_type"} & set(sent["state"])
+    assert "secret" not in frame["data"]
+    assert sent["state"]["sanitized"]["date"] == "2026-09-24"  # dates arrive as strings, not as a crash
+
+
+def test_an_approval_the_agent_already_worded_keeps_its_own_prompt(client, monkeypatch):
+    assert server._client_hitl_state({"agent_name": "x", "thread_id": "t", "approval_prompt": "Assign this driver?", "state": {"sanitized": {"liters_filled": 1, "total_cost": 2}}})["approval_prompt"] == "Assign this driver?"
+    assert server._client_hitl_state(None) is None
+
+
 def test_a_session_exception_streams_an_error_event_not_a_500(client, monkeypatch):
     class _ExplodingSession(_FakeSession):
         def run(self, message: str):

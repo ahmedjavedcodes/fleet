@@ -33,6 +33,7 @@ import os
 import re
 import threading
 import time
+from functools import lru_cache
 from typing import Any, Callable
 
 import openai
@@ -41,6 +42,7 @@ import httpx
 
 from core.llm_budget import cost_usd, get_tracker
 from core.llm_config import LLMProvider, get_chat_model
+from core.tool_markup import has_tool_markup, recover_tool_calls, strip_tool_markup
 
 logger = logging.getLogger("fleet.llm")
 if not logger.handlers:  # per-call telemetry (tokens, cost, latency) must be visible under uvicorn too
@@ -52,7 +54,7 @@ if not logger.handlers:  # per-call telemetry (tokens, cost, latency) must be vi
 
 COOLDOWN_SECONDS = 60.0  # default when the provider gives no retry hint
 MAX_COOLDOWN_SECONDS = 3600.0
-_COOLDOWN_STATUS = (402, 429)
+_COOLDOWN_STATUS = (402, 404, 429)  # 404: "model does not exist or you do not have access" -- stop re-asking every turn
 _RETRY_HINT = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", re.IGNORECASE)
 _FAILOVER_ERRORS = (openai.APIError,)
 DEFAULT_FREE_OPENROUTER_MODEL = "nvidia/nemotron-3.5-lightning:free"
@@ -69,6 +71,13 @@ GUARD_TIMEOUT_SECONDS = float(os.environ.get("GUARD_TIMEOUT_SECONDS", "0.8"))
 # A dedicated classification model, not the planner's gpt-oss-20b: Groq meters quota per model, so the guard's
 # ~400 tokens per message never eat into the planner's daily budget, and it answers in ~150-200 ms (vs ~400-700).
 DEFAULT_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
+# Vision (photo -> structured record). Groq's qwen3.8-27b reads images and answers a receipt in ~1-2 s; it caps
+# OUTPUT at 1,000 tokens a minute, so a request's max_tokens must stay well under that or it is refused outright.
+DEFAULT_VISION_GROQ_MODEL = "qwen/qwen3.8-27b"
+DEFAULT_VISION_PAID_MODEL = "google/gemini-2.5-flash-lite"  # ~$0.0002 per receipt; the reliable last resort
+DEFAULT_VISION_FREE_MODEL = "qwen/qwen3.8-27b:free"
+VISION_TIMEOUT_SECONDS = float(os.environ.get("VISION_TIMEOUT_SECONDS", "25"))
+VISION_MAX_TOKENS = int(os.environ.get("VISION_MAX_TOKENS", "600"))
 
 
 class BudgetExhausted(RuntimeError):
@@ -98,6 +107,13 @@ def _reasoning_kwargs(provider: LLMProvider, model: str) -> dict[str, Any]:
     """gpt-oss models spend most of their output budget on hidden reasoning (measured: ~100 of
     ~170 tokens for a two-sentence answer). "low" cut that to ~5, made replies ~60% smaller and
     stopped a tight max_tokens cap from leaving the visible answer empty."""
+    if provider is LLMProvider.CLAUDE_OPENROUTER and model.startswith("deepseek/"):
+        # DeepSeek V4 reasons by default. Under the planner's 350-token and the reply's 500-token caps the thinking
+        # alone used the whole budget (finish_reason=length, empty content, no tool call), so the turn carried on as if
+        # the model had nothing to do and then made up a result. Planning and replying need no chain of thought.
+        # DEEPSEEK_REASONING=low|medium|high turns it back on.
+        setting = os.environ.get("DEEPSEEK_REASONING", "off").strip().lower()
+        return {"extra_body": {"reasoning": {"enabled": False} if setting in ("", "off", "0", "false", "none") else {"effort": setting}}}
     effort = os.environ.get("LLM_REASONING_EFFORT", "low").strip()
     if not effort or "gpt-oss" not in model:
         return {}
@@ -110,20 +126,42 @@ class InvalidModelOutput(RuntimeError):
     """A 200 response that is not a usable answer."""
 
 
-_HARMONY_MARKERS = ("<|channel|>", "<|start|>", "<|call|>", "<|constrain|>")
-
-
 def _invalid_output(result: Any) -> str | None:
-    """Some hosted gpt-oss endpoints return HTTP 200 with finish_reason "error" and nothing in
-    it, or leak the model's raw internal tool-call format as the visible text (Groq parses it
-    server-side; a few OpenRouter providers don't). Neither is an answer: try the next model."""
+    """Some hosted models return HTTP 200 with finish_reason "error" and nothing in it, or leak their
+    raw internal tool-call format as the visible text instead of a structured tool call (gpt-oss
+    harmony tokens, DeepSeek's <｜DSML｜tool_calls>, <tool_call> XML ...; the provider is supposed to
+    parse it server-side and some don't). Neither is an answer: try the next model.
+
+    A structured-output result ({"raw", "parsed", "parsing_error"}) is also unusable when it did not
+    parse into the requested schema."""
+    if isinstance(result, dict) and "parsed" in result:
+        if result["parsed"] is None:
+            return "reply did not parse into the requested schema"
+        result = result.get("raw")
     meta = getattr(result, "response_metadata", None) or {}
     if meta.get("finish_reason") == "error":
         return "provider returned finish_reason=error"
     content = getattr(result, "content", "")
-    if isinstance(content, str) and any(marker in content for marker in _HARMONY_MARKERS):
+    if isinstance(content, str) and has_tool_markup(content):
         return "raw tool-call markup leaked into the reply"
+    if meta.get("finish_reason") == "length" and not content and not getattr(result, "tool_calls", None):
+        return "hit the token limit with nothing visible (hidden reasoning used the whole budget)"
     return None
+
+
+def _with_recovered_tool_calls(result: Any, model: str) -> Any:
+    """A model that was offered tools but wrote its call out as raw text (DeepSeek's <｜DSML｜tool_calls> ...)
+    did decide to call the tool; only the transport is wrong. Rebuild the reply as the proper tool call it was
+    meant to be, with the raw syntax removed from the text. The arguments are validated downstream like any other
+    call, and write tools still wait for the user's approval."""
+    content = getattr(result, "content", None)
+    if getattr(result, "tool_calls", None) or not isinstance(content, str) or not has_tool_markup(content):
+        return result
+    calls = recover_tool_calls(content)
+    if not calls:
+        return result
+    logger.warning("LLM %s wrote %d tool call(s) as raw text; recovered them as structured calls", model, len(calls))
+    return result.model_copy(update={"content": strip_tool_markup(content), "tool_calls": calls})
 
 
 def is_paid(model: Any) -> bool:
@@ -186,7 +224,12 @@ class FailoverChatModel:
     def bind_tools(self, tools: Any, **kwargs: Any) -> "_BoundFailover":
         return _BoundFailover(self, [m.bind_tools(tools, **kwargs) for m in self.models])
 
-    def _run(self, runnables: list[Any], call: Callable[[Any], Any]) -> Any:
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> "_StructuredFailover":
+        """Like a LangChain chat model's, but a hop that errors, is rate-limited, or answers in a shape that
+        does not parse into `schema` hands over to the next model. Returns the parsed object."""
+        return _StructuredFailover(self, [m.with_structured_output(schema, include_raw=True, **kwargs) for m in self.models])
+
+    def _run(self, runnables: list[Any], call: Callable[[Any], Any], *, recover_calls: bool = False) -> Any:
         now = self._clock()
         budget_open = get_tracker().paid_allowed()
         allowed = [i for i in range(len(runnables)) if budget_open or not is_paid(self.models[i])]
@@ -211,12 +254,15 @@ class FailoverChatModel:
                         # Only THIS model is skipped: a Groq 429 never blocks OpenRouter or vice versa.
                         self._blocked_until[i] = self._clock() + _cooldown_seconds(exc)
                 following = order[position + 1] if position + 1 < len(order) else None
+                detail = " ".join(str(getattr(exc, "message", None) or exc).split())[:180]
                 logger.warning(
-                    "LLM %s failed (%s)%s", _name(self.models[i]), type(exc).__name__,
+                    "LLM %s failed (%s: %s)%s", _name(self.models[i]), type(exc).__name__, detail,
                     f"; failing over to {_name(self.models[following])}" if following is not None else "; no models left",
                 )
                 continue
             self._account(self.models[i], result, self._clock() - started, i)  # a bad reply still cost tokens
+            if recover_calls:
+                result = _with_recovered_tool_calls(result, _name(self.models[i]))
             problem = _invalid_output(result)
             if problem:
                 last_error = InvalidModelOutput(f"{_name(self.models[i])}: {problem}")
@@ -232,6 +278,8 @@ class FailoverChatModel:
 
     def _account(self, model: Any, result: Any, seconds: float, index: int = 0) -> None:
         """One log line per LLM call: model, tokens, cost, latency -- and paid spend recorded."""
+        if isinstance(result, dict) and "raw" in result:  # a structured-output result: usage lives on the raw message
+            result = result["raw"]
         usage = getattr(result, "usage_metadata", None) or {}
         tokens_in, tokens_out = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
         paid = is_paid(model)
@@ -256,7 +304,16 @@ class _BoundFailover:
         self._parent, self._bound = parent, bound
 
     def invoke(self, messages: Any, **kwargs: Any) -> Any:
-        return self._parent._run(self._bound, lambda model: model.invoke(messages, **kwargs))
+        return self._parent._run(self._bound, lambda model: model.invoke(messages, **kwargs), recover_calls=True)
+
+
+class _StructuredFailover:
+    def __init__(self, parent: FailoverChatModel, bound: list[Any]) -> None:
+        self._parent, self._bound = parent, bound
+
+    def invoke(self, messages: Any, **kwargs: Any) -> Any:
+        result = self._parent._run(self._bound, lambda model: model.invoke(messages, **kwargs))
+        return result["parsed"]
 
 
 def _ollama_model() -> str | None:
@@ -328,4 +385,38 @@ def get_guard_chat_model(timeout: float = GUARD_TIMEOUT_SECONDS) -> Any | None:
         logger.exception("LLM guard model could not be built; the keyword allowlist will be used")
         return None
     return FailoverChatModel(*chain) if chain else None
+
+
+@lru_cache(maxsize=1)
+def get_vision_chat_model() -> FailoverChatModel:
+    """The shared chain behind every photo/text -> structured-record extraction (tools/file_parsers.py).
+
+    Groq first (GROQ_VISION_MODEL, default qwen3.8-27b -- fast and free), then, when an OpenRouter key exists, a
+    cheap paid vision model (VISION_PAID_MODEL, gated by the budget breaker) and a free one. One shared instance,
+    so a hop that is rate-limited or not enabled for the account is skipped for its cooldown instead of being
+    retried by every upload. `with_structured_output` hands a hop over when it errors OR answers in a shape that
+    does not parse into the schema."""
+    timeout, max_tokens = VISION_TIMEOUT_SECONDS, VISION_MAX_TOKENS
+    chain: list[Any] = []
+
+    def groq(model: str) -> None:
+        extra = {"reasoning_effort": os.environ.get("VISION_REASONING_EFFORT", "none")} if "qwen3" in model else {}
+        chain.append(get_chat_model(LLMProvider.GROQ, model=model, max_tokens=max_tokens, timeout=timeout, max_retries=0, **extra))
+
+    def openrouter(model: str) -> None:
+        chain.append(get_chat_model(LLMProvider.CLAUDE_OPENROUTER, model=model, max_tokens=max_tokens, timeout=timeout, max_retries=0))
+
+    if os.environ.get("GROQ_API_KEY"):
+        configured = os.environ.get("GROQ_VISION_MODEL", "").strip() or DEFAULT_VISION_GROQ_MODEL
+        groq(configured)
+        if configured != DEFAULT_VISION_GROQ_MODEL:
+            groq(DEFAULT_VISION_GROQ_MODEL)
+    if openrouter_api_key():
+        openrouter(os.environ.get("VISION_PAID_MODEL", "").strip() or DEFAULT_VISION_PAID_MODEL)
+        free = os.environ.get("VISION_FREE_MODEL", DEFAULT_VISION_FREE_MODEL).strip()
+        if free:
+            openrouter(free)
+    if not chain:
+        raise RuntimeError("No vision model is configured: set GROQ_API_KEY or OPENROUTER_API_KEY")
+    return FailoverChatModel(*chain)
 

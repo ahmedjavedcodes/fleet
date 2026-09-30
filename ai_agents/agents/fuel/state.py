@@ -54,6 +54,7 @@ class FuelAgentState(TypedDict, total=False):
     # receipt_onboard intermediate results
     extracted: dict[str, Any] | None
     vehicle_id: str | None
+    vehicle_plate: str | None  # the resolved vehicle's own plate (may differ from the one read off the photo)
     current_odometer: int | None
     sanitized: dict[str, Any] | None
     created_record: dict[str, Any] | None

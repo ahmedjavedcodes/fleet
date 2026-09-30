@@ -48,6 +48,8 @@ from tools.schemas import FuelLogCreateInput, TripLogCreateInput
 # Slip/receipt attributes a caller can supply in chat (fuel_fields) to complete or
 # correct a receipt log -- e.g. "slip 8841, PO 1207, paid with the fleet card".
 _SUPPLEMENTARY_FUEL_FIELDS = (
+    "date",
+    "odometer_reading",
     "slip_id",
     "po_number",
     "payment_method",
@@ -147,21 +149,33 @@ def _make_extract_node(deps: FuelAgentDeps):
 def _make_resolve_vehicle_node(deps: FuelAgentDeps):
     def resolve_vehicle(state: FuelAgentState) -> FuelAgentState:
         extracted = state.get("extracted") or {}
-        plate = sanitize_plate_number(extracted.get("plate_number"))
-        if not plate:
-            return {**state, "stage": "halted", "halt_reason": "Could not determine the receipt's vehicle plate."}
-
+        stated = (state.get("fuel_fields") or {}).get("vehicle_id")
         context = _context_from_state(state)
-        vehicle = next(
-            (v for v in deps.get_vehicles(context) if sanitize_plate_number(v.get("plate_number")) == plate),
-            None,
-        )
-        if vehicle is None:
-            return {**state, "stage": "halted", "halt_reason": f"No vehicle on file matches plate {plate!r}."}
+        vehicles = deps.get_vehicles(context)
+
+        if stated:
+            # The user named the vehicle in chat (the orchestrator resolved it to an id): that wins over a plate
+            # read off the photo, which may belong to another vehicle or be misread. A plate in place of an id is
+            # accepted too.
+            wanted = sanitize_plate_number(str(stated))
+            vehicle = next(
+                (v for v in vehicles if str(v.get("id")) == str(stated) or sanitize_plate_number(v.get("plate_number")) == wanted),
+                None,
+            )
+            if vehicle is None:
+                return {**state, "stage": "halted", "halt_reason": f"No vehicle on file matches {str(stated)!r}."}
+        else:
+            plate = sanitize_plate_number(extracted.get("plate_number"))
+            if not plate:
+                return {**state, "stage": "halted", "halt_reason": "Could not determine the receipt's vehicle plate."}
+            vehicle = next((v for v in vehicles if sanitize_plate_number(v.get("plate_number")) == plate), None)
+            if vehicle is None:
+                return {**state, "stage": "halted", "halt_reason": f"No vehicle on file matches plate {plate!r}."}
 
         return {
             **state,
             "vehicle_id": vehicle["id"],
+            "vehicle_plate": vehicle.get("plate_number"),
             "current_odometer": vehicle.get("current_odometer", 0),
             "stage": "sanitizing",
         }
@@ -169,24 +183,54 @@ def _make_resolve_vehicle_node(deps: FuelAgentDeps):
     return resolve_vehicle
 
 
+def _decimal(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return None
+
+
+def _resolve_amounts(stated: dict[str, Any], extracted: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal] | None:
+    """(liters, price_per_liter, total_cost) for the log, or None if they cannot be determined.
+
+    What the user states in chat beats what OCR read off the photo, and the three figures must agree with each
+    other: two stated figures fix the third; one stated figure takes the rest from the receipt; none at all is the
+    plain receipt (liters and total read, price derived)."""
+    liters, price, total = (_decimal(stated.get(key)) for key in ("liters_filled", "price_per_liter", "total_cost"))
+    receipt_liters, receipt_total = _decimal(extracted.get("liters")), _decimal(extracted.get("total_cost"))
+    given = [v is not None for v in (liters, price, total)].count(True)
+    if given == 0:
+        liters, total = receipt_liters, receipt_total
+    elif given == 1:
+        if liters is not None:
+            total = receipt_total
+        else:  # only the total or only the price was stated: the litres come from the receipt
+            liters = receipt_liters
+    if total is None and liters is not None and price is not None:
+        total = (liters * price).quantize(Decimal("0.01"))
+    if liters is None and price and total is not None:
+        liters = (total / price).quantize(Decimal("0.01"))
+    if liters is None or liters <= 0 or total is None:
+        return None
+    if price is None:
+        price = total / liters
+    return liters, price.quantize(Decimal("0.0001")), total
+
+
 def sanitize(state: FuelAgentState) -> FuelAgentState:
     extracted = state.get("extracted") or {}
-    liters = extracted.get("liters")
-    total_cost = extracted.get("total_cost")
+    stated = state.get("fuel_fields") or {}
 
-    if not liters or liters <= 0 or total_cost is None:
+    amounts = _resolve_amounts(stated, extracted)
+    if amounts is None:
         return {
             **state,
             "stage": "halted",
             "halt_reason": "Could not determine the receipt's liters filled and total cost.",
         }
-
-    try:
-        liters_d = Decimal(str(liters))
-        total_cost_d = Decimal(str(total_cost))
-        price_per_liter = (total_cost_d / liters_d).quantize(Decimal("0.0001"))
-    except (InvalidOperation, ZeroDivisionError):
-        return {**state, "stage": "halted", "halt_reason": "Could not compute price per liter from the receipt."}
+    liters_d, price_per_liter, total_cost_d = amounts
 
     station_name = extracted.get("station_name")
     payment_method = extracted.get("payment_method")
@@ -206,9 +250,14 @@ def sanitize(state: FuelAgentState) -> FuelAgentState:
     }
     # Text supplied alongside (or instead of) the photo wins over what OCR read.
     for key in _SUPPLEMENTARY_FUEL_FIELDS:
-        value = (state.get("fuel_fields") or {}).get(key)
+        value = stated.get(key)
         if value not in (None, ""):
             bridged[key] = value
+
+    # The user's vehicle beat the photo's plate (see resolve_vehicle): leave a trace if they disagree.
+    receipt_plate = sanitize_plate_number(extracted.get("plate_number"))
+    if receipt_plate and state.get("vehicle_plate") and sanitize_plate_number(state["vehicle_plate"]) != receipt_plate:
+        bridged["notes"] = "; ".join(filter(None, [bridged.get("notes"), f"Receipt shows plate {receipt_plate}"]))
 
     if bridged["date"] is None:
         return {**state, "stage": "halted", "halt_reason": "Could not determine the receipt's date."}

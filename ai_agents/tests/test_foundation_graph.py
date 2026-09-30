@@ -223,7 +223,7 @@ def test_ac8_extraction_failure_halts_without_creating(backend: _FakeBackend) ->
 def test_ac9_unsupported_file_type_rejected_before_vision_call(
     backend: _FakeBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(file_parsers, "get_chat_model", lambda provider: pytest.fail("must not call the LLM"))
+    monkeypatch.setattr(file_parsers, "get_vision_model", lambda: pytest.fail("must not call the LLM"))
     deps = FoundationAgentDeps(extract_vehicle=file_parsers.extract_vehicle_doc)
     graph = get_compiled_foundation_graph(deps)
 

@@ -13,7 +13,7 @@ import csv
 from io import StringIO
 from typing import Any
 
-from core.llm_config import LLMProvider, get_chat_model
+from core.llm_failover import get_vision_chat_model
 from tools.schemas import (
     FuelReceiptExtraction,
     IncidentExtraction,
@@ -25,6 +25,13 @@ from tools.schemas import (
 )
 
 _SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
+
+
+def get_vision_model():
+    """The shared extraction chain (core.llm_failover.get_vision_chat_model): Groq first, then OpenRouter
+    fallbacks, each hop also handing over when its answer does not parse into the schema. A seam so tests can
+    substitute a fake without a network."""
+    return get_vision_chat_model()
 
 
 def parse_trip_sheet_csv(csv_text: str) -> list[dict[str, Any]]:
@@ -78,10 +85,9 @@ def _extract(image_bytes: bytes, mime_type: str, instruction: str, schema: type,
     # unsupported upload must never cost a model call.
     content = _vision_message(image_bytes, mime_type, instruction)
     message = HumanMessage(content=content)
-    model = get_chat_model(LLMProvider.GROQ).with_structured_output(schema)
 
     try:
-        result = model.invoke([message])
+        result = get_vision_model().with_structured_output(schema).invoke([message])
     except Exception as exc:  # noqa: BLE001 -- any provider/parsing failure is a read failure here
         raise ExtractionFailedError(f"Could not read the {document_label}: {exc}") from exc
 
@@ -92,17 +98,15 @@ def _extract_text(text: str, instruction: str, schema: type, *, document_label: 
     """Text-only counterpart to _extract -- no image, no mime-type check.
 
     Per maintenance-inventory-agent.md's Constraints: typed mechanic notes
-    don't need a vision call at all. Uses the same GROQ provider as the
-    vision path (extraction is extraction, image or not); LLAMA_API is
-    reserved for router/reasoning use elsewhere.
+    don't need a vision call at all. Uses the same model chain as the
+    vision path (extraction is extraction, image or not).
     """
     from langchain_core.messages import HumanMessage
 
-    model = get_chat_model(LLMProvider.GROQ).with_structured_output(schema)
     message = HumanMessage(content=f"{instruction}\n\n---\n{text}")
 
     try:
-        result = model.invoke([message])
+        result = get_vision_model().with_structured_output(schema).invoke([message])
     except Exception as exc:  # noqa: BLE001 -- any provider/parsing failure is a read failure here
         raise ExtractionFailedError(f"Could not read the {document_label}: {exc}") from exc
 

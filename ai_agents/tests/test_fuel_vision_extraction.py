@@ -29,14 +29,14 @@ def test_extract_fuel_receipt_returns_structured_result(monkeypatch: pytest.Monk
         plate_number="ABC-123",
     )
     fake = _FakeChatModel(_FakeStructuredModel(result=expected))
-    monkeypatch.setattr(file_parsers, "get_chat_model", lambda provider: fake)
+    monkeypatch.setattr(file_parsers, "get_vision_model", lambda: fake)
 
     result = file_parsers.extract_fuel_receipt(b"fake-jpeg-bytes", "image/jpeg")
     assert result == expected
 
 
 def test_unsupported_mime_type_rejected_before_calling_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(file_parsers, "get_chat_model", lambda provider: pytest.fail("must not call the LLM"))
+    monkeypatch.setattr(file_parsers, "get_vision_model", lambda: pytest.fail("must not call the LLM"))
 
     with pytest.raises(file_parsers.UnsupportedImageTypeError):
         file_parsers.extract_fuel_receipt(b"pdf-bytes", "application/pdf")
@@ -44,7 +44,7 @@ def test_unsupported_mime_type_rejected_before_calling_model(monkeypatch: pytest
 
 def test_model_failure_raises_extraction_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeChatModel(_FakeStructuredModel(error=RuntimeError("blurry receipt")))
-    monkeypatch.setattr(file_parsers, "get_chat_model", lambda provider: fake)
+    monkeypatch.setattr(file_parsers, "get_vision_model", lambda: fake)
 
     with pytest.raises(file_parsers.ExtractionFailedError):
         file_parsers.extract_fuel_receipt(b"fake-jpeg-bytes", "image/jpeg")

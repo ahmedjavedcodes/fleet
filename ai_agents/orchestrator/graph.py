@@ -476,6 +476,14 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 "token": auth_context.get("token"),
                 **validated_dict,
             }
+            if (
+                agent_name == "fuel" and state.get("_pending_image_bytes") is not None and not sub_state.get("document_type")
+                and sub_state.get("fuel_fields") is not None and sub_state.get("trip_fields") is None and not sub_state.get("query_entity")
+            ):
+                # A fuel log with a photo attached this turn is about that receipt (fuel has no other document
+                # type), whether or not the model remembered to say so. Without this the photo never reaches the
+                # vision model and the whole log would have to be typed out.
+                sub_state["document_type"] = "receipt"
             if sub_state.get("document_type") and state.get("_pending_image_bytes") is not None:
                 sub_state["image_bytes"] = state["_pending_image_bytes"]
                 sub_state["mime_type"] = state.get("_pending_mime_type") or "image/jpeg"

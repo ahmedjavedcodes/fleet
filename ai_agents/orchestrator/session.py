@@ -29,6 +29,7 @@ import openai
 from pydantic import ValidationError
 
 from core.llm_failover import BudgetExhausted, InvalidModelOutput
+from core.tool_markup import strip_tool_markup
 from orchestrator.offline import answer_offline
 
 from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
@@ -42,6 +43,9 @@ from tools.auth_context import build_context
 logger = logging.getLogger("fleet.security")
 memory_logger = logging.getLogger("fleet.memory")
 
+# Shown only if a reply turns out to have been nothing but raw tool-call syntax.
+TOOL_MARKUP_FALLBACK = "I couldn't complete that request. Please try again."
+
 
 @dataclass
 class TurnResult:
@@ -49,6 +53,21 @@ class TurnResult:
     final_response: str | None
     hitl_state: dict[str, Any] | None
     state: OrchestratorState
+
+
+def _clean_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Stored assistant replies from before the tool-markup guard may still contain raw tool-call syntax. Fed back
+    to the model as history it teaches the model to keep writing it, so it is removed on the way in (a reply that
+    was nothing else is dropped)."""
+    cleaned: list[dict[str, str]] = []
+    for message in history:
+        content = message.get("content") or ""
+        if message.get("role") == "assistant":
+            content = strip_tool_markup(content)
+            if not content:
+                continue
+        cleaned.append({**message, "content": content})
+    return cleaned
 
 
 def _await_sync(coro: Coroutine[Any, Any, Any]) -> Any:
@@ -119,7 +138,7 @@ class OrchestratorSession:
         memory = self.deps.memory
         if requested_id:
             try:
-                return requested_id, memory.load_history(self._context, requested_id)
+                return requested_id, _clean_history(memory.load_history(self._context, requested_id))
             except Exception:  # noqa: BLE001 -- e.g. 404 for someone else's session id
                 memory_logger.warning("memory: could not resume session %s, starting a new one", requested_id)
         try:
@@ -288,6 +307,14 @@ class OrchestratorSession:
 
         status = "halted" if result_state.get("stage") == "halted" else "done"
         if result_state.get("final_response"):
+            # The one place every reply passes before it is saved (agent_messages) or streamed to the UI. Only
+            # natural language gets through: a model that printed its raw tool-call syntax as text is cleaned
+            # here even if an earlier layer missed it.
+            final = result_state["final_response"]
+            cleaned = strip_tool_markup(final)
+            if cleaned != final:
+                memory_logger.warning("raw tool-call markup removed from the final response")
+                result_state = {**result_state, "final_response": cleaned or TOOL_MARKUP_FALLBACK}
             chat_history = list(result_state.get("chat_history") or []) + [
                 {"role": "assistant", "content": result_state["final_response"]}
             ]

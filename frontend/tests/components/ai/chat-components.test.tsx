@@ -16,6 +16,27 @@ describe("MessageBubble", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer")
   })
 
+  it("never shows a model's raw tool-call markup, only the words around it", async () => {
+    const dsml = `<｜DSML｜tool_calls><｜DSML｜invoke name="fuel"><｜DSML｜parameter name="liters" string="false">50</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>`
+    const { container } = render(<MessageBubble message={{ id: "3", role: "assistant", text: `Logging your fuel fill. ${dsml}` }} />)
+
+    expect(await screen.findByText("Logging your fuel fill.", {}, { timeout: 15000 })).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/DSML|tool_calls|invoke|parameter/)
+  })
+
+  it("renders nothing at all for a reply that was only raw markup", () => {
+    const dsml = `<｜DSML｜tool_calls><｜DSML｜invoke name="fuel"></｜DSML｜invoke></｜DSML｜tool_calls>`
+    const { container } = render(<MessageBubble message={{ id: "4", role: "assistant", text: dsml }} />)
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("leaves a user's own message exactly as typed, even if it looks like markup", () => {
+    render(<MessageBubble message={{ id: "5", role: "user", text: "What does <tool_call> mean in this log?" }} />)
+
+    expect(screen.getByText("What does <tool_call> mean in this log?")).toBeInTheDocument()
+  })
+
   it("renders citation pills when the message has citations", () => {
     const message: ChatMessage = {
       id: "2",

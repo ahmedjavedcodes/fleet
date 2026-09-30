@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
+from core.tool_markup import strip_tool_markup
+
 _THINK_BLOCK = re.compile(r"<(think|thinking|reasoning|analysis|scratchpad)>.*?</\1>", re.S | re.I)
 _UNCLOSED_THINK = re.compile(r"<(think|thinking|reasoning|analysis|scratchpad)>.*\Z", re.S | re.I)
 _STRAY_TAG = re.compile(r"</?(think|thinking|reasoning|analysis|scratchpad)>", re.I)
@@ -51,6 +53,7 @@ class Sanitized(NamedTuple):
 
 
 def _light_clean(text: str) -> str:
+    text = strip_tool_markup(text)  # raw tool-call syntax (DSML, <tool_call>, harmony, bare JSON calls)
     text = _THINK_BLOCK.sub("", text)
     text = _UNCLOSED_THINK.sub("", text)
     text = _STRAY_TAG.sub("", text)

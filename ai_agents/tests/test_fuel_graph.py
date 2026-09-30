@@ -9,6 +9,7 @@ in-memory fake backend -- same pattern as test_foundation_graph.py.
 """
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import jwt
 import pytest
@@ -246,3 +247,87 @@ def test_ac9_fuel_trends_gated_to_admin_and_fleet_manager(backend: _FakeBackend,
     else:
         assert state["stage"] == "halted"
         assert "permit" in state["halt_reason"].lower()
+
+
+# ---- receipt photo + what the user says in chat ---------------------------------------------------
+# "Log this fuel fill for AB-1234. The total was 50 liters at Rs 280/L." with a photo of a receipt that shows
+# another plate and other figures: the user's words win, as the tool schema promises.
+
+
+def _photo_run(backend: _FakeBackend, stated: dict | None, **receipt) -> dict:
+    backend.vehicles = [
+        {"id": "v1", "plate_number": "AB-1234", "current_odometer": 1000},
+        {"id": "v2", "plate_number": "LB-7967", "current_odometer": 500},
+    ]
+    fields = {"station_name": "Mehar Petroleum", "receipt_date": "2026-09-24", "liters": 39.2, "total_cost": 15365.0,
+              "odometer": 1200, "plate_number": "LB-7967", **receipt}
+    deps = _deps(backend, extract_receipt=lambda img, mime: FuelReceiptExtraction(**fields))
+    state = {"token": _token("admin"), "image_bytes": b"jpeg", "mime_type": "image/jpeg"}
+    if stated is not None:
+        state["fuel_fields"] = stated
+    return get_compiled_fuel_graph(deps).invoke(state)
+
+
+def test_the_vehicle_and_amounts_the_user_states_beat_the_photo(backend: _FakeBackend) -> None:
+    state = _photo_run(backend, {"vehicle_id": "v1", "liters_filled": 50, "price_per_liter": 280})
+
+    record = state["created_record"]
+    assert state["stage"] == "done"
+    assert record["vehicle_id"] == "v1"  # not v2, the plate the photo shows
+    assert (Decimal(record["liters_filled"]), Decimal(record["price_per_liter"]), Decimal(record["total_cost"])) == (50, 280, 14000)
+    assert "Receipt shows plate LB-7967" in record["notes"]  # the disagreement is on the record
+
+
+def test_a_plate_with_no_vehicle_id_is_accepted_as_the_stated_vehicle(backend: _FakeBackend) -> None:
+    state = _photo_run(backend, {"vehicle_id": "ab 1234"})
+
+    assert state["created_record"]["vehicle_id"] == "v1"
+    assert Decimal(state["created_record"]["liters_filled"]) == Decimal("39.2")  # nothing else stated: the receipt's figures stand
+
+
+def test_a_stated_vehicle_works_when_the_photo_shows_no_plate_at_all(backend: _FakeBackend) -> None:
+    state = _photo_run(backend, {"vehicle_id": "v1"}, plate_number=None)
+
+    assert state["stage"] == "done" and state["created_record"]["vehicle_id"] == "v1"
+    assert "Receipt shows plate" not in (state["created_record"].get("notes") or "")
+
+
+def test_a_stated_vehicle_that_does_not_exist_halts_instead_of_falling_back_to_the_photo(backend: _FakeBackend) -> None:
+    state = _photo_run(backend, {"vehicle_id": "ZZ-9999"})
+
+    assert state["stage"] == "halted" and "ZZ-9999" in state["halt_reason"]
+    assert backend.create_fuel_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("stated", "expected"),
+    [
+        ({}, (Decimal("39.2"), Decimal("391.9643"), Decimal("15365"))),  # the plain receipt: price derived
+        ({"total_cost": 14000}, (Decimal("39.2"), Decimal("357.1429"), Decimal("14000"))),  # litres from the receipt
+        ({"liters_filled": 50}, (Decimal("50"), Decimal("307.3"), Decimal("15365"))),  # total from the receipt
+        ({"price_per_liter": 300}, (Decimal("39.2"), Decimal("300"), Decimal("11760.00"))),  # total = litres x price
+        ({"liters_filled": 50, "total_cost": 14000}, (Decimal("50"), Decimal("280"), Decimal("14000"))),
+        ({"total_cost": 14000, "price_per_liter": 280}, (Decimal("50.00"), Decimal("280"), Decimal("14000"))),  # litres = total / price
+    ],
+    ids=["receipt-only", "total-stated", "liters-stated", "price-stated", "liters+total", "total+price"],
+)
+def test_stated_figures_override_the_receipt_and_the_three_always_agree(backend: _FakeBackend, stated, expected) -> None:
+    record = _photo_run(backend, {"vehicle_id": "v1", **stated})["created_record"]
+
+    assert (Decimal(record["liters_filled"]), Decimal(record["price_per_liter"]), Decimal(record["total_cost"])) == expected
+
+
+def test_a_stated_date_and_odometer_fill_what_the_photo_could_not_read(backend: _FakeBackend) -> None:
+    unreadable = _photo_run(backend, {"vehicle_id": "v1"}, odometer=None)
+    assert unreadable["stage"] == "halted" and "odometer" in unreadable["halt_reason"].lower()
+
+    state = _photo_run(backend, {"vehicle_id": "v1", "odometer_reading": 1500, "date": "2026-09-30"}, odometer=None)
+    assert state["stage"] == "done"
+    assert (state["created_record"]["odometer_reading"], state["created_record"]["date"]) == (1500, "2026-09-30")
+
+
+def test_without_enough_to_work_out_litres_and_cost_it_halts_with_a_reason(backend: _FakeBackend) -> None:
+    state = _photo_run(backend, {"vehicle_id": "v1"}, liters=None, total_cost=None)
+
+    assert state["stage"] == "halted" and "liters" in state["halt_reason"].lower()
+

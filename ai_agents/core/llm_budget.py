@@ -24,6 +24,7 @@ PRICES_PER_MILLION: dict[str, tuple[float, float]] = {
     "openai/gpt-oss-120b": (0.037, 0.17),
     "deepseek/deepseek-v4-flash": (0.079, 0.157),
     "qwen/qwen3.7-flash": (0.03, 0.13),
+    "google/gemini-2.5-flash-lite": (0.10, 0.40),
     "anthropic/claude-sonnet-5": (2.0, 10.0),
     "anthropic/claude-sonnet-5.5": (2.0, 10.0),
 }
