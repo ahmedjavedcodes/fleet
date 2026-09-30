@@ -29,7 +29,11 @@ class BackendAPIError(Exception):
 
 
 def _base_url() -> str:
-    return os.environ.get("BACKEND_API_BASE_URL", "http://localhost:8000")
+    # 127.0.0.1, not "localhost": on Windows "localhost" resolves to ::1 first,
+    # and uvicorn's 0.0.0.0 bind is IPv4-only, so every call stalled ~2s on the
+    # IPv6 attempt before falling back (measured) -- enough to blow the memory
+    # fetch budget on every turn.
+    return os.environ.get("BACKEND_API_BASE_URL", "http://127.0.0.1:8000")
 
 
 def call_backend(

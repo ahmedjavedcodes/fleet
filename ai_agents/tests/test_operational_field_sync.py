@@ -400,6 +400,6 @@ def test_tool_descriptions_name_the_new_keys() -> None:
 
 
 def test_fuel_fields_is_a_structural_key_and_counts_as_a_write() -> None:
-    assert FuelToolInput(fuel_fields={"slip_id": "S1"}).fuel_fields == {"slip_id": "S1"}
+    assert FuelToolInput(fuel_fields={"slip_id": "S1"}).model_dump(exclude_none=True) == {"fuel_fields": {"slip_id": "S1"}}
     assert _is_read_only_call("fuel", {"fuel_fields": {"slip_id": "S1"}}) is False
     assert _is_read_only_call("fuel", {"query_entity": "fuel_logs"}) is True

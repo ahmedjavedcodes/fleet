@@ -16,6 +16,7 @@ backend or Groq key.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Callable
@@ -94,13 +95,49 @@ def _own_driver_id(context: AgentContext, deps: AccountabilityAgentDeps) -> str 
     return next((d["id"] for d in deps.get_drivers(context) if d.get("user_id") == context.user_id), None)
 
 
+# Words people (and the extraction model) actually use, mapped onto the
+# backend's four levels. Anything else stays unmapped and halts the filing
+# rather than guessing -- severity decides whether managers get alerted.
+_SEVERITY_SYNONYMS = {
+    "low": IncidentSeverity.minor,
+    "light": IncidentSeverity.minor,
+    "cosmetic": IncidentSeverity.minor,
+    "medium": IncidentSeverity.moderate,
+    "moderately severe": IncidentSeverity.moderate,
+    "high": IncidentSeverity.severe,
+    "serious": IncidentSeverity.severe,
+    "major": IncidentSeverity.severe,
+    "extreme": IncidentSeverity.critical,
+    "fatal": IncidentSeverity.critical,
+    "life-threatening": IncidentSeverity.critical,
+}
+
+
 def _map_severity(raw: str | None) -> IncidentSeverity | None:
     if not raw:
         return None
+    key = raw.strip().lower()
     try:
-        return IncidentSeverity(raw.strip().lower())
+        return IncidentSeverity(key)
     except ValueError:
-        return None
+        return _SEVERITY_SYNONYMS.get(key)
+
+
+_ATTACHMENT_URL = re.compile(r"^(/uploads/|https?://)\S+$")
+
+
+def _safe_attachment_url(raw: str | None) -> str | None:
+    """The UI renders this as a link, so only an uploaded-file path or an
+    http(s) URL is kept; anything else (e.g. a javascript: URL read out of
+    free text) is dropped rather than filed."""
+    value = (raw or "").strip()
+    return value if value and len(value) <= 1000 and _ATTACHMENT_URL.match(value) else None
+
+
+def _severity_for(state: AccountabilityAgentState) -> IncidentSeverity | None:
+    # The orchestrator's explicit, enum-validated severity beats whatever the
+    # extraction model read out of free text.
+    return _map_severity(state.get("severity")) or _map_severity((state.get("extracted") or {}).get("severity"))
 
 
 def _map_incident_type(raw: str | None) -> IncidentType:
@@ -150,8 +187,12 @@ def _make_resolve_entities_node(deps: AccountabilityAgentDeps):
         if not (extracted.get("damage_description") or "").strip():
             return {**state, "stage": "halted", "halt_reason": "Could not determine a description of the incident."}
 
-        if _map_severity(extracted.get("severity")) is None:
-            return {**state, "stage": "halted", "halt_reason": "Could not determine the incident's severity."}
+        if _severity_for(state) is None:
+            return {
+                **state,
+                "stage": "halted",
+                "halt_reason": "Could not determine the incident's severity (expected minor, moderate, severe or critical).",
+            }
 
         # Best-effort: an unmatched driver name doesn't block filing --
         # IncidentLogCreate.driver_id is nullable (an incident can exist
@@ -188,13 +229,13 @@ def _make_create_node(deps: AccountabilityAgentDeps):
             incident_type=_map_incident_type(extracted.get("incident_type")),
             date=extracted.get("incident_date")
             or (extracted["incident_time"].date() if extracted.get("incident_time") else date.today()),
-            severity=_map_severity(extracted.get("severity")),
+            severity=_severity_for(state),
             description=extracted["damage_description"],
             location_description=extracted.get("location"),
             incident_time=extracted.get("incident_time"),
             location_area=(extracted.get("location_area") or "").strip() or None,
             remarks=(extracted.get("remarks") or "").strip() or None,
-            attachment_url=(extracted.get("attachment_url") or "").strip() or None,
+            attachment_url=_safe_attachment_url(state.get("attachment_url") or extracted.get("attachment_url")),
         )
 
         try:

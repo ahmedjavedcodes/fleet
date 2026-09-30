@@ -232,3 +232,79 @@ def test_fact_check_retries_are_bounded_and_still_return_a_response() -> None:
 
     assert result.status == "done"
     assert result.final_response == "draft 3"  # 1 initial + MAX_FACT_CHECK_RETRIES(2) rewrites, then forced to stop
+
+
+def test_fact_check_skips_a_turn_where_no_tool_ran() -> None:
+    llm = _ScriptedLLM([AIMessage(content=""), AIMessage(content="Hi Jane, I can help with fleet questions.")])
+    fact_checker = _ScriptedFactChecker(["YES"])  # would force a rewrite if it were asked
+    session = OrchestratorSession(
+        _token(), deps=OrchestratorDeps(llm=llm, runner=_FakeRunner([]), fact_checker_llm=fact_checker)
+    )
+
+    result = session.run("Hello, what can you do for my fleet?")
+
+    assert result.final_response == "Hi Jane, I can help with fleet questions."
+    assert fact_checker.invoke_calls == 0
+
+
+def test_fact_check_treats_recalled_memory_as_grounding() -> None:
+    llm = _ScriptedLLM([
+        _tool_call("maintenance", {"query_entity": "maintenance_logs"}),
+        AIMessage(content=""),
+        AIMessage(content="Repair cost $50, shown in PKR as you prefer."),
+    ])
+    runner = _FakeRunner([RunResult(status="done", state={"query_result": {"repair_cost": "$50"}}, thread_id="t1")])
+    seen: list[str] = []
+
+    class _RecordingChecker:
+        def invoke(self, messages):
+            seen.append(messages[-1].content)
+
+            class _R:
+                content = "NO"
+
+            return _R()
+
+    class _Memory:
+        fetch_timeout_s = 1.0
+
+        def start_session(self, context):
+            return "s1"
+
+        def record_message(self, *a, **k):
+            return None
+
+        def fetch_context(self, context, session_id, query):
+            return "Remembered facts:\n- [personal] Prefers amounts in PKR"
+
+        def on_write(self, *a, **k):
+            return None
+
+    session = OrchestratorSession(
+        _token(), deps=OrchestratorDeps(llm=llm, runner=runner, fact_checker_llm=_RecordingChecker(), memory=_Memory())
+    )
+
+    session.run("What did the last repair cost?")
+
+    assert "[maintenance]" in seen[0]
+    assert "[memory]" in seen[0] and "Prefers amounts in PKR" in seen[0]
+
+
+def test_cached_reads_are_scoped_to_the_user_through_the_graph() -> None:
+    from orchestrator.cache import ExecutionCache
+
+    cache = ExecutionCache()
+
+    def run_as(sub: str):
+        llm = _ScriptedLLM([_tool_call("insights", {"query_entity": "dashboard_summary"}), AIMessage(content=""), AIMessage(content="ok")])
+        runner = _FakeRunner([RunResult(status="done", state={"query_result": {"total_vehicles": 10}}, thread_id="t1")])
+        token = jwt.encode(
+            {"sub": sub, "org": "org-1", "role": "admin", "exp": datetime.now(timezone.utc) + timedelta(minutes=30)},
+            "irrelevant-signing-key", algorithm="HS256",
+        )
+        OrchestratorSession(token, deps=OrchestratorDeps(llm=llm, runner=runner, cache=cache)).run("Show the dashboard summary")
+        return runner
+
+    assert len(run_as("user-a").run_calls) == 1
+    assert len(run_as("user-a").run_calls) == 0  # same user: served from cache
+    assert len(run_as("user-b").run_calls) == 1  # same org, different user: never served user-a's read

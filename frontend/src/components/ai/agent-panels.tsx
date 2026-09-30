@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Check, ClipboardList, Fuel, MapPin, Route, Search, ShieldAlert, TriangleAlert, Wrench } from "lucide-react"
+import { Check, ClipboardList, Fuel, MapPin, Route, Search, ShieldAlert, Sparkles, TriangleAlert, Wrench } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { AgentKey, HitlState } from "@/lib/schemas/chat"
 import { cn } from "@/lib/utils"
@@ -28,6 +28,7 @@ const AGENT_ICON: Record<AgentKey, LucideIcon> = {
   assignment: Route,
   search_documents: Search,
   update_memory: ClipboardList,
+  orchestrator: Sparkles,
 }
 
 export type ActivityStep = { agent: AgentKey; step: string; done: boolean }

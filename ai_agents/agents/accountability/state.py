@@ -49,6 +49,10 @@ class AccountabilityAgentState(TypedDict, total=False):
     image_bytes: bytes | None
     mime_type: str | None
     document_text: str | None
+    # Explicit values from the orchestrator's tool call; each wins over what
+    # extraction read from the photo/text.
+    severity: str | None
+    attachment_url: str | None
 
     # incident_onboard intermediate results
     extracted: dict[str, Any] | None

@@ -128,3 +128,23 @@ def test_invalidate_namespace_on_insights_itself_does_not_double_purge_unrelated
     cache.invalidate_namespace("insights", "org-1")  # a write funnelled through insights (none exist, but defensively)
 
     assert cache.check("fuel", {"query_entity": "fuel_trends"}, "org-1") == "fuel data"
+
+
+def test_same_org_different_users_never_share_a_cached_read() -> None:
+    """The backend scopes reads by role/identity (a driver sees only their own
+    fuel logs), so a shared cache keyed by org alone would leak rows."""
+    cache = ExecutionCache()
+    args = {"query_entity": "fuel_logs"}
+    cache.store("fuel", args, "org-1", "admin's full fleet view", user_id="admin-1")
+
+    assert cache.check("fuel", args, "org-1", user_id="driver-7") is None
+    assert cache.check("fuel", args, "org-1", user_id="admin-1") == "admin's full fleet view"
+
+
+def test_a_write_purges_every_users_cached_reads_for_that_org() -> None:
+    cache = ExecutionCache()
+    cache.store("fuel", {"query_entity": "fuel_logs"}, "org-1", "stale", user_id="u1")
+    cache.store("fuel", {"query_entity": "fuel_logs"}, "org-1", "stale", user_id="u2")
+    cache.invalidate_namespace("fuel", "org-1")
+    assert cache.check("fuel", {"query_entity": "fuel_logs"}, "org-1", user_id="u1") is None
+    assert cache.check("fuel", {"query_entity": "fuel_logs"}, "org-1", user_id="u2") is None

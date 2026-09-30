@@ -216,3 +216,47 @@ def test_trip_audit_flags_off_hours_trips(backend: _FakeBackend) -> None:
 
     assert state["stage"] == "done"
     assert [t["id"] for t in state["audit_result"]] == ["t2"]
+
+
+# --- explicit severity / attachment_url from the orchestrator's tool call ----------
+
+
+def _incident(backend: _FakeBackend, extraction: IncidentExtraction, **tool_args):
+    backend.vehicles = [{"id": "v1", "plate_number": "ABC-123"}]
+    deps = _deps(backend, extract_incident=lambda img, mime, text=None: extraction)
+    return get_compiled_accountability_graph(deps).invoke(
+        {"token": _token("admin"), "document_type": "incident_report", "document_text": "typed account", **tool_args}
+    )
+
+
+def test_explicit_severity_overrides_extraction_and_fills_a_gap(backend: _FakeBackend) -> None:
+    unread = IncidentExtraction(vehicle_plate="ABC-123", damage_description="Side swipe")
+    assert _incident(backend, unread, severity="severe")["created_record"]["severity"] == "severe"
+
+    misread = IncidentExtraction(vehicle_plate="ABC-123", damage_description="Side swipe", severity="minor")
+    assert _incident(backend, misread, severity="critical")["created_record"]["severity"] == "critical"
+
+
+@pytest.mark.parametrize(
+    ("said", "filed"),
+    [("High", "severe"), ("serious", "severe"), ("low", "minor"), ("Medium", "moderate"), ("fatal", "critical")],
+)
+def test_common_severity_words_map_onto_the_four_levels(backend: _FakeBackend, said: str, filed: str) -> None:
+    extraction = IncidentExtraction(vehicle_plate="ABC-123", damage_description="Dent", severity=said)
+    assert _incident(backend, extraction)["created_record"]["severity"] == filed
+
+
+def test_unrecognised_severity_halts_instead_of_guessing(backend: _FakeBackend) -> None:
+    state = _incident(backend, IncidentExtraction(vehicle_plate="ABC-123", damage_description="Dent", severity="meh"))
+    assert state["stage"] == "halted"
+    assert "minor, moderate, severe or critical" in state["halt_reason"]
+    assert backend.create_incident_calls == 0
+
+
+def test_explicit_attachment_url_is_filed_and_unsafe_ones_are_dropped(backend: _FakeBackend) -> None:
+    extraction = IncidentExtraction(vehicle_plate="ABC-123", damage_description="Dent", severity="minor")
+    filed = _incident(backend, extraction, attachment_url="/uploads/incidents/abc.jpg")
+    assert filed["created_record"]["attachment_url"] == "/uploads/incidents/abc.jpg"
+
+    from_text = extraction.model_copy(update={"attachment_url": "javascript:alert(1)"})
+    assert _incident(backend, from_text)["created_record"]["attachment_url"] is None

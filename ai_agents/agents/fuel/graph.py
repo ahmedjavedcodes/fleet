@@ -98,7 +98,14 @@ def inject_context(state: FuelAgentState) -> FuelAgentState:
 def classify_intent(state: FuelAgentState) -> FuelAgentState:
     if state.get("image_bytes"):
         return {**state, "intent": "receipt_onboard", "stage": "extracting"}
-    if state.get("trip_fields") is not None:
+    trip_fields = state.get("trip_fields")
+    if trip_fields is not None:
+        # Same up-front check as fuel_fields: a bad key or a negative
+        # fuel_consumed halts with a readable reason, not a traceback.
+        try:
+            TripLogCreateInput(**trip_fields)
+        except (ValidationError, TypeError) as exc:
+            return {**state, "intent": "trip_log", "stage": "halted", "halt_reason": f"Invalid trip_fields: {exc}"}
         return {**state, "intent": "trip_log", "stage": "creating_trip"}
     if state.get("fuel_fields") is not None:
         # Text-only fuel log (no receipt photo): every FuelLogCreateInput field must

@@ -32,6 +32,7 @@ class _FakeBackend:
         self.vehicles: list[dict] = []
         self.fuel_logs: list[dict] = []
         self.trip_logs: list[dict] = []
+        self.drivers: list[dict] = []
         self.fuel_trends = {"months": []}
         self.create_fuel_calls = 0
         self.create_trip_calls = 0
@@ -46,6 +47,8 @@ class _FakeBackend:
             return list(self.trip_logs)
         if method == "GET" and path == "/api/v1/dashboard/fuel-trends":
             return self.fuel_trends
+        if method == "GET" and path == "/api/v1/drivers":
+            return list(self.drivers)
 
         if method == "POST" and path == "/api/v1/fuel":
             self.create_fuel_calls += 1
@@ -190,11 +193,29 @@ def test_ac7_driver_trip_log_driver_id_overridden(backend: _FakeBackend) -> None
         "driver_id": "someone-elses-id", "vehicle_id": "v1", "start_time": "2026-01-01T08:00:00",
         "end_time": "2026-01-01T09:00:00", "start_odometer": 1000, "end_odometer": 1050,
     }
+    backend.drivers = [{"id": "driver-profile-id", "user_id": "driver-self-id"}]
     state = graph.invoke({"token": _token("driver", sub="driver-self-id"), "trip_fields": trip_fields})
 
     assert state["stage"] == "done"
-    assert state["created_record"]["driver_id"] == "driver-self-id"
+    # The caller's Driver.id (resolved from their User.id), never the JWT sub itself.
+    assert state["created_record"]["driver_id"] == "driver-profile-id"
     assert backend.create_trip_calls == 1
+
+
+def test_trip_log_carries_fuel_consumed_and_rejects_a_bad_key(backend: _FakeBackend) -> None:
+    graph = get_compiled_fuel_graph(_deps(backend))
+    trip_fields = {
+        "driver_id": "d1", "vehicle_id": "v1", "start_time": "2026-01-01T08:00:00",
+        "end_time": "2026-01-01T09:00:00", "start_odometer": 1000, "end_odometer": 1050, "fuel_consumed": 32.5,
+    }
+    state = graph.invoke({"token": _token("admin"), "trip_fields": trip_fields})
+    assert state["stage"] == "done"
+    assert state["created_record"]["fuel_consumed"] == "32.5"
+
+    bad = graph.invoke({"token": _token("admin"), "trip_fields": {**trip_fields, "fuel_litres": 3}})
+    assert bad["stage"] == "halted"
+    assert "Invalid trip_fields" in bad["halt_reason"]
+    assert backend.create_trip_calls == 1  # the bad call never reached the backend
 
 
 @pytest.mark.parametrize("role", ["admin", "fleet_manager", "driver"])

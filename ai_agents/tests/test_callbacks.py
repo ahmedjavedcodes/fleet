@@ -164,3 +164,26 @@ def test_run_worker_drains_queue_via_sink() -> None:
 
     asyncio.run(_run())
     assert len(received) == 2
+
+
+def test_activity_sink_receives_each_step_attributed_to_its_agent() -> None:
+    received: list[tuple[str, str]] = []
+    observer = _observer(activity_sink=lambda agent, text: received.append((agent, text)))
+
+    observer.record_node("plan")
+    observer.start_tool_call("c1", "fuel", {"trip_fields": {"vehicle_id": "v1"}})
+    observer.record_hitl_pause()
+
+    assert received == [
+        ("orchestrator", "Thinking and planning next steps..."),
+        ("fuel", "Logging the trip..."),
+        ("orchestrator", "Action paused: Waiting for your approval."),
+    ]
+
+
+def test_a_failing_activity_sink_never_breaks_the_turn() -> None:
+    def boom(agent, text):
+        raise RuntimeError("client went away")
+
+    observer = _observer(activity_sink=boom)
+    assert observer.record_node("plan") == "Thinking and planning next steps..."

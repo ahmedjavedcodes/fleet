@@ -59,6 +59,10 @@ logger = logging.getLogger("fleet.telemetry")
 
 TraceSink = Callable[[LLMTrace | ToolTrace], Awaitable[None]]
 
+# Activity attributed to the orchestrator itself (planning, drafting, HITL pause)
+# rather than to one of the tools.
+ORCHESTRATOR_AGENT = "orchestrator"
+
 
 async def log_sink(trace: LLMTrace | ToolTrace) -> None:
     """Default sink -- see module docstring point 3."""
@@ -74,6 +78,7 @@ class FleetLiveObserver(AsyncCallbackHandler):
         role: str,
         sink: TraceSink = log_sink,
         ui_sink: Callable[[str], None] | None = None,
+        activity_sink: Callable[[str, str], None] | None = None,
         model_name: str = "unknown",
     ) -> None:
         self.organization_id = organization_id
@@ -81,6 +86,9 @@ class FleetLiveObserver(AsyncCallbackHandler):
         self.role = role
         self.sink = sink
         self.ui_sink = ui_sink
+        # (agent, message) -- the same UI strings, attributed to the agent doing
+        # the work, for a live activity feed. Reassignable per turn by the caller.
+        self.activity_sink = activity_sink
         self.model_name = model_name
 
         self.trace_id: str = str(uuid.uuid4())
@@ -95,7 +103,9 @@ class FleetLiveObserver(AsyncCallbackHandler):
 
     def start_turn(self) -> str:
         """Fresh trace_id per session turn (FR 4) -- OrchestratorSession
-        calls this once at the start of run()/approve()/reject()/modify()."""
+        calls this once at the start of run(). approve()/modify()/reject()
+        deliberately do not: an approval round-trip is part of the turn that
+        paused, so its traces share that turn's trace_id."""
         self.trace_id = str(uuid.uuid4())
         self.ui_messages = []
         return self.trace_id
@@ -125,11 +135,13 @@ class FleetLiveObserver(AsyncCallbackHandler):
         except Exception:  # noqa: BLE001 -- FR 6: telemetry must never break the caller
             logger.exception("FleetLiveObserver: sink failed for trace_id=%s", trace.trace_id)
 
-    def _emit_ui(self, message: str) -> None:
+    def _emit_ui(self, message: str, agent: str = ORCHESTRATOR_AGENT) -> None:
         try:
             self.ui_messages.append(message)
             if self.ui_sink is not None:
                 self.ui_sink(message)
+            if self.activity_sink is not None:
+                self.activity_sink(agent, message)
         except Exception:  # noqa: BLE001 -- FR 6
             logger.exception("FleetLiveObserver: UI sink failed")
 
@@ -168,7 +180,7 @@ class FleetLiveObserver(AsyncCallbackHandler):
         except Exception:  # noqa: BLE001 -- FR 6
             logger.exception("FleetLiveObserver: tool interpolation failed for %r", tool_name)
             message = "Working on it..."
-        self._emit_ui(message)
+        self._emit_ui(message, tool_name)
         return message
 
     def record_tool_result(

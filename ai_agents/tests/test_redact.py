@@ -46,3 +46,20 @@ def test_does_not_mutate_input() -> None:
 def test_document_text_and_image_bytes_redacted() -> None:
     result = redact_payload({"document_text": "some ocr'd text", "image_bytes": b"binary"})
     assert result == {"document_text": "[REDACTED]", "image_bytes": "[REDACTED]"}
+
+
+def test_backend_field_names_and_credentials_are_redacted() -> None:
+    from orchestrator.redact import redact_payload
+
+    raw = {
+        "created_record": {"full_name": "Jane", "phone": "+923001234567", "license_number": "LIC-1"},
+        "headers": {"Authorization": "Bearer abc"},
+        "password": "hunter2",
+        "_pending_image_bytes": b"\xff\xd8",
+    }
+    redacted = redact_payload(raw)
+    assert redacted["created_record"] == {"full_name": "Jane", "phone": "[REDACTED]", "license_number": "[REDACTED]"}
+    assert redacted["headers"]["Authorization"] == "[REDACTED]"
+    assert redacted["password"] == "[REDACTED]"
+    assert redacted["_pending_image_bytes"] == "[REDACTED]"
+    assert raw["created_record"]["phone"] == "+923001234567"  # input untouched

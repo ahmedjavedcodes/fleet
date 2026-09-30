@@ -39,3 +39,13 @@ def test_unknown_tool_falls_back_to_generic() -> None:
 
 def test_hitl_pause_message_is_exact() -> None:
     assert HITL_PAUSE_MESSAGE == "Action paused: Waiting for your approval."
+
+
+def test_write_calls_and_the_non_agent_tools_get_specific_strings() -> None:
+    from orchestrator.ui_interpolation import interpolate_tool_start
+
+    assert interpolate_tool_start("fuel", {"trip_fields": {"vehicle_id": "v1"}}) == "Logging the trip..."
+    assert interpolate_tool_start("fuel", {"fuel_fields": {"slip_id": "S1"}}) == "Recording the fuel log..."
+    assert interpolate_tool_start("accountability", {"document_type": "incident_report"}) == "Filing the incident report..."
+    assert interpolate_tool_start("search_documents", {"query": "tyre pressure"}) == "Searching uploaded documents..."
+    assert interpolate_tool_start("update_memory", {"content": "x"}) == "Preparing a note to remember..."

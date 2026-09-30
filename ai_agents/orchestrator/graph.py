@@ -368,7 +368,8 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             cache_eligible = deps.cache is not None and is_read_only
             if cache_eligible:
                 cached = deps.cache.check(
-                    agent_name, validated_dict, auth_context.get("organization_id") or "", raw_args=normalized_args
+                    agent_name, validated_dict, auth_context.get("organization_id") or "", raw_args=normalized_args,
+                    user_id=auth_context.get("user_id") or "",
                 )
                 if cached is not None:
                     scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": cached})
@@ -421,7 +422,10 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             # transient backend timeout) staying cached for ttl_seconds would
             # keep returning stale failures after the underlying issue clears.
             if cache_eligible and result.status == "done":
-                deps.cache.store(agent_name, validated_dict, auth_context.get("organization_id") or "", observation, raw_args=normalized_args)
+                deps.cache.store(
+                    agent_name, validated_dict, auth_context.get("organization_id") or "", observation,
+                    raw_args=normalized_args, user_id=auth_context.get("user_id") or "",
+                )
 
             # "Fresh Data" post-hook (execution-post_hooks.md §2): a
             # successful WRITE purges its own agent's cached reads (plus
@@ -527,8 +531,19 @@ def _make_fact_check_node(deps: OrchestratorDeps):
         if retries >= MAX_FACT_CHECK_RETRIES:
             return state
 
-        scratchpad_text = _scratchpad_to_text(state.get("scratchpad") or [])
-        hallucinated = check_response_against_scratchpad(deps.fact_checker_llm, scratchpad_text, state.get("final_response") or "")
+        scratchpad = state.get("scratchpad") or []
+        # No tool ran this turn (a greeting, a clarifying question, an answer
+        # from memory or earlier turns): there are no observations to check
+        # against, and flagging every name would force pointless rewrites.
+        if not scratchpad:
+            return state
+
+        # Memory is grounding too: an answer that uses a recalled fact is not
+        # a hallucination just because no tool repeated it this turn.
+        grounding = _scratchpad_to_text(scratchpad)
+        if state.get("memory_context"):
+            grounding += f"\n[memory] {state['memory_context']}"
+        hallucinated = check_response_against_scratchpad(deps.fact_checker_llm, grounding, state.get("final_response") or "")
         if not hallucinated:
             return state
 

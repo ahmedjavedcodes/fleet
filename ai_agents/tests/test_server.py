@@ -161,3 +161,70 @@ def test_approve_endpoint_calls_session_approve(client, monkeypatch):
     resp = client.post(f"/api/v1/chat/sessions/{session_id}/approve", headers=_auth())
     assert resp.status_code == 200
     assert "Done." in resp.text
+
+
+# --- the full hook set, and the live activity feed ------------------------------------
+
+
+def test_every_session_is_built_with_the_full_hook_set(monkeypatch):
+    from orchestrator.cache import ExecutionCache
+    from orchestrator.callbacks import FleetLiveObserver
+    from orchestrator.webhooks import AlertDispatcher
+
+    built = {}
+
+    class _Capture(_FakeSession):
+        def __init__(self, token, **kwargs):
+            super().__init__(token, **kwargs)
+            built["deps"] = kwargs["deps"]
+
+    monkeypatch.setattr(server, "OrchestratorSession", _Capture)
+    monkeypatch.setattr(server, "_fact_checker_llm", lambda: "checker")
+    monkeypatch.setattr(server, "_shared_memory", lambda: "memory")
+    server._open_session(_token(sub="user-9"))
+
+    deps = built["deps"]
+    assert deps.memory == "memory"
+    assert deps.fact_checker_llm == "checker"
+    assert isinstance(deps.cache, ExecutionCache) and deps.cache is server._EXECUTION_CACHE
+    assert isinstance(deps.webhooks, AlertDispatcher)
+    assert isinstance(deps.observer, FleetLiveObserver)
+    assert (deps.observer.user_id, deps.observer.organization_id, deps.observer.role) == ("user-9", "org-1", "admin")
+
+
+def test_observer_steps_stream_live_as_activity_events(client, monkeypatch):
+    import json
+
+    from orchestrator.callbacks import FleetLiveObserver
+
+    class _ObservedSession(_FakeSession):
+        def __init__(self, token, **kwargs):
+            super().__init__(token, **kwargs)
+            self.deps = type("Deps", (), {"observer": FleetLiveObserver(organization_id="org-1", user_id="user-1", role="admin")})()
+
+        def run(self, message):
+            observer = self.deps.observer
+            observer.record_node("plan")
+            observer.start_tool_call("c1", "fuel", {"trip_fields": {"vehicle_id": "v1"}})
+            observer.start_tool_call("c2", "made_up_tool", {})
+            observer.record_node("synthesize")
+            return TurnResult(status="done", final_response="Logged.", hitl_state=None, state={})
+
+    monkeypatch.setattr(server, "OrchestratorSession", _ObservedSession)
+    session_id = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+    resp = client.post(f"/api/v1/chat/sessions/{session_id}/messages", json={"message": "log a trip"}, headers=_auth())
+
+    activity = [json.loads(f["data"]) for f in _parse_sse(resp.text) if f["event"] == "activity"]
+    assert [(a["agent"], a["step"], a["done"]) for a in activity] == [
+        ("orchestrator", "Reading your message…", False),
+        ("orchestrator", "Reading your message…", True),
+        ("orchestrator", "Thinking and planning next steps...", False),
+        ("orchestrator", "Thinking and planning next steps...", True),
+        ("fuel", "Logging the trip...", False),
+        ("fuel", "Logging the trip...", True),
+        ("orchestrator", "Working on it...", False),  # unknown tool name: never an agent key the UI can't parse
+        ("orchestrator", "Working on it...", True),
+        ("orchestrator", "Drafting final response...", False),
+        ("orchestrator", "Drafting final response...", True),
+    ]
+    assert server._SESSIONS[session_id].deps.observer.activity_sink is None  # detached after the turn

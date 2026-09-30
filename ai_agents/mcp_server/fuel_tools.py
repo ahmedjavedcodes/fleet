@@ -61,9 +61,20 @@ def create_trip_log_tool(context: AgentContext, data: TripLogCreateInput) -> dic
     # driver_id. Compensate for that gap here (fuel-agent.md FR 7).
     payload = data.model_dump(mode="json")
     if context.role == "driver":
-        payload["driver_id"] = context.user_id
+        payload["driver_id"] = _own_driver_id(context)
 
     return call_backend("POST", "/api/v1/trips", token=context.token, json=payload)
+
+
+def _own_driver_id(context: AgentContext) -> str:
+    """The caller's Driver.id. The JWT's sub is a User.id -- a different
+    primary key (Driver links to User via Driver.user_id) -- so it can't be
+    used as trip_logs.driver_id directly."""
+    drivers = call_backend("GET", "/api/v1/drivers", token=context.token) or []
+    driver_id = next((d["id"] for d in drivers if d.get("user_id") == context.user_id), None)
+    if driver_id is None:
+        raise PermissionDeniedError("Your account has no linked driver profile, so trips can't be logged under it.")
+    return driver_id
 
 
 # ---- Fuel trends (dashboard analytics) ----

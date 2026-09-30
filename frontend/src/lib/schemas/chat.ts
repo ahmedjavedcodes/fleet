@@ -8,7 +8,19 @@ import { documentSearchHitSchema } from "./document"
 // proxied through /api/proxy-agents. Re-verify against those two files if
 // either changes (CLAUDE.md §8).
 
-export const agentKeySchema = z.enum(["foundation", "fuel", "maintenance", "accountability", "insights", "assignment", "search_documents", "update_memory"])
+// "orchestrator" marks the Grand Orchestrator's own steps (planning, drafting,
+// an approval pause) in the live activity feed, as opposed to a sub-agent's.
+export const agentKeySchema = z.enum([
+  "foundation",
+  "fuel",
+  "maintenance",
+  "accountability",
+  "insights",
+  "assignment",
+  "search_documents",
+  "update_memory",
+  "orchestrator",
+])
 export type AgentKey = z.infer<typeof agentKeySchema>
 
 // orchestrator/state.py's HitlState TypedDict — `state` here is the paused

@@ -419,3 +419,40 @@ def test_pinecone_embedder_requires_key(monkeypatch) -> None:
     monkeypatch.delenv("PINECONE_API_KEY", raising=False)
     with pytest.raises(EmbeddingError):
         get_default_embedder()
+
+
+def test_fetch_context_reads_summary_and_facts_concurrently() -> None:
+    """Each fake read waits for the other to have started: a sequential
+    fetch_context would time out here instead of returning both sections."""
+    import threading
+
+    session_started, search_started = threading.Event(), threading.Event()
+
+    class ConcurrentTools(FakeMemoryTools):
+        def get_session_context_tool(self, context, session_id, timeout=10.0):
+            session_started.set()
+            assert search_started.wait(2), "summary read ran strictly before the fact search"
+            return super().get_session_context_tool(context, session_id, timeout)
+
+        def search_memories_tool(self, context, payload, timeout=10.0):
+            search_started.set()
+            assert session_started.wait(2), "fact search ran strictly before the summary read"
+            return super().search_memories_tool(context, payload, timeout)
+
+    tools = ConcurrentTools(summary="Earlier summary.", facts=[{"scope": "personal", "content": "Prefers PKR"}])
+    text = _memory(tools).fetch_context(CTX, "s1", "fuel?")
+    assert "Earlier summary." in text and "Prefers PKR" in text
+
+
+def test_summarizer_keeps_the_last_five_messages_verbatim() -> None:
+    from memory import summarizer as summarizer_module
+
+    applied = {}
+    summarizer = SessionSummarizer(
+        llm=_FakeSummaryLLM(["folded"]),
+        get_context=lambda ctx, sid: _snapshot(6),
+        apply_summary=lambda ctx, sid, **kw: applied.update(kw),
+    )
+    assert summarizer_module.WINDOW_SIZE == 5
+    assert summarizer.summarize(CTX, "s1") is True
+    assert len(applied["message_ids"]) == 1  # the 6th message folds exactly the oldest one

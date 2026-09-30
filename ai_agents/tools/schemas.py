@@ -158,7 +158,8 @@ class TripLogCreateInput(BaseModel):
     end_time: datetime
     start_odometer: int
     end_odometer: int
-    fuel_consumed: Decimal | None = None
+    # Liters burned on the trip; the backend rejects negatives too.
+    fuel_consumed: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
 
 

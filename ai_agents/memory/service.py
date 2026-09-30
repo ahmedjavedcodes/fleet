@@ -25,13 +25,19 @@ from tools.auth_context import AgentContext
 
 logger = logging.getLogger("fleet.memory")
 
-FETCH_TIMEOUT_SECONDS = 0.5
+# Measured ~0.45s per backend call on the dev stack; the two reads below run
+# concurrently, so this leaves headroom while staying far below one LLM call.
+FETCH_TIMEOUT_SECONDS = 1.5
 RECENT_MESSAGE_LIMIT = 6
 # Cosine-distance cutoff for recall. Calibrated live against Pinecone's
 # llama-text-embed-v2: a correct paraphrase match ("what currency should I
 # show expenses in?" -> "User prefers ... PKR") scored 0.675, above the
 # backend's generic 0.5 default; an unrelated fact scored > 0.8.
 MAX_RECALL_DISTANCE = 0.75
+
+# Separate from the single-worker `background` executor: that one serializes
+# message writes, and a hot-path read must never queue behind them.
+_FETCH_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="memory-summary-read")
 
 
 class AgentMemory:
@@ -90,10 +96,13 @@ class AgentMemory:
         caller (graph.py's fetch_memory node) owns timeout and fail-open."""
         sections: list[str] = []
 
-        if session_id:
-            session = self.tools.get_session_context_tool(context, session_id, timeout=self.fetch_timeout_s)["session"]
-            if session.get("running_summary"):
-                sections.append(f"Earlier in this conversation:\n{session['running_summary']}")
+        # The session summary and the fact search are independent reads, so
+        # they run side by side -- sequential, they'd cost two round trips.
+        summary_future = (
+            _FETCH_POOL.submit(self.tools.get_session_context_tool, context, session_id, timeout=self.fetch_timeout_s)
+            if session_id
+            else None
+        )
 
         embedding = self._embed(query_text, task="search_query") if query_text else None
         payload: dict[str, Any] = {"top_k": self.top_k}
@@ -103,6 +112,12 @@ class AgentMemory:
         elif query_text:
             payload["query_text"] = query_text
         facts = self.tools.search_memories_tool(context, payload, timeout=self.fetch_timeout_s)
+
+        if summary_future is not None:
+            session = summary_future.result()["session"]
+            if session.get("running_summary"):
+                sections.append(f"Earlier in this conversation:\n{session['running_summary']}")
+
         if facts:
             lines = []
             for fact in facts:

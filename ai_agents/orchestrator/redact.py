@@ -19,11 +19,18 @@ from typing import Any
 DEFAULT_BLOCKLIST = frozenset({
     "license_number",
     "phone_number",
+    # The backend's own name for a driver/supplier phone field -- driver rows
+    # reach the trace through raw_result, so this is the key that matters.
+    "phone",
     "document_text",
     "image_bytes",
+    "_pending_image_bytes",
     "token",
     "access_token",
     "jwt",
+    "authorization",
+    "password",
+    "api_key",
 })
 
 _REDACTED = "[REDACTED]"

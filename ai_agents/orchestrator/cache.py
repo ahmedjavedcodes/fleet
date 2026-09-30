@@ -54,9 +54,20 @@ class CacheConfig(BaseModel):
 DEFAULT_CACHE_CONFIG = CacheConfig()
 
 
-def _cache_key(tool_name: str, validated_args: dict[str, Any], organization_id: str) -> str:
-    payload = json.dumps({"tool": tool_name, "args": validated_args, "org": organization_id}, sort_keys=True, default=str)
+def _cache_key(tool_name: str, validated_args: dict[str, Any], organization_id: str, user_id: str) -> str:
+    # user_id is part of the key because the backend scopes reads by role and
+    # identity (a driver sees only their own fuel logs): one user's cached
+    # observation must never be served to another user of the same org.
+    payload = json.dumps(
+        {"tool": tool_name, "args": validated_args, "org": organization_id, "user": user_id}, sort_keys=True, default=str
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _read_scope(organization_id: str, user_id: str) -> str:
+    """What a semantic backend must partition by: the same org+user scope as
+    the exact-tier key, for the same role-scoped-read reason."""
+    return f"{organization_id}/{user_id}" if user_id else organization_id
 
 
 def _namespace(tool_name: str, organization_id: str) -> str:
@@ -136,17 +147,25 @@ class ExecutionCache:
         self.semantic = semantic_backend or NullSemanticCacheBackend()
 
     def check(
-        self, tool_name: str, validated_args: dict[str, Any], organization_id: str, *, raw_args: dict[str, Any] | None = None
+        self,
+        tool_name: str,
+        validated_args: dict[str, Any],
+        organization_id: str,
+        *,
+        raw_args: dict[str, Any] | None = None,
+        user_id: str = "",
     ) -> str | None:
         if tool_name not in self.config.enabled_tools:
             return None
 
-        key = _cache_key(tool_name, validated_args, organization_id)
+        key = _cache_key(tool_name, validated_args, organization_id, user_id)
         hit = self.exact.get(key)
         if hit is not None:
             return hit
 
-        hit = self.semantic.query(tool_name, raw_args or validated_args, organization_id, threshold=self.config.semantic_threshold)
+        hit = self.semantic.query(
+            tool_name, raw_args or validated_args, _read_scope(organization_id, user_id), threshold=self.config.semantic_threshold
+        )
         if hit is not None:
             # Promote a semantic hit into Tier 1 too, so an identical repeat
             # of THIS exact call is a Tier-1 hit next time.
@@ -161,12 +180,13 @@ class ExecutionCache:
         observation: str,
         *,
         raw_args: dict[str, Any] | None = None,
+        user_id: str = "",
     ) -> None:
         if tool_name not in self.config.enabled_tools:
             return
-        key = _cache_key(tool_name, validated_args, organization_id)
+        key = _cache_key(tool_name, validated_args, organization_id, user_id)
         self.exact.set(key, observation, ttl_seconds=self.config.ttl_seconds, namespace=_namespace(tool_name, organization_id))
-        self.semantic.store(tool_name, raw_args or validated_args, organization_id, observation)
+        self.semantic.store(tool_name, raw_args or validated_args, _read_scope(organization_id, user_id), observation)
 
     def invalidate_namespace(self, tool_name: str, organization_id: str) -> None:
         """Write-aware invalidation, per execution-post_hooks.md §2.

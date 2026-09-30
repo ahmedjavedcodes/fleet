@@ -31,8 +31,10 @@ from tools.auth_context import AgentContext
 
 logger = logging.getLogger("fleet.memory")
 
-# Most recent messages kept verbatim; everything older is folded into the summary.
-WINDOW_SIZE = 4
+# Most recent messages kept verbatim; everything older is folded into the
+# summary. The backend flags a session once it holds more than 5 unsummarized
+# messages, so the 6th message folds exactly the oldest one.
+WINDOW_SIZE = 5
 MAX_SUMMARY_TOKENS = 1_000
 MAX_RECOMPRESSIONS = 2
 

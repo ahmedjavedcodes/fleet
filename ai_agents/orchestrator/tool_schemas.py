@@ -22,6 +22,8 @@ sub-agent state the LLM's document_type selects.
 
 from __future__ import annotations
 
+from datetime import date as date_type
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -51,29 +53,71 @@ class FoundationToolInput(BaseModel):
     query_entity: Literal["vehicles", "drivers", "suppliers"] | None = None
 
 
+class TripFields(BaseModel):
+    """A completed trip. Both ends are required -- there is no in-progress trip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str = Field(description="Driver UUID from a prior tool observation.")
+    vehicle_id: str = Field(description="Vehicle UUID from a prior tool observation.")
+    start_time: datetime = Field(description="ISO-8601 date-time the trip started.")
+    end_time: datetime = Field(description="ISO-8601 date-time the trip ended.")
+    start_odometer: int = Field(gt=0, description="Odometer (km) at the start of the trip.")
+    end_odometer: int = Field(gt=0, description="Odometer (km) at the end of the trip.")
+    fuel_consumed: float | None = Field(
+        default=None,
+        ge=0,
+        description="Fuel used on the trip, in LITERS. Only set it when the user states it; convert gallons (x3.785). Omit if unknown -- never guess.",
+    )
+    notes: str | None = None
+
+
+class FuelFields(BaseModel):
+    """Fuel slip details. Every key is optional here; without a receipt photo
+    the fuel agent additionally requires vehicle_id, date, odometer_reading,
+    liters_filled, price_per_liter and total_cost."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_id: str | None = None
+    driver_id: str | None = None
+    date: date_type | None = None
+    odometer_reading: int | None = Field(default=None, gt=0)
+    liters_filled: float | None = Field(default=None, gt=0)
+    price_per_liter: float | None = Field(default=None, gt=0)
+    total_cost: float | None = Field(default=None, ge=0)
+    slip_id: str | None = None
+    po_number: str | None = None
+    payment_method: str | None = None
+    card_used: str | None = None
+    fuel_station_name: str | None = None
+    notes: str | None = None
+
+
 class FuelToolInput(BaseModel):
     """Fuel Agent. Set document_type="receipt" when the user attached a fuel
     receipt photo this turn. Set trip_fields to log a trip -- vehicle_id and
     driver_id must already be resolved UUIDs (query first if you only have a
-    plate/name); trip_fields keys: driver_id, vehicle_id, start_time, end_time,
-    start_odometer, end_odometer, fuel_consumed, notes.
+    plate/name). trip_fields.fuel_consumed is the fuel burned on that trip in
+    LITERS: include it only when the user states it (e.g. "used 32 litres"),
+    never estimate it.
 
     Set fuel_fields for slip/receipt details the user states in chat. With a
     receipt photo it supplements/overrides what the photo shows; without a photo
     it must hold a complete log (vehicle_id, date, odometer_reading,
-    liters_filled, price_per_liter, total_cost). Keys: slip_id, po_number,
-    payment_method, card_used, fuel_station_name, driver_id, notes.
+    liters_filled, price_per_liter, total_cost).
 
     Set query_entity for a read; fuel rows include slip_id, po_number,
     payment_method, card_used, fuel_station_name, cost_per_km, vehicle_name,
     vehicle_plate and driver_name; trip rows include vehicle_name,
-    vehicle_plate, driver_name, start_time and start/end odometers."""
+    vehicle_plate, driver_name, start_time, start/end odometers and
+    fuel_consumed (liters, may be null)."""
 
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["receipt"] | None = None
-    trip_fields: dict[str, Any] | None = None
-    fuel_fields: dict[str, Any] | None = None
+    trip_fields: TripFields | None = None
+    fuel_fields: FuelFields | None = None
     query_entity: Literal["fuel_logs", "trip_logs", "fuel_trends"] | None = None
 
 
@@ -95,21 +139,35 @@ class MaintenanceToolInput(BaseModel):
     query_entity: Literal["maintenance_logs", "inventory", "low_stock"] | None = None
 
 
+IncidentSeverityLiteral = Literal["minor", "moderate", "severe", "critical"]
+
+
 class AccountabilityToolInput(BaseModel):
-    """Driver Accountability Agent. Set document_type="incident_report" when
-    the user attached a photo this turn, or document_text for a typed
-    statement -- state the incident_time (date AND time), location_area (the
-    zone/site), remarks and any attachment_url plainly in document_text so
-    they are captured. Set audit_target ({"driver_id"|"vehicle_id": ...,
-    "start_hour": ..., "end_hour": ...}) to run the off-hours trip audit. Set
-    query_entity (+ query_driver_id for driver_safety) for a read; incident
-    rows include incident_time, location_area, remarks, attachment_url,
+    """Driver Accountability Agent. To report an incident set
+    document_type="incident_report" and put the user's typed account in
+    document_text (or leave it empty when they attached a photo this turn);
+    state the incident_time (date AND time), location_area (the zone/site)
+    and remarks plainly in document_text so they are captured.
+
+    Set severity whenever the user states or clearly implies it, using exactly
+    one of: minor (cosmetic, no injury), moderate (repair needed, vehicle still
+    usable), severe (vehicle off the road, or any injury), critical (serious
+    injury, fatality, or third-party liability). Severe and critical incidents
+    alert fleet managers. Set attachment_url only to an image link the user
+    gave you (an uploaded "/uploads/..." path or an http(s) URL) -- never invent one.
+
+    Set audit_target ({"driver_id"|"vehicle_id": ..., "start_hour": ...,
+    "end_hour": ...}) to run the off-hours trip audit. Set query_entity
+    (+ query_driver_id for driver_safety) for a read; incident rows include
+    severity, incident_time, location_area, remarks, attachment_url,
     driver_name, vehicle_name and vehicle_plate."""
 
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["incident_report"] | None = None
     document_text: str | None = None
+    severity: IncidentSeverityLiteral | None = None
+    attachment_url: str | None = Field(default=None, max_length=1000, pattern=r"^(/uploads/|https?://)\S+$")
     audit_target: dict[str, Any] | None = None
     query_entity: Literal["incidents", "driver_safety"] | None = None
     query_driver_id: str | None = None

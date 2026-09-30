@@ -25,12 +25,17 @@ graphs are), so the one thing a restart loses is a pending human-approval pause.
 
 Streaming model: `OrchestratorSession.run/approve/modify/reject` are
 synchronous, blocking calls (no token-level streaming inside the graph
-itself yet) — each runs in a thread pool, and the *result* is what streams
-back: one `activity` event while it's in flight, then the final response
-chunked word-by-word as `token` events so the UI has something to animate,
-then `done` (or `approval_required` on a HITL pause). This is a real
-response from a real multi-agent run, not a fake typing effect over mock
-data — only the chunking is presentational.
+itself yet) — each runs in a thread pool. While it runs, every step the
+session's FleetLiveObserver records (planning, each tool call, drafting, a
+HITL pause) streams as an `activity` event; then the final response is
+chunked word-by-word as `token` events, then `done` (or `approval_required`
+on a HITL pause). This is a real response from a real multi-agent run, not
+a fake typing effect over mock data — only the chunking is presentational.
+
+Every session gets the full hook set (see _build_deps): agent memory, the
+shared execution cache, the observer, the alert dispatcher and the
+fact-checker. OrchestratorDeps defaults all of them to None, so leaving one
+out here silently switches that hook off in production.
 """
 
 from __future__ import annotations
@@ -59,8 +64,12 @@ from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
 from mcp_server import memory_tools  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
+from orchestrator.cache import ExecutionCache  # noqa: E402
+from orchestrator.callbacks import ORCHESTRATOR_AGENT, FleetLiveObserver  # noqa: E402
+from orchestrator.fact_check import _default_fact_checker_llm  # noqa: E402
 from orchestrator.graph import OrchestratorDeps  # noqa: E402
 from orchestrator.session import OrchestratorSession, TurnResult  # noqa: E402
+from orchestrator.webhooks import AlertDispatcher  # noqa: E402
 from tools.api_client import BackendAPIError  # noqa: E402
 from tools.auth_context import AgentContext, InvalidTokenError, build_context  # noqa: E402
 
@@ -126,8 +135,41 @@ def _shared_memory() -> AgentMemory | None:
         return None
 
 
+# One cache for the whole process: keys are scoped by org AND user (reads are
+# role-scoped by the backend), and a write in any conversation purges that
+# org's namespace for every conversation, not just the one that wrote.
+_EXECUTION_CACHE = ExecutionCache()
+
+
+@lru_cache(maxsize=1)
+def _fact_checker_llm():
+    """The truth-checker runs after every synthesized answer. Fail-open like
+    memory: if its model can't be built, answers go out unchecked rather than
+    chat breaking."""
+    try:
+        return _default_fact_checker_llm()
+    except Exception:  # noqa: BLE001
+        logger.exception("fact-checker LLM could not start; answers will not be fact-checked")
+        return None
+
+
+def _build_deps(context: AgentContext) -> OrchestratorDeps:
+    return OrchestratorDeps(
+        memory=_shared_memory(),
+        cache=_EXECUTION_CACHE,
+        # Per conversation: traces carry this user's org/user ids, and
+        # _stream_turn points the observer's activity feed at the live response.
+        observer=FleetLiveObserver(
+            organization_id=context.organization_id, user_id=context.user_id, role=context.role
+        ),
+        webhooks=AlertDispatcher(),
+        fact_checker_llm=_fact_checker_llm(),
+    )
+
+
 def _open_session(token: str, **kwargs) -> OrchestratorSession:
-    return OrchestratorSession(token=token, deps=OrchestratorDeps(memory=_shared_memory()), **kwargs)
+    context = build_context(token)  # raises InvalidTokenError, which every caller maps to a 401
+    return OrchestratorSession(token=token, deps=_build_deps(context), **kwargs)
 
 
 def _raise_for_backend(exc: BackendAPIError) -> None:
@@ -209,22 +251,68 @@ def _sse(event: str, data: dict) -> dict:
     return {"event": event, "data": json.dumps(data)}
 
 
-async def _stream_turn(run_turn) -> EventSourceResponse:
-    """Runs a blocking OrchestratorSession call in a thread and streams the
-    result as SSE: `activity` while it's running, the final text chunked as
-    `token` events, then `done` or `approval_required`."""
+_OPENING_STEP = "Reading your message…"
+
+# The agent keys the frontend knows (lib/schemas/chat.ts agentKeySchema).
+# Anything else (e.g. a tool name the LLM hallucinated) is shown as the
+# orchestrator's own step rather than breaking the client's event parsing.
+_ACTIVITY_AGENTS = frozenset({
+    "foundation", "fuel", "maintenance", "accountability", "insights", "assignment",
+    "search_documents", "update_memory", ORCHESTRATOR_AGENT,
+})
+
+
+def _activity(step: tuple[str, str], *, done: bool) -> dict:
+    agent, text = step
+    return _sse("activity", {"agent": agent if agent in _ACTIVITY_AGENTS else ORCHESTRATOR_AGENT, "step": text, "done": done})
+
+
+async def _stream_turn(session: OrchestratorSession, run_turn) -> EventSourceResponse:
+    """Runs a blocking OrchestratorSession call in a thread and streams it as
+    SSE: each real step the FleetLiveObserver records (planning, each tool
+    call, drafting, a HITL pause) as an `activity` event while it runs -- the
+    previous step re-sent with done=true as the next one starts -- then the
+    final text chunked as `token` events, then `done` or `approval_required`."""
 
     async def events():
-        yield _sse("activity", {"agent": "foundation", "step": "Thinking…", "done": False})
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        steps: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        observer = getattr(getattr(session, "deps", None), "observer", None)
+        if observer is not None:
+            # Called from the worker thread running the turn.
+            observer.activity_sink = lambda agent, text: loop.call_soon_threadsafe(steps.put_nowait, (agent, text))
+
+        current = (ORCHESTRATOR_AGENT, _OPENING_STEP)
+        yield _activity(current, done=False)
+        turn = loop.run_in_executor(None, run_turn)
         try:
-            result: TurnResult = await loop.run_in_executor(None, run_turn)
+            while True:
+                next_step = asyncio.ensure_future(steps.get())
+                finished, _ = await asyncio.wait({turn, next_step}, return_when=asyncio.FIRST_COMPLETED)
+                if next_step not in finished:
+                    next_step.cancel()
+                    break
+                step = next_step.result()
+                if step != current:
+                    yield _activity(current, done=True)
+                    yield _activity(step, done=False)
+                    current = step
+            while not steps.empty():  # steps recorded in the turn's final instant
+                step = steps.get_nowait()
+                if step != current:
+                    yield _activity(current, done=True)
+                    yield _activity(step, done=False)
+                    current = step
+            result: TurnResult = turn.result()
         except Exception:  # noqa: BLE001 — never leak a stack trace to the browser
             logger.exception("chat turn failed")
             yield _sse("error", {"message": "The AI assistant hit an unexpected error. Please try again."})
             return
+        finally:
+            if observer is not None:
+                observer.activity_sink = None
 
-        yield _sse("activity", {"agent": "foundation", "step": "Thinking…", "done": True})
+        yield _activity(current, done=True)
 
         if result.status == "awaiting_approval":
             yield _sse("approval_required", {"hitl_state": result.hitl_state})
@@ -248,25 +336,25 @@ async def send_message(
 ) -> EventSourceResponse:
     # Resolving may call the backend (to resume), so keep it off the event loop.
     session = await asyncio.to_thread(_get_session, session_id, authorization)
-    return await _stream_turn(lambda: session.run(body.message))
+    return await _stream_turn(session, lambda: session.run(body.message))
 
 
 @app.post("/api/v1/chat/sessions/{session_id}/approve")
 async def approve(session_id: str, authorization: str | None = Header(default=None)) -> EventSourceResponse:
     session = await asyncio.to_thread(_get_session, session_id, authorization)
-    return await _stream_turn(session.approve)
+    return await _stream_turn(session, session.approve)
 
 
 @app.post("/api/v1/chat/sessions/{session_id}/modify")
 async def modify(session_id: str, body: ModifyRequest, authorization: str | None = Header(default=None)) -> EventSourceResponse:
     session = await asyncio.to_thread(_get_session, session_id, authorization)
-    return await _stream_turn(lambda: session.modify(body.updates))
+    return await _stream_turn(session, lambda: session.modify(body.updates))
 
 
 @app.post("/api/v1/chat/sessions/{session_id}/reject")
 async def reject(session_id: str, authorization: str | None = Header(default=None)) -> EventSourceResponse:
     session = await asyncio.to_thread(_get_session, session_id, authorization)
-    return await _stream_turn(session.reject)
+    return await _stream_turn(session, session.reject)
 
 
 # --- Session management (sidebar) -------------------------------------------------------
