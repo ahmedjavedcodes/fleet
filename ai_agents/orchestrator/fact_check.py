@@ -29,7 +29,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from core.llm_config import LLMProvider, get_chat_model
+from core.llm_failover import get_resilient_chat_model
 
 logger = logging.getLogger("fleet.fact_check")
 
@@ -45,7 +45,7 @@ _CHECK_SYSTEM_PROMPT = (
 
 def _default_fact_checker_llm():
     model = os.environ.get("FACT_CHECKER_MODEL", os.environ.get("ORCHESTRATOR_MODEL", "openai/gpt-oss-20b"))
-    return get_chat_model(LLMProvider.GROQ, model=model)
+    return get_resilient_chat_model(groq_model=model)
 
 
 def _scratchpad_to_text(scratchpad: list[dict[str, Any]]) -> str:

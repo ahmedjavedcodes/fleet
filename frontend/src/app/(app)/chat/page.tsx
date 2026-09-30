@@ -174,6 +174,9 @@ export default function ChatPage() {
       if (text) flush()
     }
     if (epoch !== epochRef.current) return
+    // A turn that produced no reply text (it failed, or paused for approval) must not leave an
+    // empty bubble behind; the error or approval card says what happened.
+    if (!text) setMessages((prev) => prev.filter((m) => m.id !== assistantId))
     setIsStreaming(false)
     setActivity([])
     // The backend titles a conversation from its first message and moves it to the top of

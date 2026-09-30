@@ -24,7 +24,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from core.llm_config import LLMProvider, get_chat_model
+from core.llm_failover import get_resilient_chat_model
 from mcp_server.memory_tools import apply_summary_tool, get_session_context_tool
 from tools.api_client import BackendAPIError
 from tools.auth_context import AgentContext
@@ -55,7 +55,7 @@ def estimate_tokens(text: str) -> int:
 
 def _default_llm():
     model = os.environ.get("MEMORY_SUMMARIZER_MODEL", os.environ.get("ORCHESTRATOR_MODEL", "openai/gpt-oss-20b"))
-    return get_chat_model(LLMProvider.GROQ, model=model)
+    return get_resilient_chat_model(groq_model=model)
 
 
 class SessionSummarizer:

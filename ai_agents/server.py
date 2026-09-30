@@ -58,6 +58,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import io  # noqa: E402
+import math  # noqa: E402
+import re  # noqa: E402
+
+import openai  # noqa: E402
 
 from fastapi import FastAPI, Header, HTTPException  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -65,13 +69,14 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
+from core.llm_budget import get_tracker  # noqa: E402
 from mcp_server import memory_tools  # noqa: E402
 from mcp_server.document_tools import BackendDocumentRetriever  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
 from orchestrator.cache import ExecutionCache  # noqa: E402
 from orchestrator.callbacks import ORCHESTRATOR_AGENT, FleetLiveObserver  # noqa: E402
 from orchestrator.fact_check import _default_fact_checker_llm  # noqa: E402
-from orchestrator.graph import OrchestratorDeps  # noqa: E402
+from orchestrator.graph import OrchestratorDeps, get_shared_llm  # noqa: E402
 from orchestrator.rag_eval import RagTriadEvaluator  # noqa: E402
 from orchestrator.session import OrchestratorSession, TurnResult  # noqa: E402
 from orchestrator.webhooks import AlertDispatcher  # noqa: E402
@@ -298,6 +303,36 @@ def _sse(event: str, data: dict) -> dict:
     return {"event": event, "data": json.dumps(data)}
 
 
+_GENERIC_TURN_ERROR = "The AI assistant hit an unexpected error. Please try again."
+_RETRY_AFTER = re.compile(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", re.IGNORECASE)
+
+
+def _wait_phrase(hours: str | None, minutes: str | None, seconds: str | None) -> str | None:
+    total = int(hours or 0) * 3600 + int(minutes or 0) * 60 + math.ceil(float(seconds or 0))
+    if total <= 0:
+        return None
+    if total < 90:
+        return f"{total} seconds"
+    if total < 5400:
+        return f"{math.ceil(total / 60)} minutes"
+    return f"{math.ceil(total / 3600)} hours"
+
+
+def _turn_error_message(exc: BaseException) -> str:
+    """A user-facing reason for a failed turn. Only ever fixed wording plus the provider's
+    retry hint -- never the raw exception text, which can carry account ids and internals."""
+    if isinstance(exc, openai.RateLimitError):
+        match = _RETRY_AFTER.search(str(exc))
+        phrase = _wait_phrase(*match.groups()) if match else None
+        wait = f" Try again in about {phrase}." if phrase else " Please try again later."
+        return f"The AI model's usage limit has been reached, so it can't answer right now.{wait}"
+    if isinstance(exc, openai.BadRequestError):
+        return "The AI model produced an invalid request for that question. Please try rephrasing it."
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
+        return "The AI model couldn't be reached. Please try again in a moment."
+    return _GENERIC_TURN_ERROR
+
+
 _OPENING_STEP = "Reading your message…"
 
 # The agent keys the frontend knows (lib/schemas/chat.ts agentKeySchema).
@@ -351,9 +386,9 @@ async def _stream_turn(session: OrchestratorSession, run_turn) -> EventSourceRes
                     yield _activity(step, done=False)
                     current = step
             result: TurnResult = turn.result()
-        except Exception:  # noqa: BLE001 — never leak a stack trace to the browser
+        except Exception as exc:  # noqa: BLE001 — never leak a stack trace to the browser
             logger.exception("chat turn failed")
-            yield _sse("error", {"message": "The AI assistant hit an unexpected error. Please try again."})
+            yield _sse("error", {"message": _turn_error_message(exc)})
             return
         finally:
             if observer is not None:
@@ -493,4 +528,8 @@ def delete_session(session_id: str, authorization: str | None = Header(default=N
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "active_sessions": len(_SESSIONS)}
+    try:
+        models = get_shared_llm().status()
+    except Exception:  # noqa: BLE001 -- e.g. no API keys configured: still report the rest
+        models = []
+    return {"status": "ok", "active_sessions": len(_SESSIONS), "llm_models": models, "llm_usage": get_tracker().snapshot()}

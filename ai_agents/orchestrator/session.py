@@ -22,7 +22,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import openai
 from pydantic import ValidationError
+
+from core.llm_failover import BudgetExhausted, InvalidModelOutput
+from orchestrator.offline import answer_offline
 
 from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
 from orchestrator.security import DEFAULT_SECURITY_CONFIG, SecurityConfig, scan_user_input
@@ -42,6 +46,11 @@ class TurnResult:
     final_response: str | None
     hitl_state: dict[str, Any] | None
     state: OrchestratorState
+
+
+def _is_model_outage(exc: BaseException) -> bool:
+    """True when the failure is the language models being unavailable (as opposed to a bug)."""
+    return isinstance(exc, (openai.APIError, InvalidModelOutput, BudgetExhausted))
 
 
 class OrchestratorSession:
@@ -154,7 +163,21 @@ class OrchestratorSession:
             "_pending_attachment_url": attachment_url,
         }
         self._record("user", message)
-        return self._settle(self._graph.invoke(input_state))
+        try:
+            return self._settle(self._graph.invoke(input_state))
+        except Exception as exc:  # noqa: BLE001
+            if not _is_model_outage(exc):
+                raise
+            # Every LLM failed. A plain read can still be answered from the records directly.
+            memory_logger.warning("all LLM providers failed (%s); trying the offline answer", type(exc).__name__)
+            try:
+                answer = answer_offline(message, self.deps.runner, self.state["auth_context"]["token"])
+            except Exception:  # noqa: BLE001 -- the fallback must never mask the original error
+                memory_logger.exception("offline fallback failed")
+                answer = None
+            if answer is None:
+                raise
+            return self._settle({**input_state, "final_response": answer, "stage": "done"})
 
     def approve(self) -> TurnResult:
         return self._resume(updates=None, rejected=False)

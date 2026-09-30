@@ -372,3 +372,61 @@ def test_deleting_another_users_session_is_the_backend_404_and_keeps_theirs_aliv
 
     assert resp.status_code == 404
     assert sid in server._SESSIONS
+
+
+# --- a failed turn says why, without leaking provider internals ------------------------
+
+
+def _openai_error(cls, message, status):
+    import httpx
+
+    response = httpx.Response(status, request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"))
+    return cls(message, response=response, body=None)
+
+
+def test_a_provider_rate_limit_is_explained_with_its_retry_hint_only():
+    import openai
+
+    raw = (
+        "Error code: 429 - Rate limit reached for model `openai/gpt-oss-20b` in organization "
+        "`org_01ksb63420ey1s6kkez8v1934z` on tokens per day (TPD): Limit 200000. Please try again in 19m7.8s."
+    )
+    message = server._turn_error_message(_openai_error(openai.RateLimitError, raw, 429))
+    assert message == "The AI model's usage limit has been reached, so it can't answer right now. Try again in about 20 minutes."
+    assert "org_" not in message and "gpt-oss" not in message
+
+
+def test_a_rate_limit_without_a_hint_and_other_provider_failures_get_plain_wording():
+    import openai
+
+    assert "try again later" in server._turn_error_message(_openai_error(openai.RateLimitError, "429", 429)).lower()
+    assert "rephrasing" in server._turn_error_message(_openai_error(openai.BadRequestError, "bad tool call", 400))
+    assert server._turn_error_message(RuntimeError("boom")) == server._GENERIC_TURN_ERROR
+
+
+def test_a_rate_limited_turn_streams_that_message_as_the_error_event(client, monkeypatch):
+    import json
+
+    import openai
+
+    class _Limited(_FakeSession):
+        def run(self, message, **kwargs):
+            raise _openai_error(openai.RateLimitError, "Please try again in 5m0s.", 429)
+
+    monkeypatch.setattr(server, "OrchestratorSession", _Limited)
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+    resp = client.post(f"/api/v1/chat/sessions/{sid}/messages", json={"message": "fuel?"}, headers=_auth())
+
+    errors = [json.loads(f["data"]) for f in _parse_sse(resp.text) if f["event"] == "error"]
+    assert errors == [{"message": "The AI model's usage limit has been reached, so it can't answer right now. Try again in about 5 minutes."}]
+
+
+@pytest.mark.parametrize(
+    ("hint", "phrase"),
+    [("45s", "45 seconds"), ("24m0.719999999s", "25 minutes"), ("19m7.824s", "20 minutes"), ("1h2m3s", "63 minutes"), ("2h", "2 hours")],
+)
+def test_retry_hints_are_rounded_to_friendly_wording(hint, phrase):
+    import openai
+
+    message = server._turn_error_message(_openai_error(openai.RateLimitError, f"limit. Please try again in {hint}. Thanks", 429))
+    assert message.endswith(f"Try again in about {phrase}.")

@@ -73,10 +73,10 @@ def log_sink(result: RagTriadResult) -> None:
 
 
 def _default_judge():
-    from core.llm_config import LLMProvider, get_chat_model
+    from core.llm_failover import get_resilient_chat_model
 
     model = os.environ.get("RAG_JUDGE_MODEL", os.environ.get("ORCHESTRATOR_MODEL", "openai/gpt-oss-20b"))
-    return get_chat_model(LLMProvider.GROQ, model=model)
+    return get_resilient_chat_model(groq_model=model)
 
 
 def _parse_scores(text: str) -> RagTriadScores:

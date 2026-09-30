@@ -46,7 +46,7 @@ from pydantic import BaseModel
 
 
 class CacheConfig(BaseModel):
-    enabled_tools: frozenset[str] = frozenset({"insights", "foundation", "fuel"})
+    enabled_tools: frozenset[str] = frozenset({"insights", "foundation", "fuel", "maintenance", "accountability", "assignment"})
     ttl_seconds: int = 300  # 5 minutes for dashboard reads
     semantic_threshold: float = 0.95
 

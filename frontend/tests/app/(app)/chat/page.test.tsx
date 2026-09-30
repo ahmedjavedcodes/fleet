@@ -436,4 +436,21 @@ describe("ChatPage", () => {
     expect(screen.getByTestId("chat-section")).toHaveClass("min-h-0", "flex-col")
     expect(screen.getByTestId("chat-thread")).toHaveClass("min-h-0", "flex-1", "overflow-hidden")
   })
+
+  it("a turn that fails with an error event shows the reason and leaves no empty reply bubble", async () => {
+    const user = userEvent.setup()
+    mockSend.mockImplementation(async function* () {
+      yield { type: "error", message: "The AI model's usage limit has been reached, so it can't answer right now. Try again in about 19m." }
+    })
+    renderPage()
+
+    await send(user, "show me fuel consumed for CD-5678")
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("usage limit has been reached")
+    const thread = within(screen.getByTestId("chat-thread"))
+    expect(thread.getByText("show me fuel consumed for CD-5678")).toBeInTheDocument()
+    // Only the user's message remains in the thread: no blank assistant bubble.
+    expect(thread.queryAllByText("", { selector: "p" })).toHaveLength(0)
+    expect(screen.getByTestId("chat-thread").querySelectorAll(".border-border.bg-card")).toHaveLength(0)
+  })
 })

@@ -283,7 +283,7 @@ def test_system_prompt_directs_policy_and_manual_questions_to_search_documents_o
     )
     system_prompt = str(with_docs.seen[0][0].content)
     assert "search_documents" in system_prompt
-    assert all(word in system_prompt for word in ("policies", "manuals", "tyre pressures"))
+    assert all(word in system_prompt for word in ("policies", "manuals", "safety protocols"))
     assert "documents don't cover it" in system_prompt
 
     without_docs = _ScriptedLLM([AIMessage(content=""), AIMessage(content="ok")])

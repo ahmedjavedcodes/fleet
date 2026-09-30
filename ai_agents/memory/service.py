@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
@@ -33,6 +34,7 @@ FETCH_TIMEOUT_SECONDS = 1.5
 # hanging vector store costs the turn at most this, then it proceeds on the
 # short-term window alone.
 SEMANTIC_TIMEOUT_SECONDS = 0.4
+EMBED_CACHE_SIZE = 256
 RECENT_MESSAGE_LIMIT = 6
 # Cosine-distance cutoff for recall. Calibrated live against Pinecone's
 # llama-text-embed-v2: a correct paraphrase match ("what currency should I
@@ -59,6 +61,7 @@ class AgentMemory:
         max_distance: float = MAX_RECALL_DISTANCE,
     ) -> None:
         self.semantic_timeout_s = semantic_timeout_s
+        self._embed_cache: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         self.embedder = embedder or get_default_embedder()
         self.summarizer = summarizer or SessionSummarizer()
         self.tools = tools
@@ -70,8 +73,17 @@ class AgentMemory:
 
     def _embed(self, text: str, *, task: str) -> list[float] | None:
         """Embedding failure degrades to scope/keyword recall -- never an error."""
+        key = (task, text)
+        if key in self._embed_cache:  # a repeated query costs nothing (and no round trip)
+            self._embed_cache.move_to_end(key)
+            return self._embed_cache[key]
         try:
-            return self.embedder.embed(text, task=task)
+            vector = self.embedder.embed(text, task=task)
+            if vector is not None:
+                self._embed_cache[key] = vector
+                if len(self._embed_cache) > EMBED_CACHE_SIZE:
+                    self._embed_cache.popitem(last=False)
+            return vector
         except Exception:  # noqa: BLE001
             logger.warning("memory: embedding failed, continuing without a vector", exc_info=True)
             return None

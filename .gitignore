@@ -37,3 +37,6 @@ backend/alembic/versions/*.pyc
 
 # Local test credentials (plaintext)
 test_credentials.txt
+
+# LLM spend ledger (ai_agents/core/llm_budget.py)
+ai_agents/.llm_spend.json

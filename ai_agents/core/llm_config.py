@@ -32,7 +32,7 @@ def get_chat_model(provider: LLMProvider, **overrides: Any):
         return ChatOpenAI(
             base_url=os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
             api_key="not-needed",
-            model=os.environ.get("LOCAL_LLM_MODEL", "llama3"),
+            model=overrides.pop("model", os.environ.get("LOCAL_LLM_MODEL", "llama3")),
             **overrides,
         )
 
@@ -50,8 +50,12 @@ def get_chat_model(provider: LLMProvider, **overrides: Any):
 
         return ChatOpenAI(
             base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ.get("OPENROUTER_API_KEY"),
-            model=overrides.pop("model", "anthropic/claude-sonnet-5"),
+            # .env historically spells it OPEN_ROUTER_API_KEY; accept both.
+            api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPEN_ROUTER_API_KEY"),
+            model=overrides.pop("model", os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-5")),
+            # OpenRouter reserves credit for the full max output up front and rejects (402) a request
+            # it can't cover; the model default is tens of thousands of tokens. Chat turns need ~1k.
+            max_tokens=overrides.pop("max_tokens", int(os.environ.get("OPENROUTER_MAX_TOKENS", "1500"))),
             **overrides,
         )
 
