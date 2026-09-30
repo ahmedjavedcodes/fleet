@@ -1,23 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { memo } from "react"
 import { Check, ClipboardList, Fuel, MapPin, Route, Search, ShieldAlert, Sparkles, TriangleAlert, Wrench } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import type { AgentKey, HitlState } from "@/lib/schemas/chat"
+import type { AgentKey } from "@/lib/schemas/chat"
 import { cn } from "@/lib/utils"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
 import { IconTile } from "@/components/primitives/icon-tile"
-import { Textarea } from "@/components/ui/textarea"
+
+// ApprovalCard lives in ./approval-card (loaded lazily by the chat page).
 
 const AGENT_ICON: Record<AgentKey, LucideIcon> = {
   foundation: MapPin,
@@ -36,7 +26,7 @@ export type ActivityStep = { agent: AgentKey; step: string; done: boolean }
 // A step row per agent invocation, with a pulsing active indicator that
 // honors `prefers-reduced-motion` (plans/07 §3). Step text is rendered
 // exactly as the backend sends it — never reworded here.
-export function AgentActivity({ steps }: { steps: ActivityStep[] }) {
+export const AgentActivity = memo(function AgentActivity({ steps }: { steps: ActivityStep[] }) {
   return (
     <ol className="space-y-1.5">
       {steps.map((s, i) => {
@@ -55,71 +45,7 @@ export function AgentActivity({ steps }: { steps: ActivityStep[] }) {
       })}
     </ol>
   )
-}
-
-// A pending action awaiting a human decision. Never auto-approved — every
-// path here requires an explicit click (plans/07 §3, CLAUDE.md §4.5).
-export function ApprovalCard({
-  hitlState,
-  onApprove,
-  onModify,
-  onReject,
-}: {
-  hitlState: HitlState
-  onApprove: () => void
-  onModify: (notes: string) => void
-  onReject: () => void
-}) {
-  const [modifying, setModifying] = useState(false)
-  const [notes, setNotes] = useState("")
-  const [confirmingReject, setConfirmingReject] = useState(false)
-
-  return (
-    <div className="space-y-3 rounded-xl border border-warning-border bg-warning-soft p-4">
-      <p className="text-sm font-medium text-foreground">{hitlState.approval_prompt ?? "This action needs your approval."}</p>
-      <p className="text-caption text-muted-foreground">{hitlState.tool_name ?? hitlState.agent_name}</p>
-
-      {modifying ? (
-        <div className="space-y-2">
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Describe the change…" rows={2} />
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => onModify(notes)} disabled={notes.trim() === ""}>
-              Submit change
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setModifying(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={onApprove}>
-            Approve
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setModifying(true)}>
-            Modify
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setConfirmingReject(true)}>
-            Reject
-          </Button>
-        </div>
-      )}
-
-      <AlertDialog open={confirmingReject} onOpenChange={setConfirmingReject}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reject this action?</AlertDialogTitle>
-            <AlertDialogDescription>The agent will stop and report back instead of proceeding.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onReject}>Reject</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  )
-}
+})
 
 // A halted run — a warning, not an error (plans/07 §3): the agent stopped
 // itself, nothing crashed.

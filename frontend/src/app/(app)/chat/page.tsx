@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { MessageSquare, PanelLeft } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   approveChatAction,
@@ -21,15 +21,31 @@ import { isApiError } from "@/lib/api/errors"
 import { uploadImage } from "@/lib/api/uploads"
 import { chatKeys } from "@/lib/query/keys"
 import type { ChatMessage, HitlState } from "@/lib/schemas/chat"
-import { AgentActivity, ApprovalCard, HaltedCard, type ActivityStep } from "@/components/ai/agent-panels"
+import { AgentActivity, HaltedCard, type ActivityStep } from "@/components/ai/agent-panels"
 import { ChatSessionSidebar } from "@/components/ai/chat-session-sidebar"
 import { ChatThread } from "@/components/ai/chat-thread"
+import { preloadMarkdown } from "@/components/ai/message-bubble"
 import { Composer } from "@/components/ai/composer"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+
+// Only needed when an action is waiting on approval, so it (and Radix AlertDialog) load then.
+const ApprovalCard = lazy(() => import("@/components/ai/approval-card"))
+
+// A function with a fixed identity that always runs the latest version of `fn`. Lets the
+// memoised sidebar and composer keep their props stable across the page re-rendering on every
+// streamed frame, without threading every piece of state through dependency lists. Only for
+// callbacks run from events, never during render.
+function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn)
+  useLayoutEffect(() => {
+    ref.current = fn
+  })
+  return useCallback((...args: A) => ref.current(...args), [])
+}
 
 // Sent when a photo goes out with no typed text, so the turn still has a request to act on.
 const IMAGE_ONLY_MESSAGE = "Please process the attached image."
@@ -88,6 +104,11 @@ export default function ChatPage() {
     setHistory({ status: "idle" })
   }, [])
 
+  // The markdown renderer is its own lazily loaded chunk; start fetching it as the chat opens.
+  useEffect(() => {
+    preloadMarkdown()
+  }, [])
+
   // Follow the URL: a different ?session= (sidebar click, back button, a link) opens that
   // conversation; none means a fresh one.
   useEffect(() => {
@@ -119,23 +140,38 @@ export default function ChatPage() {
 
   async function consume(events: AsyncGenerator<ChatEvent>, assistantId: string, epoch: number) {
     let text = ""
-    for await (const event of events) {
+    // Tokens can arrive far faster than the screen refreshes. Accumulate them and commit the
+    // text at most once per animation frame, instead of one React update (and re-render) per
+    // token; the final text is always flushed when the stream ends.
+    let frame: number | null = null
+    const flush = () => {
+      frame = null
       if (epoch !== epochRef.current) return
-      if (event.type === "activity") {
-        setActivity((prev) => {
-          const others = prev.filter((s) => s.agent !== event.agent || s.step !== event.step)
-          return [...others, { agent: event.agent, step: event.step, done: event.done }]
-        })
-      } else if (event.type === "token") {
-        text += event.text
-        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text } : m)))
-      } else if (event.type === "approval_required") {
-        setHitlState(event.hitl_state)
-      } else if (event.type === "done") {
-        if (event.status === "halted" && text) setHaltedReason(text)
-      } else if (event.type === "error") {
-        setError(event.message)
+      const snapshot = text
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: snapshot } : m)))
+    }
+    try {
+      for await (const event of events) {
+        if (epoch !== epochRef.current) return
+        if (event.type === "activity") {
+          setActivity((prev) => {
+            const others = prev.filter((s) => s.agent !== event.agent || s.step !== event.step)
+            return [...others, { agent: event.agent, step: event.step, done: event.done }]
+          })
+        } else if (event.type === "token") {
+          text += event.text
+          frame ??= requestAnimationFrame(flush)
+        } else if (event.type === "approval_required") {
+          setHitlState(event.hitl_state)
+        } else if (event.type === "done") {
+          if (event.status === "halted" && text) setHaltedReason(text)
+        } else if (event.type === "error") {
+          setError(event.message)
+        }
       }
+    } finally {
+      if (frame !== null) cancelAnimationFrame(frame)
+      if (text) flush()
     }
     if (epoch !== epochRef.current) return
     setIsStreaming(false)
@@ -278,6 +314,14 @@ export default function ChatPage() {
     )
   }
 
+  const onSend = useStableCallback(handleSend)
+  const onStop = useStableCallback(handleStop)
+  const onNew = useStableCallback(handleNewChat)
+  const onSelect = useStableCallback(handleSelect)
+  const onRename = useStableCallback(handleRename)
+  const onDelete = useStableCallback(handleDelete)
+  const onRetrySessions = useStableCallback(() => void sessionsQuery.refetch())
+
   const activeTitle = sessionsQuery.data?.find((s) => s.id === sessionId)?.title ?? "New chat"
   const composerBlocked = history.status !== "idle"
 
@@ -286,29 +330,30 @@ export default function ChatPage() {
       sessions={sessionsQuery.data}
       isPending={sessionsQuery.isPending}
       isError={sessionsQuery.isError}
-      onRetry={() => void sessionsQuery.refetch()}
+      onRetry={onRetrySessions}
       activeId={sessionId}
-      onSelect={handleSelect}
-      onNew={handleNewChat}
-      onRename={handleRename}
-      onDelete={handleDelete}
+      onSelect={onSelect}
+      onNew={onNew}
+      onRename={onRename}
+      onDelete={onDelete}
     />
   )
 
   return (
-    // Exactly the height left inside the app shell, so the page never scrolls as a whole and
-    // the composer stays pinned: 100dvh minus the shell's p-4 (1rem top + 1rem bottom), the gap
-    // under the topbar (1rem) and the topbar itself (--topbar-height, fixed in globals.css).
-    // dvh, not vh: on mobile, vh includes the area under the browser's address bar.
-    <div className="flex h-[calc(100dvh-3rem-var(--topbar-height))] min-h-0 gap-4 overflow-hidden">
+    // Fills the viewport below the topbar exactly, so the page itself never scrolls and the
+    // composer is pinned flush to the bottom edge. Height = 100dvh minus the shell's top padding
+    // (1rem), the topbar (--topbar-height, fixed in globals.css) and the gap under it (1rem);
+    // -mb-4 then reaches down through the shell's 1rem bottom padding, so there is no strip of
+    // background under the input. dvh, not vh: on mobile, vh includes the area under the
+    // browser's address bar.
+    <div className="-mb-4 flex h-[calc(100dvh-2rem-var(--topbar-height))] min-h-0 gap-4 overflow-hidden">
       <PageHeader crumbs={[{ label: "AI Assistant" }]} />
 
-      <aside aria-label="Conversations" className="hidden w-72 shrink-0 md:flex">
+      <aside aria-label="Conversations" className="hidden w-72 shrink-0 pb-4 md:flex">
         {sidebar}
       </aside>
 
       <section aria-label="Chat" data-testid="chat-section" className="flex min-h-0 min-w-0 flex-1 flex-col">
-
         <div className="flex items-center gap-2 pb-2 md:hidden">
           <Button variant="outline" size="sm" onClick={() => setDrawerOpen(true)}>
             <PanelLeft className="size-4" />
@@ -345,12 +390,14 @@ export default function ChatPage() {
               ) : null}
               {isStreaming && activity.length > 0 ? <AgentActivity steps={activity} /> : null}
               {hitlState ? (
-                <ApprovalCard
-                  hitlState={hitlState}
-                  onApprove={() => void handleApprovalDecision("approve")}
-                  onModify={(notes) => void handleApprovalDecision("modify", { notes })}
-                  onReject={() => void handleApprovalDecision("reject")}
-                />
+                <Suspense fallback={<Skeleton className="h-28 w-full" aria-label="Loading approval" />}>
+                  <ApprovalCard
+                    hitlState={hitlState}
+                    onApprove={() => void handleApprovalDecision("approve")}
+                    onModify={(notes) => void handleApprovalDecision("modify", { notes })}
+                    onReject={() => void handleApprovalDecision("reject")}
+                  />
+                </Suspense>
               ) : null}
               {haltedReason ? <HaltedCard reason={haltedReason} /> : null}
               {error ? (
@@ -363,8 +410,8 @@ export default function ChatPage() {
         />
 
         <Composer
-          onSend={handleSend}
-          onStop={handleStop}
+          onSend={onSend}
+          onStop={onStop}
           isStreaming={isStreaming}
           disabled={isStreaming || Boolean(hitlState) || composerBlocked}
           disabledReason={hitlState ? "Waiting on your approval above…" : undefined}

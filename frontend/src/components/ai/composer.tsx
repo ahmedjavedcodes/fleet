@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { Paperclip, Square, X } from "lucide-react"
 import { CHAT_IMAGE_TYPES, IMAGE_UPLOAD_MAX_BYTES } from "@/lib/api/uploads"
 import { Button } from "@/components/ui/button"
@@ -13,7 +13,9 @@ import { Textarea } from "@/components/ui/textarea"
 // A photo can be staged with the paperclip and sent with (or instead of) text.
 // `onSend` may be async: the text and photo are only cleared once it reports
 // success, so a failed upload loses neither.
-export function Composer({
+// Memoised: it owns its own text/photo state, so while a reply streams (and the page
+// re-renders per frame) the composer is left alone as long as its props are stable.
+export const Composer = memo(function Composer({
   onSend,
   onStop,
   isStreaming,
@@ -81,7 +83,9 @@ export function Composer({
   }
 
   return (
-    <div className="shrink-0 space-y-1.5 border-t border-border p-3">
+    // A solid bar that runs to the bottom edge of the chat area: nothing but its own surface
+    // beneath the input. The bottom padding grows to the phone home-indicator inset if larger.
+    <div data-testid="composer" className="shrink-0 space-y-1.5 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {image && previewUrl ? (
         <div className="relative inline-block">
           {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview, nothing for next/image to optimise */}
@@ -152,4 +156,4 @@ export function Composer({
       {disabled && disabledReason ? <p className="text-caption text-muted-foreground">{disabledReason}</p> : null}
     </div>
   )
-}
+})

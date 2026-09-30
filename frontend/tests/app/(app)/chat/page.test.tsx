@@ -428,7 +428,11 @@ describe("ChatPage", () => {
   it("pins the composer: the page is sized to the shell and the thread scrolls inside it", () => {
     // jsdom has no layout engine, so this checks the classes that make the layout work.
     const { container } = renderPage()
-    expect(container.firstElementChild).toHaveClass("h-[calc(100dvh-3rem-var(--topbar-height))]", "min-h-0", "overflow-hidden")
+    // Runs from under the topbar to the viewport bottom: -mb-4 reaches through the shell's
+    // bottom padding, so nothing but the composer bar sits under the input.
+    expect(container.firstElementChild).toHaveClass("-mb-4", "h-[calc(100dvh-2rem-var(--topbar-height))]", "min-h-0", "overflow-hidden")
+    expect(screen.getByRole("complementary", { name: "Conversations" })).toHaveClass("pb-4") // the list card keeps its inset
+    expect(screen.getByTestId("composer")).toHaveClass("shrink-0", "bg-card")
     expect(screen.getByTestId("chat-section")).toHaveClass("min-h-0", "flex-col")
     expect(screen.getByTestId("chat-thread")).toHaveClass("min-h-0", "flex-1", "overflow-hidden")
   })

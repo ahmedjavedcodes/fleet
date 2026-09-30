@@ -1,16 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
-import { AgentActivity, ApprovalCard, HaltedCard } from "@/components/ai/agent-panels"
+import { AgentActivity, HaltedCard } from "@/components/ai/agent-panels"
+import { ApprovalCard } from "@/components/ai/approval-card"
 import { ChatThread } from "@/components/ai/chat-thread"
 import { Composer } from "@/components/ai/composer"
 import { MessageBubble } from "@/components/ai/message-bubble"
 import type { ChatMessage } from "@/lib/schemas/chat"
 
 describe("MessageBubble", () => {
-  it("renders markdown text and opens links in a new tab safely", () => {
+  it("renders markdown text and opens links in a new tab safely", async () => {
     render(<MessageBubble message={{ id: "1", role: "assistant", text: "See [docs](https://example.com)." }} />)
-    const link = screen.getByRole("link", { name: "docs" })
+    const link = await screen.findByRole("link", { name: "docs" }, { timeout: 15000 }) // the parser loads lazily
     expect(link).toHaveAttribute("target", "_blank")
     expect(link).toHaveAttribute("rel", "noopener noreferrer")
   })

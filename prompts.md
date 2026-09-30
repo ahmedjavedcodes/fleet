@@ -287,3 +287,30 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
   - Verified in real Chrome at 1440×900 and 390×844: page overflow 0 px (was 2 px after the first fix, more before), the thread scrolls internally, and the composer sits on the shell's standard 1rem bottom padding, aligned with the conversations card.
 - **Composer.** Paperclip → hidden `accept="image/jpeg, image/png, image/webp"` input; 5 MB and type checked client-side too; thumbnail with an X. `onSend` can be async and reports success: the text and photo are cleared only after the upload succeeds, so a failed upload loses neither. A photo can be sent alone ("Please process the attached image."). The sent message shows the photo.
 - **Cleanup.** Deleted the six chat sessions my verification scripts had created in the test-fleet admin account, and the one test image I uploaded.
+
+## 2026-09-30 — Chat: composer flush to the bottom, rendering speed
+
+- **Measured first.** A benchmark in real Chrome (Playwright): a seeded 300-message conversation with markdown tables, lists and code blocks. It measured opening it, main-thread long tasks while scrolling, per-key typing latency, and a 400-chunk streamed reply (injected by intercepting the SSE request, so the LLM isn't in the measurement). The final comparison ran production builds of HEAD and of the change side by side (`next build` + `next start` in worktrees), three alternating rounds:
+
+  | 300-message chat | Before | After |
+  |---|---|---|
+  | Open | 797–1039 ms | 482–661 ms |
+  | Long tasks while scrolling | 383–737 ms | none |
+  | Stream 400 chunks | 499–1173 ms (361–938 ms long tasks) | 108–162 ms (none) |
+  | Typing | 15 ms/key | 15 ms/key |
+  | `/chat` route JS / first load | 56.9 kB / 241 kB | 12.9 kB / 197 kB |
+  | Space under the composer | 16 px | 0 px (empty and full) |
+
+- **Why it was slow.** No message was memoised and react-markdown got fresh `components`/plugin objects each render, so any re-render re-parsed every message's markdown. Two things re-rendered constantly: every streamed token (one state update per token), and every scroll event (the thread kept "at bottom" in state). The thread's doc comment promised auto-scroll that was never implemented.
+- **Changes.**
+  - `MessageBubble` is memoised, with markdown in its own memoised module using module-level `components`/plugins.
+  - `ChatThread` keeps "pinned" in a ref (scrolling never re-renders; state changes only to show/hide Jump to latest) and follows content with one ResizeObserver.
+  - Streamed tokens are committed at most once per animation frame (final text always flushed; a turn the user left never writes).
+  - Sidebar rows are memoised; the page passes stable callbacks via a small `useStableCallback` (latest-ref) hook, so the memoised sidebar and composer don't re-render per frame.
+  - `AgentActivity` is memoised.
+- **Code splitting.** react-markdown + remark-gfm are lazy (`React.lazy`, with a Suspense fallback showing the message as plain text, and preloaded when the chat mounts so the fallback rarely shows). `ApprovalCard` moved to its own module and loads only when an approval is pending; it was the chat route's only path to Radix AlertDialog. `next/dynamic` was tried first and dropped: its loading placeholder can't show the message's own text.
+- **Virtualisation: deliberately not a windowing library.** Messages are variable-height, streaming, image-bearing markdown, and windowing them breaks scroll anchoring and find-in-page. Messages use `content-visibility: auto` with a remembered intrinsic size, so the browser skips layout/paint for off-screen ones. No new dependency; scroll long tasks went to zero.
+- **A bug that change exposed, fixed.** Off-screen messages lay out at an estimated height. After jumping to the bottom the real heights arrive, the bottom moves, and the resulting scroll event read as "user scrolled away", turning auto-follow off. Now only an upward move of `scrollTop` unpins (content growth never moves it backwards) and a still-pinned view catches up. Found by the browser benchmark, not the unit tests; a unit test now covers it.
+- **Layout.** The chat root is `h-[calc(100dvh-2rem-var(--topbar-height))]` with `-mb-4`, reaching through the shell's bottom padding. The composer is a `bg-card` bar to the viewport edge, with bottom padding growing to the phone home-indicator inset. The conversations card keeps its 1rem inset (`pb-4` on the aside). Measured gap under the composer: 0 px with an empty and a full conversation, at 1440×900 and 390×844, with no page overflow.
+- **Also fixed.** The code block's copy button covered the end of long code lines (`pr-10` on the `<pre>`). Image previews already used `createObjectURL` with revoke-on-change/unmount; sent-message images now load `lazy`/`async`.
+- **Environment finding.** Two `next dev` servers (the user's on 3000, one started in this session on 3001) were sharing one `frontend/.next`. They corrupted the webpack cache ("invalid stored block lengths"), and 3000 now serves `/login` as 404. Stopped the 3001 one; the 3000 one needs a restart with `.next/cache` cleared.
