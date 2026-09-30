@@ -15,7 +15,7 @@ export function Topbar() {
   const { crumbs, status, actions } = useTopbarSlots()
 
   return (
-    <header className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
+    <header className="flex h-(--topbar-height) shrink-0 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
       <MobileSidebar />
 
       <div className="min-w-0 flex-1">

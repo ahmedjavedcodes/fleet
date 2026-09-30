@@ -121,6 +121,10 @@
 
 :root {
   --radius: 0.75rem;
+  /* The app shell's topbar height, fixed so full-height pages (the chat) can size themselves
+     exactly: its tallest content is the 40px bell button + py-3 (24px) + a 1px border each
+     side = 66px. */
+  --topbar-height: 4.125rem;
 
   /* Brand */
   --primary: #f5781e; /* measured; non-text only (2.77:1) */

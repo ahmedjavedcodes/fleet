@@ -253,3 +253,122 @@ def test_sessions_get_document_search_and_rag_sampling(monkeypatch):
     # What the plan node binds for this session: the six sub-agents plus search_documents.
     names = [t.name for t in build_llm_tools(include_memory=deps.memory is not None, include_documents=deps.documents is not None)]
     assert "search_documents" in names and len(names) == 7
+
+
+# --- image attachments and deletion ---------------------------------------------------
+
+_UPLOAD = "/uploads/incidents/0b7c7a58-7f0e-4d5a-9a57-6f1f2c3d4e5f"
+
+
+class _RecordingSession(_FakeSession):
+    def run(self, message, **kwargs):
+        self.last_run = {"message": message, **kwargs}
+        return TurnResult(status="done", final_response="ok", hitl_state=None, state={})
+
+
+def _serve_uploads(monkeypatch, files: dict[str, bytes]) -> None:
+    import httpx
+
+    from tools import api_client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = files.get(request.url.path)
+        return httpx.Response(200, content=body) if body is not None else httpx.Response(404)
+
+    monkeypatch.setattr(api_client, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_a_message_with_an_uploaded_image_hands_bytes_and_url_to_the_turn(client, monkeypatch):
+    monkeypatch.setattr(server, "OrchestratorSession", _RecordingSession)
+    _serve_uploads(monkeypatch, {f"{_UPLOAD}.jpg": b"\xff\xd8\xffjpeg"})
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+
+    resp = client.post(
+        f"/api/v1/chat/sessions/{sid}/messages", json={"message": "file this", "attachment_url": f"{_UPLOAD}.jpg"}, headers=_auth()
+    )
+
+    assert resp.status_code == 200
+    assert server._SESSIONS[sid].last_run == {
+        "message": "file this",
+        "image_bytes": b"\xff\xd8\xffjpeg",
+        "mime_type": "image/jpeg",
+        "attachment_url": f"{_UPLOAD}.jpg",
+    }
+
+
+def test_a_webp_attachment_is_converted_to_png_for_the_vision_models(client, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    webp = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(webp, format="WEBP")
+    monkeypatch.setattr(server, "OrchestratorSession", _RecordingSession)
+    _serve_uploads(monkeypatch, {f"{_UPLOAD}.webp": webp.getvalue()})
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+
+    client.post(f"/api/v1/chat/sessions/{sid}/messages", json={"message": "x", "attachment_url": f"{_UPLOAD}.webp"}, headers=_auth())
+
+    run = server._SESSIONS[sid].last_run
+    assert run["mime_type"] == "image/png" and run["image_bytes"].startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/x.jpg",  # never fetch an arbitrary URL (SSRF)
+        "/uploads/fuel_receipts/abc/receipt.jpg",  # only the public incidents store
+        "/uploads/incidents/../../etc/passwd",
+        f"{_UPLOAD}.gif",
+    ],
+)
+def test_only_this_backends_own_upload_paths_are_accepted(client, monkeypatch, url):
+    monkeypatch.setattr(server, "OrchestratorSession", _RecordingSession)
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+    resp = client.post(f"/api/v1/chat/sessions/{sid}/messages", json={"message": "x", "attachment_url": url}, headers=_auth())
+    assert resp.status_code == 422
+    assert not hasattr(server._SESSIONS[sid], "last_run")
+
+
+def test_a_missing_upload_is_a_422_before_any_stream_starts(client, monkeypatch):
+    monkeypatch.setattr(server, "OrchestratorSession", _RecordingSession)
+    _serve_uploads(monkeypatch, {})
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+    resp = client.post(f"/api/v1/chat/sessions/{sid}/messages", json={"message": "x", "attachment_url": f"{_UPLOAD}.png"}, headers=_auth())
+    assert resp.status_code == 422
+    assert "attach it again" in resp.json()["detail"]
+
+
+def test_delete_calls_the_backend_and_drops_the_live_session(client, monkeypatch):
+    import types
+
+    deleted = []
+    monkeypatch.setattr(server, "OrchestratorSession", _FakeSession)
+    monkeypatch.setattr(
+        server, "memory_tools", types.SimpleNamespace(delete_session_tool=lambda ctx, sid: deleted.append((ctx.user_id, sid)))
+    )
+    sid = client.post("/api/v1/chat/sessions", headers=_auth()).json()["session_id"]
+
+    resp = client.delete(f"/api/v1/chat/sessions/{sid}", headers=_auth())
+
+    assert resp.status_code == 204
+    assert deleted == [("user-1", sid)]
+    assert sid not in server._SESSIONS
+
+
+def test_deleting_another_users_session_is_the_backend_404_and_keeps_theirs_alive(client, monkeypatch):
+    import types
+
+    from tools.api_client import BackendAPIError
+
+    def not_found(ctx, sid):
+        raise BackendAPIError(404, "Session not found")
+
+    monkeypatch.setattr(server, "OrchestratorSession", _FakeSession)
+    sid = client.post("/api/v1/chat/sessions", headers=_auth("user-1")).json()["session_id"]
+    monkeypatch.setattr(server, "memory_tools", types.SimpleNamespace(delete_session_tool=not_found))
+
+    resp = client.delete(f"/api/v1/chat/sessions/{sid}", headers=_auth("user-2"))
+
+    assert resp.status_code == 404
+    assert sid in server._SESSIONS

@@ -53,6 +53,15 @@ def rename_session(
     return AgentSessionResponse.model_validate(memory_service.rename_session(db, current_user, session_id, data.title))
 
 
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(
+    session_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> None:
+    """Deletes one of the caller's own conversations with its transcript. Someone
+    else's (or an unknown) id is a 404, never a 403, so ids can't be probed."""
+    memory_service.delete_session(db, current_user, session_id)
+
+
 @router.get("/sessions/{session_id}/messages", response_model=list[AgentMessageResponse])
 def list_session_messages(
     session_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)

@@ -24,7 +24,10 @@ export function ChatThread({ messages, footer }: { messages: ChatMessage[]; foot
   }
 
   return (
-    <div className="relative flex-1 overflow-hidden">
+    // min-h-0: a flex item's minimum height defaults to its content's, so without it a long
+    // conversation grew the thread past its container, pushing the composer down and leaving
+    // the page scrolling with empty space under it, instead of scrolling inside the thread.
+    <div className="relative min-h-0 flex-1 overflow-hidden" data-testid="chat-thread">
       <div ref={containerRef} onScroll={handleScroll} className="h-full space-y-4 overflow-y-auto p-4">
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />

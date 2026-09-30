@@ -20,6 +20,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof ChatSessionSidebar
     onSelect: vi.fn(),
     onNew: vi.fn(),
     onRename: vi.fn(),
+    onDelete: vi.fn(),
     ...overrides,
   }
   render(<ChatSessionSidebar {...props} />)
@@ -50,21 +51,21 @@ describe("ChatSessionSidebar", () => {
 
   it("shows a loading state, an error with retry, and an empty state", async () => {
     const { unmount } = render(
-      <ChatSessionSidebar sessions={undefined} isPending isError={false} onRetry={vi.fn()} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} />
+      <ChatSessionSidebar sessions={undefined} isPending isError={false} onRetry={vi.fn()} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} />
     )
     expect(screen.getByLabelText("Loading conversations")).toBeInTheDocument()
     unmount()
 
     const retry = vi.fn()
     const errored = render(
-      <ChatSessionSidebar sessions={undefined} isPending={false} isError onRetry={retry} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} />
+      <ChatSessionSidebar sessions={undefined} isPending={false} isError onRetry={retry} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} />
     )
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }))
     expect(retry).toHaveBeenCalledTimes(1)
     errored.unmount()
 
     render(
-      <ChatSessionSidebar sessions={[]} isPending={false} isError={false} onRetry={vi.fn()} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} />
+      <ChatSessionSidebar sessions={[]} isPending={false} isError={false} onRetry={vi.fn()} activeId={null} onSelect={vi.fn()} onNew={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} />
     )
     expect(screen.getByText("No conversations yet")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument()
@@ -145,5 +146,18 @@ describe("ChatSessionSidebar renaming", () => {
     await startRename(user, "Overdue service report")
     expect(within(screen.getByRole("navigation", { name: "Chat history" })).queryByRole("button", { name: /^Overdue service report/ })).not.toBeInTheDocument()
     expect(props.onSelect).not.toHaveBeenCalled()
+  })
+})
+
+describe("ChatSessionSidebar delete", () => {
+  it("each conversation has a delete button beside rename that asks the page to delete it", async () => {
+    const props = setup()
+    const row = screen.getByRole("button", { name: "Delete Fuel costs this month" })
+    expect(screen.getByRole("button", { name: "Rename Fuel costs this month" })).toBeInTheDocument()
+
+    await userEvent.setup().click(row)
+
+    expect(props.onDelete).toHaveBeenCalledWith("s2")
+    expect(props.onSelect).not.toHaveBeenCalled() // the delete click doesn't also open it
   })
 })

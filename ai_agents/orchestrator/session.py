@@ -105,14 +105,24 @@ class OrchestratorSession:
         if self.deps.memory is not None and self.memory_session_id and content:
             self.deps.memory.record_message(self._context, self.memory_session_id, role, content)
 
-    def run(self, message: str, *, image_bytes: bytes | None = None, mime_type: str | None = None) -> TurnResult:
+    def run(
+        self,
+        message: str,
+        *,
+        image_bytes: bytes | None = None,
+        mime_type: str | None = None,
+        attachment_url: str | None = None,
+    ) -> TurnResult:
+        """image_bytes/mime_type: a photo attached to this turn, handed to
+        whichever vision sub-agent the planner routes it to. attachment_url:
+        where that photo is stored, so e.g. a filed incident can link it."""
         if self.deps.observer is not None:
             self.deps.observer.start_turn()  # FR 4: a fresh trace_id per session turn
 
         # Security pre-hook (execution-pre_hooks.md §2): a violation halts
         # BEFORE build_orchestrator_graph is ever invoked -- no LLM call,
         # no state mutation beyond appending the rejected turn to history.
-        violation = scan_user_input(message, config=self.security_config)
+        violation = scan_user_input(message, config=self.security_config, has_attachment=image_bytes is not None)
         if violation is not None:
             logger.warning("Security pre-hook rejected input: %s", violation.reason)
             chat_history = list(self.state.get("chat_history") or []) + [
@@ -138,6 +148,9 @@ class OrchestratorSession:
             "_fact_check_retries": 0,
             "_fact_check_warning": None,
             "memory_context": None,  # fetch_memory refetches once per user turn
+            "_pending_memory_facts": None,
+            "_turn_wrote": False,
+            "_pending_attachment_url": attachment_url,
         }
         self._record("user", message)
         return self._settle(self._graph.invoke(input_state))

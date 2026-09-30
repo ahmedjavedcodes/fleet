@@ -9,6 +9,7 @@ auth, RBAC, and org-scoping remain the actual enforcement layer.
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 import httpx
@@ -36,6 +37,24 @@ def _base_url() -> str:
     return os.environ.get("BACKEND_API_BASE_URL", "http://127.0.0.1:8000")
 
 
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _http_client() -> httpx.Client:
+    """One pooled client for the whole process. Constructing an httpx.Client
+    loads the SSL trust store, which measured 0.4-2s on the Windows dev box --
+    paid on EVERY backend call when each call built its own client, versus
+    ~6ms for a request on a reused one. httpx.Client is safe to share across
+    threads (its connection pool is lock-protected)."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client()
+    return _client
+
+
 def call_backend(
     method: str,
     path: str,
@@ -51,8 +70,9 @@ def call_backend(
     """
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-    with httpx.Client(base_url=_base_url(), timeout=timeout) as client:
-        response = client.request(method, path, headers=headers, json=json, params=params)
+    response = _http_client().request(
+        method, f"{_base_url()}{path}", headers=headers, json=json, params=params, timeout=timeout
+    )
 
     if response.status_code >= 400:
         try:

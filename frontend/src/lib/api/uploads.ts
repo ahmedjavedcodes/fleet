@@ -3,6 +3,9 @@ import { z } from "zod"
 import { apiRequest } from "./client"
 
 export const IMAGE_UPLOAD_TYPES = ["image/jpeg", "image/png"] as const
+// The chat also takes WebP: the backend stores it, and the chat server converts
+// it to PNG before a vision model reads it.
+export const CHAT_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const
 export const IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 
 const imageUploadResponseSchema = z.object({ url: z.string().min(1) })

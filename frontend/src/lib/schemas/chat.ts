@@ -65,6 +65,8 @@ export const chatMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   text: z.string(),
   citations: z.array(documentSearchHitSchema).optional(),
+  // A photo sent with a user message, as the uploaded file's path.
+  imageUrl: z.string().optional(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 

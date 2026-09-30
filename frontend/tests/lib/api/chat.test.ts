@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   createChatSession,
+  deleteChatSession,
   getChatMessages,
   listChatSessions,
   renameChatSession,
@@ -121,5 +122,32 @@ describe("lib/api/chat session management", () => {
   it("maps a network failure to a typed error", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("Failed to fetch"))
     await expect(listChatSessions()).rejects.toMatchObject({ kind: "network" })
+  })
+})
+
+describe("lib/api/chat deleteChatSession", () => {
+  it("sends DELETE through the agents proxy and resolves on 204", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 204 }))
+    await expect(deleteChatSession("s1")).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith("/api/proxy-agents/chat/sessions/s1", expect.objectContaining({ method: "DELETE" }))
+  })
+
+  it("maps a 404 (unknown or someone else's session) to a not_found ApiError", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ detail: "Session not found" }, 404))
+    await expect(deleteChatSession("nope")).rejects.toMatchObject({ kind: "not_found" })
+  })
+})
+
+describe("lib/api/chat sendChatMessage with a photo", () => {
+  it("includes attachment_url only when a photo was uploaded", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => sseResponse(['event: done\ndata: {"status": "done"}\n\n']))
+
+    await collect(sendChatMessage("s1", "log this", undefined, "/uploads/incidents/a.png"))
+    await collect(sendChatMessage("s1", "no photo"))
+
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+    expect(bodies).toEqual([{ message: "log this", attachment_url: "/uploads/incidents/a.png" }, { message: "no photo" }])
   })
 })

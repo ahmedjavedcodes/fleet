@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -162,6 +162,18 @@ def rename_session(db: Session, user: User, session_id: uuid.UUID, title: str) -
     db.commit()
     db.refresh(session)
     return session
+
+
+def delete_session(db: Session, user: User, session_id: uuid.UUID) -> None:
+    """Permanently deletes one of the caller's own conversations and its whole
+    transcript. The messages are deleted explicitly rather than trusting the
+    FK's ON DELETE CASCADE alone, so this holds even on a database where the
+    constraint predates the cascade. Locked FOR UPDATE so it can't interleave
+    with a summary commit or a message append on the same session."""
+    session = _get_own_session(db, user, session_id, for_update=True)
+    db.execute(delete(AgentMessage).where(AgentMessage.session_id == session.id))
+    db.delete(session)
+    db.commit()
 
 
 def list_messages(db: Session, user: User, session_id: uuid.UUID) -> tuple[AgentSession, list[AgentMessage]]:

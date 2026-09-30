@@ -226,3 +226,59 @@ def test_you_cannot_read_someone_elses_transcript(client: TestClient, alice, bob
     session_id = _new_session(client, alice)
     _say(client, alice, session_id, "user", "private")
     assert client.get(f"/api/v1/memory/sessions/{session_id}/messages", headers=auth_headers(bob)).status_code == 404
+
+
+# --- DELETE /sessions/{id} ------------------------------------------------------------
+
+
+def test_deleting_a_session_removes_it_and_its_whole_transcript(client: TestClient, db_session: Session, alice) -> None:
+    doomed = _new_session(client, alice)
+    kept = _new_session(client, alice)
+    for i in range(3):
+        _say(client, alice, doomed, "user", f"question {i}")
+    _say(client, alice, kept, "user", "keep me")
+    # A summarised message too: deletion must not depend on is_summarized.
+    db_session.execute(
+        AgentMessage.__table__.update().where(AgentMessage.session_id == uuid.UUID(doomed)).values(is_summarized=True)
+    )
+    db_session.commit()
+
+    response = client.delete(f"/api/v1/memory/sessions/{doomed}", headers=auth_headers(alice))
+
+    assert response.status_code == 204
+    assert db_session.get(AgentSession, uuid.UUID(doomed)) is None
+    assert db_session.execute(select(AgentMessage).where(AgentMessage.session_id == uuid.UUID(doomed))).scalars().all() == []
+    assert [s["id"] for s in _list(client, alice)] == [kept]
+    assert len(db_session.execute(select(AgentMessage).where(AgentMessage.session_id == uuid.UUID(kept))).scalars().all()) == 1
+    assert client.get(f"/api/v1/memory/sessions/{doomed}/messages", headers=auth_headers(alice)).status_code == 404
+
+
+def test_you_cannot_delete_someone_elses_session_and_it_looks_like_it_does_not_exist(
+    client: TestClient, db_session: Session, alice, bob
+) -> None:
+    alices = _new_session(client, alice)
+    _say(client, alice, alices, "user", "private")
+
+    response = client.delete(f"/api/v1/memory/sessions/{alices}", headers=auth_headers(bob))
+
+    assert response.status_code == 404  # same as an unknown id: existence isn't revealed
+    assert db_session.get(AgentSession, uuid.UUID(alices)) is not None
+    assert [s["id"] for s in _list(client, alice)] == [alices]
+
+
+def test_deleting_an_unknown_session_is_a_404_and_requires_auth(client: TestClient, alice) -> None:
+    unknown = uuid.uuid4()
+    assert client.delete(f"/api/v1/memory/sessions/{unknown}", headers=auth_headers(alice)).status_code == 404
+    assert client.delete(f"/api/v1/memory/sessions/{unknown}").status_code == 401
+
+
+def test_the_database_itself_cascades_messages_when_a_session_row_goes(db_session: Session, client: TestClient, alice) -> None:
+    """The FK's ON DELETE CASCADE is the second guarantee behind the service's
+    explicit delete -- checked with raw SQL so no ORM behaviour is involved."""
+    from sqlalchemy import text
+
+    sid = _new_session(client, alice)
+    _say(client, alice, sid, "user", "hello")
+    db_session.execute(text("DELETE FROM agent_sessions WHERE id = :id"), {"id": sid})
+    remaining = db_session.execute(text("SELECT count(*) FROM agent_messages WHERE session_id = :id"), {"id": sid}).scalar_one()
+    assert remaining == 0

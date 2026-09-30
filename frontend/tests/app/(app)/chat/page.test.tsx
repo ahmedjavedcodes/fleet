@@ -20,9 +20,16 @@ const mockRename = vi.fn()
 const mockCreate = vi.fn()
 const mockGetMessages = vi.fn()
 const mockSend = vi.fn()
+const mockDelete = vi.fn()
+const mockUpload = vi.fn()
+vi.mock("@/lib/api/uploads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/uploads")>()),
+  uploadImage: (file: File) => mockUpload(file),
+}))
 vi.mock("@/lib/api/chat", () => ({
   useChatSessions: () => mockSessions(),
   useRenameChatSession: () => ({ mutate: mockRename }),
+  useDeleteChatSession: () => ({ mutate: mockDelete }),
   createChatSession: () => mockCreate(),
   getChatMessages: (id: string) => mockGetMessages(id),
   sendChatMessage: (...args: unknown[]) => mockSend(...args),
@@ -80,6 +87,8 @@ describe("ChatPage", () => {
     mockPush.mockReset()
     mockReplace.mockReset()
     mockRename.mockReset()
+    mockDelete.mockReset()
+    mockUpload.mockReset()
     mockCreate.mockReset().mockResolvedValue("new-session")
     mockGetMessages.mockReset().mockResolvedValue([])
     mockSend.mockReset().mockImplementation(() => reply("Here you go"))
@@ -187,8 +196,8 @@ describe("ChatPage", () => {
       await send(user, "a fresh question")
 
       await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
-      expect(mockSend).toHaveBeenCalledWith("new-session", "a fresh question", expect.anything())
-      expect(mockSend).not.toHaveBeenCalledWith("s1", expect.anything(), expect.anything())
+      expect(mockSend).toHaveBeenCalledWith("new-session", "a fresh question", expect.anything(), undefined)
+      expect(mockSend.mock.calls.every(([sid]) => sid !== "s1")).toBe(true)
     })
   })
 
@@ -201,7 +210,7 @@ describe("ChatPage", () => {
 
       await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/chat?session=new-session"))
       expect(mockCreate).toHaveBeenCalledTimes(1)
-      expect(mockSend).toHaveBeenCalledWith("new-session", "Which vehicles are overdue?", expect.anything())
+      expect(mockSend).toHaveBeenCalledWith("new-session", "Which vehicles are overdue?", expect.anything(), undefined)
       expect(await screen.findByText("Here you go")).toBeInTheDocument()
     })
 
@@ -214,7 +223,7 @@ describe("ChatPage", () => {
 
       await send(user, "a follow up")
 
-      await waitFor(() => expect(mockSend).toHaveBeenCalledWith("s1", "a follow up", expect.anything()))
+      await waitFor(() => expect(mockSend).toHaveBeenCalledWith("s1", "a follow up", expect.anything(), undefined))
       expect(mockCreate).not.toHaveBeenCalled()
       expect(mockReplace).not.toHaveBeenCalled()
     })
@@ -240,7 +249,8 @@ describe("ChatPage", () => {
       await send(user, "hello?")
 
       expect(await screen.findByRole("alert")).toHaveTextContent("The memory service is unavailable.")
-      expect(screen.queryByText("hello?")).not.toBeInTheDocument()
+      expect(within(screen.getByTestId("chat-thread")).queryByText("hello?")).not.toBeInTheDocument()
+      expect(screen.getByDisplayValue("hello?")).toBeInTheDocument() // kept in the composer to retry
       expect(mockSend).not.toHaveBeenCalled()
       expect(mockReplace).not.toHaveBeenCalled()
     })
@@ -304,5 +314,122 @@ describe("ChatPage", () => {
       expect(mockPush).toHaveBeenCalledWith("/chat?session=s2")
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
     })
+  })
+
+  describe("deleting a conversation", () => {
+    it("asks for confirmation and does nothing if the user backs out", async () => {
+      const user = userEvent.setup()
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false)
+      renderPage()
+
+      await user.click(sidebar().getByRole("button", { name: "Delete Fuel costs this month" }))
+
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Fuel costs this month"))
+      expect(mockDelete).not.toHaveBeenCalled()
+      confirm.mockRestore()
+    })
+
+    it("deleting another conversation leaves the open one alone", async () => {
+      const user = userEvent.setup()
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+      mockDelete.mockImplementation((_id: string, opts: { onSuccess: () => void }) => opts.onSuccess())
+      currentParams = new URLSearchParams("session=s1")
+      mockGetMessages.mockResolvedValue([stored("m1", "user", "still here")])
+      renderPage()
+      await screen.findByText("still here")
+
+      await user.click(sidebar().getByRole("button", { name: "Delete Fuel costs this month" }))
+
+      expect(mockDelete).toHaveBeenCalledWith("s2", expect.any(Object))
+      expect(screen.getByText("still here")).toBeInTheDocument()
+      expect(mockReplace).not.toHaveBeenCalled()
+      confirm.mockRestore()
+    })
+
+    it("deleting the open conversation resets to a fresh New chat and drops the id from the URL", async () => {
+      const user = userEvent.setup()
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+      mockDelete.mockImplementation((_id: string, opts: { onSuccess: () => void }) => opts.onSuccess())
+      currentParams = new URLSearchParams("session=s1")
+      mockGetMessages.mockResolvedValue([stored("m1", "user", "about to go")])
+      renderPage()
+      await screen.findByText("about to go")
+
+      await user.click(sidebar().getByRole("button", { name: "Delete Overdue service report" }))
+
+      expect(mockDelete).toHaveBeenCalledWith("s1", expect.any(Object))
+      expect(mockReplace).toHaveBeenCalledWith("/chat")
+      expect(screen.queryByText("about to go")).not.toBeInTheDocument()
+      expect(screen.getByText("Start a new conversation")).toBeInTheDocument()
+      confirm.mockRestore()
+    })
+  })
+
+  describe("attaching an image", () => {
+    const UPLOADED = "/uploads/incidents/0b7c7a58-7f0e-4d5a-9a57-6f1f2c3d4e5f.png"
+
+    function attach(user: ReturnType<typeof userEvent.setup>, file: File) {
+      return user.upload(screen.getByTestId("composer-image-input"), file)
+    }
+
+    it("uploads the staged photo, sends its URL with the message, then clears the preview", async () => {
+      const user = userEvent.setup()
+      URL.createObjectURL = vi.fn(() => "blob:preview")
+      URL.revokeObjectURL = vi.fn()
+      mockUpload.mockResolvedValue(UPLOADED)
+      renderPage()
+      const photo = new File(["x"], "receipt.png", { type: "image/png" })
+
+      await attach(user, photo)
+      expect(screen.getByAltText("Attached: receipt.png")).toBeInTheDocument()
+      await user.type(screen.getByPlaceholderText("Add a note about the photo (optional)…"), "log this receipt")
+      await user.click(screen.getByRole("button", { name: "Send" }))
+
+      await waitFor(() => expect(mockSend).toHaveBeenCalledWith("new-session", "log this receipt", expect.anything(), UPLOADED))
+      expect(mockUpload).toHaveBeenCalledWith(photo)
+      expect(screen.queryByAltText("Attached: receipt.png")).not.toBeInTheDocument()
+      expect(screen.getByAltText("Attached photo")).toBeInTheDocument() // shown in the sent message
+    })
+
+    it("a photo alone can be sent; the turn still gets a request to act on", async () => {
+      const user = userEvent.setup()
+      URL.createObjectURL = vi.fn(() => "blob:preview")
+      URL.revokeObjectURL = vi.fn()
+      mockUpload.mockResolvedValue(UPLOADED)
+      renderPage()
+
+      await attach(user, new File(["x"], "scene.jpg", { type: "image/jpeg" }))
+      await user.click(screen.getByRole("button", { name: "Send" }))
+
+      await waitFor(() =>
+        expect(mockSend).toHaveBeenCalledWith("new-session", "Please process the attached image.", expect.anything(), UPLOADED)
+      )
+    })
+
+    it("if the upload fails, nothing is sent and the photo and text stay staged", async () => {
+      const user = userEvent.setup()
+      URL.createObjectURL = vi.fn(() => "blob:preview")
+      URL.revokeObjectURL = vi.fn()
+      mockUpload.mockRejectedValue({ kind: "bad_request", status: 400, message: "Only JPEG, PNG and WebP images are allowed" })
+      renderPage()
+
+      await attach(user, new File(["x"], "scene.png", { type: "image/png" }))
+      await user.type(screen.getByPlaceholderText("Add a note about the photo (optional)…"), "file an incident")
+      await user.click(screen.getByRole("button", { name: "Send" }))
+
+      expect(await screen.findByText(/Couldn't upload the photo: Only JPEG, PNG and WebP/)).toBeInTheDocument()
+      expect(mockSend).not.toHaveBeenCalled()
+      expect(mockCreate).not.toHaveBeenCalled()
+      expect(screen.getByAltText("Attached: scene.png")).toBeInTheDocument()
+      expect(screen.getByDisplayValue("file an incident")).toBeInTheDocument()
+    })
+  })
+
+  it("pins the composer: the page is sized to the shell and the thread scrolls inside it", () => {
+    // jsdom has no layout engine, so this checks the classes that make the layout work.
+    const { container } = renderPage()
+    expect(container.firstElementChild).toHaveClass("h-[calc(100dvh-3rem-var(--topbar-height))]", "min-h-0", "overflow-hidden")
+    expect(screen.getByTestId("chat-section")).toHaveClass("min-h-0", "flex-col")
+    expect(screen.getByTestId("chat-thread")).toHaveClass("min-h-0", "flex-1", "overflow-hidden")
   })
 })

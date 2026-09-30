@@ -86,3 +86,19 @@ def test_upload_requires_auth_and_a_permitted_role(
     assert anonymous.status_code == 401
     mechanic = make_user(db_session, organization, role=UserRole.mechanic)
     assert _post(client, mechanic, "x.jpg", JPEG, "image/jpeg").status_code == 403
+
+
+WEBP = b"RIFF" + (24).to_bytes(4, "little") + b"WEBPVP8 " + b"\x00" * 16
+
+
+def test_upload_accepts_webp(client: TestClient, db_session: Session, organization: Organization) -> None:
+    admin = make_user(db_session, organization, role=UserRole.admin)
+    response = _post(client, admin, "scene.webp", WEBP, "image/webp")
+    assert response.status_code == 201, response.text
+    assert response.json()["url"].endswith(".webp")
+
+
+def test_a_riff_file_that_is_not_webp_is_rejected(client: TestClient, db_session: Session, organization: Organization) -> None:
+    admin = make_user(db_session, organization, role=UserRole.admin)
+    wav = b"RIFF" + (24).to_bytes(4, "little") + b"WAVEfmt " + b"\x00" * 16
+    assert _post(client, admin, "x.webp", wav, "image/webp").status_code == 400

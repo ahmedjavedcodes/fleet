@@ -177,7 +177,7 @@ def test_no_webhooks_configured_does_not_change_behavior() -> None:
 
 def test_ac3_hallucinated_number_forces_a_synthesize_rewrite() -> None:
     llm = _ScriptedLLM([
-        _tool_call("maintenance", {"query_entity": "maintenance_logs"}),
+        _tool_call("maintenance", {"document_text": "Replaced ABC-123 brake pads, cost $50."}),  # a write: fact-checked
         AIMessage(content=""),
         AIMessage(content="Repair cost $500."),  # hallucinated -- scratchpad says $50
         AIMessage(content="Repair cost $50."),  # corrected on the forced rewrite
@@ -216,7 +216,7 @@ def test_fact_check_retries_are_bounded_and_still_return_a_response() -> None:
     # Even if the checker flags every draft, MAX_FACT_CHECK_RETRIES caps the
     # loop -- the user always gets a final_response, never an infinite loop.
     llm = _ScriptedLLM([
-        _tool_call("maintenance", {"query_entity": "maintenance_logs"}),
+        _tool_call("maintenance", {"document_text": "Replaced ABC-123 brake pads, cost $50."}),  # a write: fact-checked
         AIMessage(content=""),
         AIMessage(content="draft 1"),
         AIMessage(content="draft 2"),
@@ -249,7 +249,7 @@ def test_fact_check_skips_a_turn_where_no_tool_ran() -> None:
 
 def test_fact_check_treats_recalled_memory_as_grounding() -> None:
     llm = _ScriptedLLM([
-        _tool_call("maintenance", {"query_entity": "maintenance_logs"}),
+        _tool_call("maintenance", {"document_text": "Replaced ABC-123 brake pads, cost $50."}),  # a write: fact-checked
         AIMessage(content=""),
         AIMessage(content="Repair cost $50, shown in PKR as you prefer."),
     ])
@@ -284,7 +284,7 @@ def test_fact_check_treats_recalled_memory_as_grounding() -> None:
         _token(), deps=OrchestratorDeps(llm=llm, runner=runner, fact_checker_llm=_RecordingChecker(), memory=_Memory())
     )
 
-    session.run("What did the last repair cost?")
+    session.run("Log the brake repair for ABC-123 at $50 in my usual currency.")
 
     assert "[maintenance]" in seen[0]
     assert "[memory]" in seen[0] and "Prefers amounts in PKR" in seen[0]
@@ -308,3 +308,56 @@ def test_cached_reads_are_scoped_to_the_user_through_the_graph() -> None:
     assert len(run_as("user-a").run_calls) == 1
     assert len(run_as("user-a").run_calls) == 0  # same user: served from cache
     assert len(run_as("user-b").run_calls) == 1  # same org, different user: never served user-a's read
+
+
+# --- truth-checker only for writes or multi-hop turns --------------------------------
+
+
+def test_a_single_read_skips_the_fact_checker_entirely() -> None:
+    llm = _ScriptedLLM([
+        _tool_call("maintenance", {"query_entity": "maintenance_logs"}),
+        AIMessage(content=""),
+        AIMessage(content="Repair cost $500."),
+    ])
+    runner = _FakeRunner([RunResult(status="done", state={"query_result": {"repair_cost": "$50"}}, thread_id="t1")])
+    fact_checker = _ScriptedFactChecker(["YES"])
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=llm, runner=runner, fact_checker_llm=fact_checker))
+
+    result = session.run("What did the last repair cost?")
+
+    assert fact_checker.invoke_calls == 0  # no extra LLM round-trip for a plain read
+    assert result.final_response == "Repair cost $500."
+
+
+def test_a_multi_hop_read_is_fact_checked() -> None:
+    llm = _ScriptedLLM([
+        _tool_call("foundation", {"query_entity": "vehicles"}, call_id="c1"),
+        _tool_call("maintenance", {"query_entity": "maintenance_logs"}, call_id="c2"),
+        AIMessage(content=""),
+        AIMessage(content="ABC-123's last repair cost $50."),
+    ])
+    runner = _FakeRunner([
+        RunResult(status="done", state={"query_result": [{"id": "v1", "plate_number": "ABC-123"}]}, thread_id="t1"),
+        RunResult(status="done", state={"query_result": {"repair_cost": "$50"}}, thread_id="t2"),
+    ])
+    fact_checker = _ScriptedFactChecker(["NO"])
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=llm, runner=runner, fact_checker_llm=fact_checker))
+
+    session.run("What did ABC-123's last repair cost?")
+
+    assert fact_checker.invoke_calls == 1
+
+
+def test_a_write_is_fact_checked_even_as_a_single_hop() -> None:
+    llm = _ScriptedLLM([
+        _tool_call("maintenance", {"document_text": "Replaced ABC-123 brake pads, $50."}),
+        AIMessage(content=""),
+        AIMessage(content="Logged the brake service."),
+    ])
+    runner = _FakeRunner([RunResult(status="done", state={"created_record": {"id": "m1"}}, thread_id="t1")])
+    fact_checker = _ScriptedFactChecker(["NO"])
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=llm, runner=runner, fact_checker_llm=fact_checker))
+
+    session.run("Log a brake service for ABC-123, $50.")
+
+    assert fact_checker.invoke_calls == 1

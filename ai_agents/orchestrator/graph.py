@@ -48,6 +48,7 @@ from orchestrator.tool_schemas import (
     UpdateMemoryInput,
 )
 from orchestrator.tools import build_llm_tools
+from orchestrator.turn_profile import classify_turn
 from orchestrator.webhooks import AlertDispatcher
 from tools.auth_context import AgentContext
 
@@ -87,6 +88,18 @@ _DOCUMENT_TOOL_PROMPT = (
     "search the documents AND query the relevant sub-agent. Cite what the "
     "passages say; if search_documents returns no relevant passage, say the "
     "documents don't cover it instead of answering from general knowledge."
+)
+
+_IMAGE_ATTACHED_PROMPT = (
+    "The user attached a photo to their latest message. Route it to the sub-agent "
+    "that reads that kind of document by setting document_type: a driver's license, "
+    "vehicle registration or supplier document -> foundation (license, vehicle_doc, "
+    "supplier_doc); a fuel receipt -> fuel (receipt); a work order or parts invoice "
+    "-> maintenance (work_order, parts_invoice); an accident/damage photo or incident "
+    "report -> accountability (incident_report). The image itself is passed to that "
+    "sub-agent automatically -- never put image data or a made-up URL in tool "
+    "arguments. If the message doesn't make the document type clear, ask the user "
+    "what the photo is instead of guessing."
 )
 
 _SYNTHESIS_PROMPT = (
@@ -183,6 +196,11 @@ def _history_to_messages(state: OrchestratorState, *, documents_enabled: bool = 
                 )
             )
         )
+    if state.get("_pending_image_bytes") is not None:
+        # Without this the planner can't know a photo exists, and the tool
+        # descriptions' "set document_type when the user attached a photo"
+        # would never fire.
+        messages.append(SystemMessage(content=_IMAGE_ATTACHED_PROMPT))
     for turn in state.get("chat_history") or []:
         if turn["role"] == "user":
             messages.append(HumanMessage(content=turn["content"]))
@@ -214,19 +232,47 @@ def _make_fetch_memory_node(deps: OrchestratorDeps):
             return state
 
         context = _agent_context(state.get("auth_context") or {})
-        future = _MEMORY_FETCH_POOL.submit(
-            deps.memory.fetch_context, context, state.get("memory_session_id"), _latest_user_message(state)
-        )
+        question = _latest_user_message(state)
+        turn_kind = classify_turn(question, has_attachment=state.get("_pending_image_bytes") is not None)
+
+        pending_facts = None
+        future = None
         try:
+            if turn_kind == "read":
+                # Plain read: only the short-term window blocks the planner; the
+                # long-term search runs in the background and is merged into the
+                # prompt by whichever later node finds it finished.
+                future = _MEMORY_FETCH_POOL.submit(deps.memory.fetch_summary, context, state.get("memory_session_id"))
+                pending_facts = deps.memory.submit_facts(context, question)
+            else:
+                future = _MEMORY_FETCH_POOL.submit(
+                    deps.memory.fetch_context, context, state.get("memory_session_id"), question
+                )
             memory_context = future.result(timeout=deps.memory.fetch_timeout_s)
         except Exception as exc:  # noqa: BLE001 -- includes TimeoutError: memory is never worth a failed turn
-            future.cancel()
+            if future is not None:
+                future.cancel()
             logger.warning("fetch_memory degraded to empty context: %s", type(exc).__name__)
             memory_context = None
         # "" (not None) marks "fetched, nothing relevant" so a resume doesn't refetch.
-        return {**state, "memory_context": memory_context or ""}
+        return {**state, "memory_context": memory_context or "", "turn_kind": turn_kind, "_pending_memory_facts": pending_facts}
 
     return fetch_memory
+
+
+def _merge_ready_memory(state: OrchestratorState) -> OrchestratorState:
+    """Folds in background long-term facts if (and only if) they have already
+    arrived -- never waits for them."""
+    pending = state.get("_pending_memory_facts")
+    if pending is None or not pending.done():
+        return state
+    try:
+        facts = pending.result()
+    except Exception:  # noqa: BLE001 -- late recall failing is the same as no recall
+        logger.warning("background memory recall failed", exc_info=True)
+        facts = None
+    memory_context = "\n\n".join(s for s in (state.get("memory_context"), facts) if s)
+    return {**state, "memory_context": memory_context, "_pending_memory_facts": None}
 
 
 def _make_plan_node(deps: OrchestratorDeps):
@@ -242,6 +288,7 @@ def _make_plan_node(deps: OrchestratorDeps):
         if deps.observer is not None:
             deps.observer.record_node("plan")
 
+        state = _merge_ready_memory(state)
         bound = deps.llm.bind_tools(
             build_llm_tools(include_memory=deps.memory is not None, include_documents=deps.documents is not None)
         )
@@ -270,6 +317,9 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
         auth_context = state.get("auth_context") or {}
 
         retry_counts = dict(state.get("_tool_retry_counts") or {})
+        # Whether this turn has dispatched any mutating call -- one of the two
+        # triggers for the truth-checker (see fact_check).
+        turn_wrote = bool(state.get("_turn_wrote"))
 
         for call in state.get("active_tool_calls") or []:
             agent_name = call["name"]
@@ -351,6 +401,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 continue
 
             if is_memory_tool:
+                turn_wrote = True
                 # agent-memory.md §3: update_memory is ALWAYS HITL-gated --
                 # nothing is embedded or saved until session.approve().
                 prompt = f"The Orchestrator wants to remember: '{validated_dict['content']}'. Allow?"
@@ -366,6 +417,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                     "hop_count": hop,
                     "stage": "awaiting_approval",
                     "_tool_retry_counts": retry_counts,
+                    "_turn_wrote": turn_wrote,
                     "hitl_state": {
                         "agent_name": MEMORY_TOOL_NAME,
                         "thread_id": str(uuid.uuid4()),
@@ -401,7 +453,12 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             if sub_state.get("document_type") and state.get("_pending_image_bytes") is not None:
                 sub_state["image_bytes"] = state["_pending_image_bytes"]
                 sub_state["mime_type"] = state.get("_pending_mime_type") or "image/jpeg"
+                # The photo the vision model reads is also the incident's evidence.
+                if agent_name == "accountability" and not sub_state.get("attachment_url") and state.get("_pending_attachment_url"):
+                    sub_state["attachment_url"] = state["_pending_attachment_url"]
 
+            if not is_read_only:
+                turn_wrote = True
             result = deps.runner.run(agent_name, sub_state)
 
             if result.status == "awaiting_approval":
@@ -417,6 +474,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                     "hop_count": hop,
                     "stage": "awaiting_approval",
                     "_tool_retry_counts": retry_counts,
+                    "_turn_wrote": turn_wrote,
                     "hitl_state": {
                         "agent_name": agent_name,
                         "thread_id": result.thread_id,
@@ -462,7 +520,10 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
             if deps.webhooks is not None and result.status == "done":
                 deps.webhooks.evaluate_and_queue(agent_name, result.state, auth_context.get("organization_id") or "")
 
-        return {**state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning", "_tool_retry_counts": retry_counts}
+        return {
+            **state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning",
+            "_tool_retry_counts": retry_counts, "_turn_wrote": turn_wrote,
+        }
 
     return execute_tool
 
@@ -500,6 +561,7 @@ def _make_synthesize_node(deps: OrchestratorDeps):
         if deps.observer is not None:
             deps.observer.record_node("synthesize")
 
+        state = _merge_ready_memory(state)
         prompt = _SYNTHESIS_PROMPT
         warning = state.get("_fact_check_warning")
         if warning:
@@ -547,10 +609,11 @@ def _make_fact_check_node(deps: OrchestratorDeps):
             return state
 
         scratchpad = state.get("scratchpad") or []
-        # No tool ran this turn (a greeting, a clarifying question, an answer
-        # from memory or earlier turns): there are no observations to check
-        # against, and flagging every name would force pointless rewrites.
-        if not scratchpad:
+        # The checker costs a full extra LLM round-trip, so it only runs where
+        # a wrong detail does real damage: a turn that changed data, or a
+        # multi-hop turn whose answer stitches several observations together.
+        # A single read (or no tool at all -- nothing to check against) skips it.
+        if not state.get("_turn_wrote") and len(scratchpad) < 2:
             return state
 
         # Memory is grounding too: an answer that uses a recalled fact is not

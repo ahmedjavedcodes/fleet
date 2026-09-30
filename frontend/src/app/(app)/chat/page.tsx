@@ -13,10 +13,12 @@ import {
   rejectChatAction,
   sendChatMessage,
   useChatSessions,
+  useDeleteChatSession,
   useRenameChatSession,
   type ChatEvent,
 } from "@/lib/api/chat"
 import { isApiError } from "@/lib/api/errors"
+import { uploadImage } from "@/lib/api/uploads"
 import { chatKeys } from "@/lib/query/keys"
 import type { ChatMessage, HitlState } from "@/lib/schemas/chat"
 import { AgentActivity, ApprovalCard, HaltedCard, type ActivityStep } from "@/components/ai/agent-panels"
@@ -29,7 +31,10 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 
-type HistoryState = { status: "idle" } | { status: "loading" } | { status: "error"; message: string }
+// Sent when a photo goes out with no typed text, so the turn still has a request to act on.
+const IMAGE_ONLY_MESSAGE = "Please process the attached image."
+
+type HistoryState ={ status: "idle" } | { status: "loading" } | { status: "error"; message: string }
 
 // A real integration: ai_agents/server.py wraps the Grand Orchestrator
 // (OrchestratorSession) in an HTTP/SSE API, proxied through
@@ -48,6 +53,7 @@ export default function ChatPage() {
 
   const sessionsQuery = useChatSessions()
   const renameMutation = useRenameChatSession()
+  const deleteMutation = useDeleteChatSession()
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -139,43 +145,70 @@ export default function ChatPage() {
     refreshSessions()
   }
 
-  async function handleSend(text: string) {
+  // Resolves once the message is accepted (photo uploaded, session known) — false if it
+  // wasn't, so the composer keeps the text and photo. The reply then streams on its own.
+  async function handleSend(typed: string, image: File | null): Promise<boolean> {
     setError(null)
     setHaltedReason(null)
     const epoch = epochRef.current
+
+    let attachmentUrl: string | undefined
+    if (image) {
+      try {
+        attachmentUrl = await uploadImage(image)
+      } catch (err) {
+        if (epoch === epochRef.current) {
+          setError(isApiError(err) && "message" in err ? `Couldn't upload the photo: ${err.message}` : "Couldn't upload the photo.")
+        }
+        return false
+      }
+      if (epoch !== epochRef.current) return false
+    }
+
+    const text = typed || IMAGE_ONLY_MESSAGE
     const userId = newId()
     const assistantId = newId()
-    setMessages((prev) => [...prev, { id: userId, role: "user", text }, { id: assistantId, role: "assistant", text: "" }])
+    setMessages((prev) => [
+      ...prev,
+      { id: userId, role: "user", text, ...(attachmentUrl ? { imageUrl: attachmentUrl } : {}) },
+      { id: assistantId, role: "assistant", text: "" },
+    ])
     setIsStreaming(true)
     const controller = new AbortController()
     abortRef.current = controller
-    try {
-      let sid = sessionId
-      if (!sid) {
-        // A brand-new chat: create its session first so the id is known (and in the URL) before
-        // anything streams, whatever happens to the turn afterwards.
-        try {
-          sid = await createChatSession()
-        } catch (err) {
-          if (epoch === epochRef.current) {
-            setMessages((prev) => prev.filter((m) => m.id !== userId && m.id !== assistantId))
-            setIsStreaming(false)
-            setError(isApiError(err) && "message" in err ? err.message : "Couldn't reach the AI assistant.")
-          }
-          return
+
+    let sid = sessionId
+    if (!sid) {
+      // A brand-new chat: create its session first so the id is known (and in the URL) before
+      // anything streams, whatever happens to the turn afterwards.
+      try {
+        sid = await createChatSession()
+      } catch (err) {
+        if (epoch === epochRef.current) {
+          setMessages((prev) => prev.filter((m) => m.id !== userId && m.id !== assistantId))
+          setIsStreaming(false)
+          setError(isApiError(err) && "message" in err ? err.message : "Couldn't reach the AI assistant.")
         }
-        if (epoch !== epochRef.current) return // the user opened another chat meanwhile
-        heldRef.current = sid
-        setSessionId(sid)
-        router.replace(`/chat?session=${sid}`)
+        return false
       }
-      await consume(sendChatMessage(sid, text, controller.signal), assistantId, epoch)
-    } catch (err) {
-      if (epoch !== epochRef.current) return
-      setIsStreaming(false)
-      setError(isApiError(err) && "message" in err ? err.message : "Couldn't reach the AI assistant.")
-      refreshSessions()
+      if (epoch !== epochRef.current) return false // the user opened another chat meanwhile
+      heldRef.current = sid
+      setSessionId(sid)
+      router.replace(`/chat?session=${sid}`)
     }
+
+    const streamSessionId = sid
+    void (async () => {
+      try {
+        await consume(sendChatMessage(streamSessionId, text, controller.signal, attachmentUrl), assistantId, epoch)
+      } catch (err) {
+        if (epoch !== epochRef.current) return
+        setIsStreaming(false)
+        setError(isApiError(err) && "message" in err ? err.message : "Couldn't reach the AI assistant.")
+        refreshSessions()
+      }
+    })()
+    return true
   }
 
   async function handleApprovalDecision(kind: "approve" | "modify" | "reject", updates?: Record<string, unknown>) {
@@ -221,6 +254,23 @@ export default function ChatPage() {
     if (id !== sessionId) router.push(`/chat?session=${id}`)
   }
 
+  function handleDelete(id: string) {
+    const title = sessionsQuery.data?.find((s) => s.id === id)?.title ?? "this conversation"
+    if (!window.confirm(`Delete "${title}"? This permanently removes the conversation and its messages.`)) return
+    deleteMutation.mutate(id, {
+      onSuccess: () => {
+        // Deleting the conversation on screen: back to a fresh "New chat", with the gone id out of the URL.
+        if (id === heldRef.current) {
+          resetConversation()
+          heldRef.current = null
+          setSessionId(null)
+          router.replace("/chat")
+        }
+      },
+      onError: () => toast.error("Couldn't delete this conversation."),
+    })
+  }
+
   function handleRename(id: string, title: string) {
     renameMutation.mutate(
       { id, title },
@@ -241,18 +291,24 @@ export default function ChatPage() {
       onSelect={handleSelect}
       onNew={handleNewChat}
       onRename={handleRename}
+      onDelete={handleDelete}
     />
   )
 
   return (
-    <div className="flex h-[calc(100vh-6rem)] gap-4">
+    // Exactly the height left inside the app shell, so the page never scrolls as a whole and
+    // the composer stays pinned: 100dvh minus the shell's p-4 (1rem top + 1rem bottom), the gap
+    // under the topbar (1rem) and the topbar itself (--topbar-height, fixed in globals.css).
+    // dvh, not vh: on mobile, vh includes the area under the browser's address bar.
+    <div className="flex h-[calc(100dvh-3rem-var(--topbar-height))] min-h-0 gap-4 overflow-hidden">
       <PageHeader crumbs={[{ label: "AI Assistant" }]} />
 
       <aside aria-label="Conversations" className="hidden w-72 shrink-0 md:flex">
         {sidebar}
       </aside>
 
-      <section aria-label="Chat" className="flex min-w-0 flex-1 flex-col">
+      <section aria-label="Chat" data-testid="chat-section" className="flex min-h-0 min-w-0 flex-1 flex-col">
+
         <div className="flex items-center gap-2 pb-2 md:hidden">
           <Button variant="outline" size="sm" onClick={() => setDrawerOpen(true)}>
             <PanelLeft className="size-4" />
@@ -307,7 +363,7 @@ export default function ChatPage() {
         />
 
         <Composer
-          onSend={(text) => void handleSend(text)}
+          onSend={handleSend}
           onStop={handleStop}
           isStreaming={isStreaming}
           disabled={isStreaming || Boolean(hitlState) || composerBlocked}

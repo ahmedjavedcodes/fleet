@@ -5,6 +5,7 @@ import { Check, Copy } from "lucide-react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
+import { resolveAttachmentUrl } from "@/lib/api/uploads"
 import type { ChatMessage } from "@/lib/schemas/chat"
 import { Button } from "@/components/ui/button"
 import { CitationPill } from "./citation-pill"
@@ -40,6 +41,14 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user"
   return (
     <div className={cn("flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
+      {message.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a user upload served by the API host, not a build asset
+        <img
+          src={resolveAttachmentUrl(message.imageUrl)}
+          alt="Attached photo"
+          className="max-h-40 max-w-[60%] rounded-lg border border-border object-cover"
+        />
+      ) : null}
       <div
         className={cn(
           "max-w-[85%] rounded-xl px-4 py-2.5 text-sm",

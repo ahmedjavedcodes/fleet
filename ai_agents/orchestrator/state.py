@@ -59,3 +59,12 @@ class OrchestratorState(TypedDict, total=False):
     # memory block fetch_memory assembled for this turn's Mega-Prompt.
     memory_session_id: str | None
     memory_context: str | None
+    # Latency fast path: "read" turns don't block the planner on long-term
+    # recall (it arrives via _pending_memory_facts, a Future), and the
+    # truth-checker only runs when the turn wrote (_turn_wrote) or went multi-hop.
+    turn_kind: str | None
+    _pending_memory_facts: Any
+    _turn_wrote: bool
+    # Site-relative path of this turn's uploaded image (/uploads/incidents/...),
+    # so a filed incident can link the photo the vision model just read.
+    _pending_attachment_url: str | None

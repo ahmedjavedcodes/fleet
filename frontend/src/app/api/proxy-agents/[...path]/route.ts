@@ -94,3 +94,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   return proxy(request, (await params).path)
 }
+export async function DELETE(request: NextRequest, { params }: RouteContext) {
+  return proxy(request, (await params).path)
+}

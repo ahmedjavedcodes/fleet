@@ -13,7 +13,9 @@ Hot path vs background:
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from memory.embeddings import Embedder, get_default_embedder
@@ -25,9 +27,12 @@ from tools.auth_context import AgentContext
 
 logger = logging.getLogger("fleet.memory")
 
-# Measured ~0.45s per backend call on the dev stack; the two reads below run
-# concurrently, so this leaves headroom while staying far below one LLM call.
+# Overall bound for the short-term (session summary) read.
 FETCH_TIMEOUT_SECONDS = 1.5
+# Strict bound for long-term recall (embedding + vector/keyword search). A
+# hanging vector store costs the turn at most this, then it proceeds on the
+# short-term window alone.
+SEMANTIC_TIMEOUT_SECONDS = 0.4
 RECENT_MESSAGE_LIMIT = 6
 # Cosine-distance cutoff for recall. Calibrated live against Pinecone's
 # llama-text-embed-v2: a correct paraphrase match ("what currency should I
@@ -37,7 +42,7 @@ MAX_RECALL_DISTANCE = 0.75
 
 # Separate from the single-worker `background` executor: that one serializes
 # message writes, and a hot-path read must never queue behind them.
-_FETCH_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="memory-summary-read")
+_FETCH_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="memory-fact-read")
 
 
 class AgentMemory:
@@ -49,9 +54,11 @@ class AgentMemory:
         tools: Any = memory_tools,
         background: Executor | None = None,
         fetch_timeout_s: float = FETCH_TIMEOUT_SECONDS,
+        semantic_timeout_s: float = SEMANTIC_TIMEOUT_SECONDS,
         top_k: int = 5,
         max_distance: float = MAX_RECALL_DISTANCE,
     ) -> None:
+        self.semantic_timeout_s = semantic_timeout_s
         self.embedder = embedder or get_default_embedder()
         self.summarizer = summarizer or SessionSummarizer()
         self.tools = tools
@@ -91,19 +98,17 @@ class AgentMemory:
 
     # ---- read path (hot) ----
 
-    def fetch_context(self, context: AgentContext, session_id: str | None, query_text: str) -> str | None:
-        """Assembles the memory block for the Mega-Prompt. May raise -- the
-        caller (graph.py's fetch_memory node) owns timeout and fail-open."""
-        sections: list[str] = []
+    def fetch_summary(self, context: AgentContext, session_id: str | None) -> str | None:
+        """Short-term memory: the sliding-window summary of this conversation
+        (the unsummarized recent messages are already in chat_history)."""
+        if not session_id:
+            return None
+        session = self.tools.get_session_context_tool(context, session_id, timeout=self.fetch_timeout_s)["session"]
+        summary = session.get("running_summary")
+        return f"Earlier in this conversation:\n{summary}" if summary else None
 
-        # The session summary and the fact search are independent reads, so
-        # they run side by side -- sequential, they'd cost two round trips.
-        summary_future = (
-            _FETCH_POOL.submit(self.tools.get_session_context_tool, context, session_id, timeout=self.fetch_timeout_s)
-            if session_id
-            else None
-        )
-
+    def fetch_facts(self, context: AgentContext, query_text: str) -> str | None:
+        """Long-term memory: embedding + semantic (or keyword) fact search."""
         embedding = self._embed(query_text, task="search_query") if query_text else None
         payload: dict[str, Any] = {"top_k": self.top_k}
         if embedding is not None:
@@ -112,20 +117,39 @@ class AgentMemory:
         elif query_text:
             payload["query_text"] = query_text
         facts = self.tools.search_memories_tool(context, payload, timeout=self.fetch_timeout_s)
+        if not facts:
+            return None
+        lines = []
+        for fact in facts:
+            where = f"{fact['entity_type']} {fact['entity_id']}" if fact.get("entity_id") else fact["scope"]
+            lines.append(f"- [{where}] {fact['content']}")
+        return "Remembered facts:\n" + "\n".join(lines)
 
-        if summary_future is not None:
-            session = summary_future.result()["session"]
-            if session.get("running_summary"):
-                sections.append(f"Earlier in this conversation:\n{session['running_summary']}")
+    def submit_facts(self, context: AgentContext, query_text: str) -> Future:
+        """fetch_facts in the background, for callers that won't wait on it."""
+        return _FETCH_POOL.submit(self.fetch_facts, context, query_text)
 
-        if facts:
-            lines = []
-            for fact in facts:
-                where = f"{fact['entity_type']} {fact['entity_id']}" if fact.get("entity_id") else fact["scope"]
-                lines.append(f"- [{where}] {fact['content']}")
-            sections.append("Remembered facts:\n" + "\n".join(lines))
+    def fetch_context(self, context: AgentContext, session_id: str | None, query_text: str) -> str | None:
+        """Assembles the memory block for the Mega-Prompt. The summary read may
+        raise -- the caller (graph.py's fetch_memory node) owns the overall
+        timeout and fail-open. The semantic search gets its own, much stricter
+        budget: if the vector store hangs, the turn proceeds on the short-term
+        window alone rather than waiting for it."""
+        started = time.monotonic()
+        # Independent reads, so they run side by side.
+        facts_future = self.submit_facts(context, query_text)
+        summary = self.fetch_summary(context, session_id)
 
-        return "\n\n".join(sections) or None
+        facts: str | None = None
+        try:
+            facts = facts_future.result(timeout=max(0.0, self.semantic_timeout_s - (time.monotonic() - started)))
+        except FutureTimeoutError:
+            facts_future.cancel()
+            logger.warning("memory: semantic search exceeded %.0fms; using short-term context only", self.semantic_timeout_s * 1000)
+        except Exception:  # noqa: BLE001 -- long-term recall is never worth a failed turn
+            logger.warning("memory: semantic search failed; using short-term context only", exc_info=True)
+
+        return "\n\n".join(s for s in (summary, facts) if s) or None
 
     # ---- write path ----
 

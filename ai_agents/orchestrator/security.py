@@ -73,10 +73,16 @@ class SecurityViolation:
     rejection_message: str
 
 
-def scan_user_input(text: str, *, config: SecurityConfig = DEFAULT_SECURITY_CONFIG) -> SecurityViolation | None:
+def scan_user_input(
+    text: str, *, config: SecurityConfig = DEFAULT_SECURITY_CONFIG, has_attachment: bool = False
+) -> SecurityViolation | None:
     """Returns a SecurityViolation if `text` should be rejected before
     reaching the LLM, else None. Pure regex/string heuristics -- no LLM
     call is made here, matching config.enable_llm_guard's default of False.
+
+    has_attachment: a photo came with the text. The domain check is skipped
+    then -- "log this" beside a receipt photo is on-topic even though the
+    words alone aren't -- but every injection check still applies.
     """
     if not text or not text.strip():
         return SecurityViolation(reason="Empty input.", rejection_message=INJECTION_MESSAGE)
@@ -97,7 +103,7 @@ def scan_user_input(text: str, *, config: SecurityConfig = DEFAULT_SECURITY_CONF
         if pattern.search(text):
             return SecurityViolation(reason=f"Injection pattern matched: {pattern.pattern!r}.", rejection_message=INJECTION_MESSAGE)
 
-    if not any(keyword in lowered for keyword in _DOMAIN_KEYWORDS):
+    if not has_attachment and not any(keyword in lowered for keyword in _DOMAIN_KEYWORDS):
         return SecurityViolation(reason="No fleet/HR/maintenance/logistics domain keyword found.", rejection_message=OFF_TOPIC_MESSAGE)
 
     return None

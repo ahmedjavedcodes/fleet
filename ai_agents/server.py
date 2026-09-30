@@ -57,7 +57,10 @@ from dotenv import load_dotenv
 # its default_factory actually builds the Groq-backed LLM client.
 load_dotenv()
 
+import io  # noqa: E402
+
 from fastapi import FastAPI, Header, HTTPException  # noqa: E402
+from PIL import Image  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 from sse_starlette.sse import EventSourceResponse  # noqa: E402
@@ -72,6 +75,7 @@ from orchestrator.graph import OrchestratorDeps  # noqa: E402
 from orchestrator.rag_eval import RagTriadEvaluator  # noqa: E402
 from orchestrator.session import OrchestratorSession, TurnResult  # noqa: E402
 from orchestrator.webhooks import AlertDispatcher  # noqa: E402
+from tools import api_client  # noqa: E402
 from tools.api_client import BackendAPIError  # noqa: E402
 from tools.auth_context import AgentContext, InvalidTokenError, build_context  # noqa: E402
 
@@ -250,8 +254,40 @@ def _get_session(session_id: str, authorization: str | None) -> OrchestratorSess
     return _resume_session(session_id, token, context)
 
 
+# Exactly what the backend's POST /api/v1/uploads/image returns. Anything else
+# is rejected, so this server only ever fetches its own backend's upload store
+# (never an arbitrary URL -- no SSRF).
+_ATTACHMENT_PATH = r"^/uploads/incidents/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$"
+_ATTACHMENT_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+
 class MessageRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=4000)
+    attachment_url: str | None = Field(default=None, pattern=_ATTACHMENT_PATH)
+
+
+def _load_attachment(path: str) -> tuple[bytes, str]:
+    """The uploaded image's bytes and MIME type, ready for the vision models.
+    Those accept JPEG/PNG only, so a WebP is re-encoded as PNG here."""
+    try:
+        response = api_client._http_client().get(f"{api_client._base_url()}{path}", timeout=10.0)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="Couldn't read the attached image.") from exc
+    if response.status_code == 404:
+        raise HTTPException(status_code=422, detail="The attached image no longer exists; attach it again.")
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Couldn't read the attached image.")
+
+    mime = _ATTACHMENT_MIME[path.rsplit(".", 1)[1]]
+    if mime != "image/webp":
+        return response.content, mime
+    try:
+        with Image.open(io.BytesIO(response.content)) as image:
+            converted = io.BytesIO()
+            image.save(converted, format="PNG")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail="The attached WebP image couldn't be decoded.") from exc
+    return converted.getvalue(), "image/png"
 
 
 class ModifyRequest(BaseModel):
@@ -347,7 +383,16 @@ async def send_message(
 ) -> EventSourceResponse:
     # Resolving may call the backend (to resume), so keep it off the event loop.
     session = await asyncio.to_thread(_get_session, session_id, authorization)
-    return await _stream_turn(session, lambda: session.run(body.message))
+    if body.attachment_url is None:
+        return await _stream_turn(session, lambda: session.run(body.message))
+
+    # Read before streaming starts, so a missing/bad image is a plain 4xx the
+    # client can show, not an error in the middle of a stream.
+    image_bytes, mime_type = await asyncio.to_thread(_load_attachment, body.attachment_url)
+    return await _stream_turn(
+        session,
+        lambda: session.run(body.message, image_bytes=image_bytes, mime_type=mime_type, attachment_url=body.attachment_url),
+    )
 
 
 @app.post("/api/v1/chat/sessions/{session_id}/approve")
@@ -427,6 +472,23 @@ def rename_session(session_id: str, body: RenameSessionRequest, authorization: s
         _raise_for_backend(exc)
         raise
     return {"id": renamed["id"], "title": renamed["title"]}
+
+
+@app.delete("/api/v1/chat/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str, authorization: str | None = Header(default=None)) -> None:
+    """Deletes one of the caller's conversations (the backend enforces ownership:
+    someone else's id is a 404) and drops any live copy this process holds, so
+    a stale OrchestratorSession can't resurrect it on the next message."""
+    _, context = _authenticate(authorization)
+    try:
+        memory_tools.delete_session_tool(context, session_id)
+    except BackendAPIError as exc:
+        _raise_for_backend(exc)
+        raise
+    live = _SESSIONS.get(session_id)
+    if live is not None and live.user_id == context.user_id:
+        _SESSIONS.pop(session_id, None)
+        _SESSION_TOUCHED.pop(session_id, None)
 
 
 @app.get("/health")

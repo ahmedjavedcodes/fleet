@@ -43,6 +43,10 @@ def rename_session_tool(context: AgentContext, session_id: str, title: str, *, t
     return call_backend("PATCH", f"{_PREFIX}/sessions/{session_id}", token=context.token, json={"title": title}, timeout=timeout)
 
 
+def delete_session_tool(context: AgentContext, session_id: str, *, timeout: float = 10.0) -> None:
+    call_backend("DELETE", f"{_PREFIX}/sessions/{session_id}", token=context.token, timeout=timeout)
+
+
 def apply_summary_tool(
     context: AgentContext, session_id: str, *, message_ids: list[str], running_summary: str, expected_summary_version: int
 ) -> dict[str, Any]:

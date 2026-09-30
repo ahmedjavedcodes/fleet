@@ -14,7 +14,7 @@ from orchestrator.graph import OrchestratorDeps
 from orchestrator.runner import RunResult
 from orchestrator.session import OrchestratorSession
 from orchestrator.tools import build_llm_tools
-from tests.test_memory_units import FakeMemoryTools, InlineExecutor
+from tests.test_memory_units import CTX as CTX_FOR_MEMORY, FakeMemoryTools, InlineExecutor
 from tools.api_client import BackendAPIError
 
 
@@ -84,7 +84,8 @@ def test_fetched_memory_reaches_the_planning_prompt_as_data() -> None:
         facts=[{"scope": "personal", "content": "Prefers amounts in PKR", "entity_id": None, "entity_type": None}],
     )
     llm = _ScriptedLLM([AIMessage(content=""), AIMessage(content="ok")])
-    _session(llm, tools).run("What did we spend on fuel?")
+    # A full-path (non-read) turn: long-term recall is awaited before planning.
+    _session(llm, tools).run("Prepare my fuel spend report for the depot.")
 
     planning_prompt = _all_text(llm.seen_messages[0])
     assert "Prefers amounts in PKR" in planning_prompt
@@ -271,3 +272,71 @@ def test_unknown_session_id_falls_back_to_a_new_session() -> None:
     session = _session(_ScriptedLLM([]), memory=_memory(_NotFound()), memory_session_id="someone-elses")
     assert session.memory_session_id == "s-new"
     assert session.state["chat_history"] == []
+
+
+# ---- latency fast path: plain reads never wait on long-term recall ----
+
+
+def test_a_read_turn_plans_without_waiting_for_long_term_recall() -> None:
+    import threading
+
+    release = threading.Event()
+
+    class _SlowFacts(FakeMemoryTools):
+        def search_memories_tool(self, context, payload, timeout=10.0):
+            release.wait(5)
+            return [{"scope": "personal", "content": "Prefers amounts in PKR", "entity_id": None, "entity_type": None}]
+
+    class _LLM(_ScriptedLLM):
+        def invoke(self, messages):
+            if len(self.seen_messages) == 0:  # the planning call: recall is still in flight
+                release.set()
+                time.sleep(0.3)  # let the background search land before synthesis
+            return super().invoke(messages)
+
+    llm = _LLM([AIMessage(content=""), AIMessage(content="ok")])
+    tools = _SlowFacts(summary="User manages the Lahore depot.")
+    started = time.monotonic()
+    _session(llm, tools).run("How many vehicles do we have?")
+
+    planning, synthesis = _all_text(llm.seen_messages[0]), _all_text(llm.seen_messages[1])
+    assert "User manages the Lahore depot." in planning  # short-term window: always there
+    assert "Prefers amounts in PKR" not in planning  # the planner did not wait for it
+    assert "Prefers amounts in PKR" in synthesis  # but the answer still honours it
+    assert time.monotonic() - started < 2
+
+
+def test_a_hanging_semantic_search_costs_at_most_its_budget_then_uses_short_term_context() -> None:
+    class _Hangs(FakeMemoryTools):
+        def search_memories_tool(self, context, payload, timeout=10.0):
+            time.sleep(3)
+            return [{"scope": "personal", "content": "too late", "entity_id": None, "entity_type": None}]
+
+    memory = _memory(_Hangs(summary="Short-term summary."), semantic_timeout_s=0.2)
+    started = time.monotonic()
+    text = memory.fetch_context(CTX_FOR_MEMORY, "s1", "Prepare the fuel report")
+    elapsed = time.monotonic() - started
+
+    assert text == "Earlier in this conversation:\nShort-term summary."
+    assert elapsed < 1.0
+
+
+def test_memory_that_cannot_even_start_a_fetch_still_fails_open() -> None:
+    class _Broken:
+        fetch_timeout_s = 0.5
+
+        def start_session(self, context):
+            return "s1"
+
+        def record_message(self, *a, **k):
+            return None
+
+        def on_write(self, *a, **k):
+            return None
+        # no fetch_summary / submit_facts / fetch_context at all
+
+    llm = _ScriptedLLM([AIMessage(content=""), AIMessage(content="ok")])
+    result = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=llm, runner=_FakeRunner(), memory=_Broken())).run(
+        "How many vehicles do we have?"
+    )
+    assert result.status == "done" and result.final_response == "ok"

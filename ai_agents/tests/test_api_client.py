@@ -1,14 +1,46 @@
 import httpx
 import pytest
 
+from tools import api_client
 from tools.api_client import BackendAPIError, call_backend
-
-_RealClient = httpx.Client
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, handler) -> None:
-    transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(httpx, "Client", lambda **kw: _RealClient(transport=transport, **kw))
+    monkeypatch.setattr(api_client, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_the_http_client_is_built_once_and_reused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Building an httpx.Client loads the SSL trust store (0.4-2s measured on
+    Windows); one per call made every backend round trip pay that."""
+    built = []
+    real = httpx.Client
+    monkeypatch.setattr(api_client, "_client", None)
+    monkeypatch.setattr(
+        httpx, "Client",
+        lambda **kw: built.append(1) or real(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[])), **kw),
+    )
+
+    for _ in range(3):
+        call_backend("GET", "/api/v1/vehicles", token="t")
+
+    assert len(built) == 1
+
+
+def test_per_call_timeout_and_base_url_are_still_honoured(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["timeout"] = request.extensions["timeout"]
+        return httpx.Response(200, json={})
+
+    _patch_client(monkeypatch, handler)
+    monkeypatch.setenv("BACKEND_API_BASE_URL", "http://backend:8000")
+
+    call_backend("GET", "/api/v1/health", timeout=1.5)
+
+    assert seen["url"] == "http://backend:8000/api/v1/health"
+    assert seen["timeout"]["read"] == 1.5
 
 
 def test_get_returns_parsed_json(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,6 @@
 "use client"
 
-import { MessageSquare, Pencil, Plus } from "lucide-react"
+import { MessageSquare, Pencil, Plus, Trash2 } from "lucide-react"
 import { useRef, useState } from "react"
 import { formatDate } from "@/lib/format-date"
 import type { ChatSessionSummary } from "@/lib/schemas/chat"
@@ -12,7 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 // The conversation list beside the chat: a prominent "New chat" button on top, then the
 // user's past conversations (newest activity first) in a scrollable list. The active one is
 // highlighted; the pencil turns a title into an input (Enter or leaving the field saves,
-// Escape cancels). Purely presentational: the page owns the data and every action.
+// Escape cancels) and the trash icon asks the page to delete it (the page confirms first).
+// Purely presentational: the page owns the data and every action.
 export function ChatSessionSidebar({
   sessions,
   isPending,
@@ -22,6 +23,7 @@ export function ChatSessionSidebar({
   onSelect,
   onNew,
   onRename,
+  onDelete,
 }: {
   sessions: ChatSessionSummary[] | undefined
   isPending: boolean
@@ -31,6 +33,7 @@ export function ChatSessionSidebar({
   onSelect: (id: string) => void
   onNew: () => void
   onRename: (id: string, title: string) => void
+  onDelete: (id: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
@@ -117,23 +120,34 @@ export function ChatSessionSidebar({
                         onClick={() => onSelect(session.id)}
                         aria-current={active ? "true" : undefined}
                         className={cn(
-                          "flex w-full cursor-pointer flex-col rounded-lg px-3 py-2 pr-10 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                          "flex w-full cursor-pointer flex-col rounded-lg px-3 py-2 pr-18 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                           active && "bg-muted"
                         )}
                       >
                         <span className={cn("truncate text-sm text-foreground", active ? "font-semibold" : "font-medium")}>{session.title}</span>
                         <span className="text-caption text-muted-foreground">{formatDate(session.updated_at.slice(0, 10))}</span>
                       </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Rename ${session.title}`}
-                        onClick={() => startEditing(session)}
-                        className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
-                      >
-                        <Pencil className="size-3.5" />
-                      </Button>
+                      <div className="absolute top-1/2 right-1 flex -translate-y-1/2 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Rename ${session.title}`}
+                          onClick={() => startEditing(session)}
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Delete ${session.title}`}
+                          onClick={() => onDelete(session.id)}
+                          className="text-muted-foreground hover:bg-destructive-soft hover:text-destructive"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </>
                   )}
                 </li>

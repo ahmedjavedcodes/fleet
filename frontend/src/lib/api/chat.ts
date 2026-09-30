@@ -81,6 +81,31 @@ export function renameChatSession(sessionId: string, title: string): Promise<Ren
   return agentsRequest(`/chat/sessions/${sessionId}`, { method: "PATCH", body: { title }, schema: renamedChatSessionSchema })
 }
 
+/** Permanently deletes one of the caller's conversations and its transcript. */
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${AGENTS}/chat/sessions/${sessionId}`, { method: "DELETE", credentials: "same-origin" })
+  } catch {
+    throw networkError()
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => undefined)
+    throw toApiError(response.status, body, response.headers)
+  }
+}
+
+export function useDeleteChatSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteChatSession,
+    onSuccess: (_result, id) => {
+      queryClient.setQueryData<ChatSessionSummary[]>(chatKeys.sessions(), (rows) => rows?.filter((s) => s.id !== id))
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: chatKeys.sessions() }),
+  })
+}
+
 export function useChatSessions() {
   return useQuery({ queryKey: chatKeys.sessions(), queryFn: listChatSessions })
 }
@@ -163,9 +188,17 @@ async function* streamTurn(path: string, body?: unknown, signal?: AbortSignal): 
 
 /** Streams the response to a user message on an existing conversation. The session id is
  * always explicit, so the message can only ever append to the thread the caller names —
- * create one first with createChatSession() for a brand-new chat. */
-export function sendChatMessage(sessionId: string, message: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
-  return streamTurn(`/chat/sessions/${sessionId}/messages`, { message }, signal)
+ * create one first with createChatSession() for a brand-new chat. `attachmentUrl` is the
+ * path returned by uploadImage() for a photo sent with this message; the chat server reads
+ * that upload and hands it to the vision model. */
+export function sendChatMessage(
+  sessionId: string,
+  message: string,
+  signal?: AbortSignal,
+  attachmentUrl?: string
+): AsyncGenerator<ChatEvent> {
+  const body = attachmentUrl ? { message, attachment_url: attachmentUrl } : { message }
+  return streamTurn(`/chat/sessions/${sessionId}/messages`, body, signal)
 }
 
 export function approveChatAction(sessionId: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
