@@ -19,7 +19,7 @@ from typing import Any, Literal, TypedDict
 
 Intent = Literal["maintenance_onboard", "inventory_restock", "query"]
 DocumentType = Literal["work_order", "parts_invoice"]
-QueryEntity = Literal["maintenance_logs", "inventory", "low_stock"]
+QueryEntity = Literal["maintenance_logs", "inventory", "low_stock", "service_due"]
 
 Stage = Literal[
     "routing",

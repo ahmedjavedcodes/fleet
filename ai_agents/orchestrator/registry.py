@@ -67,7 +67,8 @@ SUB_AGENT_REGISTRY: dict[str, SubAgentSpec] = {
             "Maintenance & Parts Inventory Agent: log a work order/repair (photo or "
             "text; several services per visit, service_scale minor/major, driver who "
             "brought the vehicle in), restock inventory from a parts invoice (photo or text), or query "
-            "maintenance logs, inventory, or low-stock parts."
+            "maintenance/repair history, parts inventory (qty_on_hand, reorder thresholds), low-stock "
+            "parts, or which vehicles are due or overdue for service (query_entity=service_due)."
         ),
     ),
     "accountability": SubAgentSpec(

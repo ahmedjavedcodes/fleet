@@ -40,6 +40,7 @@ from mcp_server.maintenance_tools import (
     get_inventory_tool,
     get_low_stock_tool,
     get_maintenance_logs_tool,
+    get_service_due_tool,
     update_inventory_tool,
 )
 from tools.api_client import BackendAPIError
@@ -75,6 +76,7 @@ class MaintenanceAgentDeps:
     get_inventory: Lister = get_inventory_tool
     get_low_stock: Lister = get_low_stock_tool
     get_maintenance_logs: Lister = get_maintenance_logs_tool
+    get_service_due: Callable[[AgentContext], dict[str, Any]] = get_service_due_tool
     create_maintenance_log: Callable[[AgentContext, Any], dict[str, Any]] = create_maintenance_log_tool
     create_mechanic_report: Callable[[AgentContext, str, Any], dict[str, Any]] = create_mechanic_report_tool
     update_inventory: Callable[[AgentContext, str, Any], dict[str, Any]] = update_inventory_tool
@@ -381,10 +383,12 @@ def _make_restock_node(deps: MaintenanceAgentDeps):
 
 
 def _make_query_node(deps: MaintenanceAgentDeps):
-    listers: dict[str, Lister] = {
+    # Readers return a list, except service_due ({"overdue": [...], "upcoming": [...]}).
+    listers: dict[str, Callable[[AgentContext], Any]] = {
         "maintenance_logs": deps.get_maintenance_logs,
         "inventory": deps.get_inventory,
         "low_stock": deps.get_low_stock,
+        "service_due": deps.get_service_due,
     }
 
     def query(state: MaintenanceAgentState) -> MaintenanceAgentState:
@@ -396,7 +400,7 @@ def _make_query_node(deps: MaintenanceAgentDeps):
         context = _context_from_state(state)
         try:
             result = lister(context)
-        except PermissionDeniedError as exc:
+        except (PermissionDeniedError, BackendAPIError) as exc:
             return {**state, "stage": "halted", "halt_reason": str(exc)}
 
         return {**state, "query_result": result, "stage": "done"}

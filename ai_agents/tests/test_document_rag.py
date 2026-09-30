@@ -178,7 +178,9 @@ def test_retrieval_outage_does_not_end_the_turn() -> None:
         _token(), deps=OrchestratorDeps(llm=llm, runner=_Runner(), documents=_Retriever(error=ConnectionError("503")))
     ).run("What does the manual say about brake pads?")
     assert result.status == "done"
-    assert "search_documents unavailable" in result.state["scratchpad"][0]["observation"]
+    observation = result.state["scratchpad"][0]["observation"]
+    assert observation.startswith("search_documents failed:")
+    assert "unavailable right now" in observation
 
 
 def test_invalid_search_arguments_go_through_the_retry_wrapper() -> None:

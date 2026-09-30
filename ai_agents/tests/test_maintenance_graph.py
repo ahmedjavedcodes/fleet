@@ -40,6 +40,8 @@ class _FakeBackend:
         self.create_report_calls = 0
         self.update_inventory_calls = 0
         self.force_400_on_report = False
+        self.overdue: list[dict] = []
+        self.upcoming: list[dict] = []
 
     def __call__(self, method, path, *, token=None, json=None, params=None, timeout=10.0):
         if method == "GET" and path == "/api/v1/vehicles":
@@ -50,6 +52,10 @@ class _FakeBackend:
             return [p for p in self.inventory if p["qty_on_hand"] <= p.get("reorder_threshold", 0)]
         if method == "GET" and path == "/api/v1/maintenance":
             return list(self.maintenance_logs)
+        if method == "GET" and path == "/api/v1/maintenance/overdue":
+            return list(self.overdue)
+        if method == "GET" and path == "/api/v1/maintenance/upcoming":
+            return list(self.upcoming)
 
         if method == "POST" and path == "/api/v1/maintenance":
             self.create_log_calls += 1
@@ -89,16 +95,17 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> _FakeBackend:
 
 
 def _deps(backend: _FakeBackend, **overrides) -> MaintenanceAgentDeps:
-    return MaintenanceAgentDeps(
+    defaults = dict(
         get_vehicles=vft.get_vehicles_tool,
         get_inventory=mt.get_inventory_tool,
         get_low_stock=mt.get_low_stock_tool,
         get_maintenance_logs=mt.get_maintenance_logs_tool,
+        get_service_due=mt.get_service_due_tool,
         create_maintenance_log=mt.create_maintenance_log_tool,
         create_mechanic_report=mt.create_mechanic_report_tool,
         update_inventory=mt.update_inventory_tool,
-        **overrides,
     )
+    return MaintenanceAgentDeps(**{**defaults, **overrides})
 
 
 def test_ac1_valid_work_order_creates_log_and_report(backend: _FakeBackend) -> None:
@@ -248,3 +255,33 @@ def test_extraction_failure_halts_without_creating(backend: _FakeBackend) -> Non
 
     assert state["stage"] == "halted"
     assert backend.create_log_calls == 0
+
+
+# --- "which vehicles are due for service" --------------------------------------------
+
+
+def test_service_due_query_returns_overdue_and_upcoming(backend: _FakeBackend) -> None:
+    backend.overdue = [{"plate_number": "ABC-123", "service_type": "oil_change", "km_remaining": -250}]
+    backend.upcoming = [{"plate_number": "DEF-456", "service_type": "brake_service", "next_due_km": 45800}]
+    graph = get_compiled_maintenance_graph(_deps(backend))
+
+    state = graph.invoke({"token": _token("fleet_manager"), "query_entity": "service_due"})
+
+    assert state["stage"] == "done"
+    assert state["query_result"] == {"overdue": backend.overdue, "upcoming": backend.upcoming}
+
+
+@pytest.mark.parametrize("role", ["mechanic", "driver"])
+def test_service_due_is_a_fleet_view_for_admins_and_managers_only(backend: _FakeBackend, role: str) -> None:
+    graph = get_compiled_maintenance_graph(_deps(backend))
+    state = graph.invoke({"token": _token(role), "query_entity": "service_due"})
+    assert state["stage"] == "halted"  # refused before any backend call (the fake would raise)
+
+
+def test_a_backend_error_on_a_read_halts_with_the_reason_instead_of_raising(backend: _FakeBackend) -> None:
+    def failing(context):
+        raise BackendAPIError(503, "database under load")
+
+    graph = get_compiled_maintenance_graph(_deps(backend, get_service_due=failing))
+    state = graph.invoke({"token": _token("admin"), "query_entity": "service_due"})
+    assert state["stage"] == "halted" and "503" in state["halt_reason"]

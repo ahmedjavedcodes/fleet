@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
 from orchestrator.security import DEFAULT_SECURITY_CONFIG, SecurityConfig, scan_user_input
 from orchestrator.state import OrchestratorState
+from orchestrator.tool_errors import tool_failure_observation
 from orchestrator.tool_schemas import DOCUMENT_TOOL_NAME, MEMORY_TOOL_NAME, UpdateMemoryInput
 from tools.api_client import BackendAPIError
 from tools.auth_context import build_context
@@ -180,10 +181,16 @@ class OrchestratorSession:
             trace_status = "halted"
             raw_result = None
         else:
-            result = self.deps.runner.resume(hitl["agent_name"], hitl["thread_id"], updates=updates)
-            observation = _format_observation(hitl["agent_name"], result)
-            trace_status = result.status
-            raw_result = result.state
+            try:
+                result = self.deps.runner.resume(hitl["agent_name"], hitl["thread_id"], updates=updates)
+            except Exception as exc:  # noqa: BLE001 -- an outage mid-approval must not end the turn
+                observation = tool_failure_observation(hitl["agent_name"], exc)
+                trace_status = "halted"
+                raw_result = None
+            else:
+                observation = _format_observation(hitl["agent_name"], result)
+                trace_status = result.status
+                raw_result = result.state
 
         scratchpad.append({"hop": hop, "tool": hitl["agent_name"], "args": updates or {}, "observation": observation})
         if self.deps.observer is not None:

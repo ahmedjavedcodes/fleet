@@ -28,6 +28,9 @@ from tools.schemas import InventoryUpdateInput, MaintenanceLogCreateInput, Mecha
 _READ_ROLES = frozenset({"admin", "fleet_manager", "mechanic"})
 _LOG_WRITE_ROLES = frozenset({"admin", "mechanic"})
 _INVENTORY_WRITE_ROLES = frozenset({"admin", "fleet_manager"})
+# /maintenance/overdue and /maintenance/upcoming are fleet-wide views: the backend
+# allows admin and fleet_manager only (its _FLEET_VIEW_ROLES), not mechanics.
+_SERVICE_DUE_ROLES = frozenset({"admin", "fleet_manager"})
 
 
 class PermissionDeniedError(Exception):
@@ -71,6 +74,16 @@ def get_inventory_tool(context: AgentContext) -> list[dict[str, Any]]:
 def get_low_stock_tool(context: AgentContext) -> list[dict[str, Any]]:
     _require_role(context, _READ_ROLES, "get_low_stock_tool")
     return call_backend("GET", "/api/v1/inventory/low-stock", token=context.token)
+
+
+def get_service_due_tool(context: AgentContext) -> dict[str, Any]:
+    """Vehicles past (overdue) or approaching (upcoming, within 1,000 km) a scheduled
+    service, from the compliance rules and logged odometers."""
+    _require_role(context, _SERVICE_DUE_ROLES, "get_service_due_tool")
+    return {
+        "overdue": call_backend("GET", "/api/v1/maintenance/overdue", token=context.token),
+        "upcoming": call_backend("GET", "/api/v1/maintenance/upcoming", token=context.token),
+    }
 
 
 def update_inventory_tool(context: AgentContext, part_id: str, data: InventoryUpdateInput) -> dict[str, Any]:
