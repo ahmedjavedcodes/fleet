@@ -16,7 +16,8 @@ vi.mock("@/app/(app)/maintenance/_components/maintenance-form-dialog", () => ({ 
 
 const mockIncidents = vi.fn()
 vi.mock("@/lib/api/incidents", () => ({ useIncidents: () => mockIncidents() }))
-vi.mock("@/lib/api/driver-reports", () => ({ useDriverReports: () => ({ data: [], isPending: false, error: null, refetch: vi.fn() }) }))
+const mockReports = vi.fn((): unknown => ({ data: [], isPending: false, error: null, refetch: vi.fn() }))
+vi.mock("@/lib/api/driver-reports", () => ({ useDriverReports: () => mockReports() }))
 vi.mock("@/app/(app)/accountability/_components/incident-form-dialog", () => ({ IncidentFormDialog: () => null }))
 vi.mock("@/app/(app)/accountability/_components/resolve-incident-dialog", () => ({ ResolveIncidentDialog: () => null }))
 vi.mock("@/app/(app)/accountability/_components/shift-report-form-dialog", () => ({ ShiftReportFormDialog: () => null }))
@@ -283,5 +284,135 @@ describe("Assignment filters", () => {
   it("links each plate to its own vehicle page", () => {
     render(<AssignmentPage />)
     expect(screen.getByRole("link", { name: "AB-1234" })).toHaveAttribute("href", "/foundation/vehicles/v1")
+  })
+})
+
+describe("Shift report filters", () => {
+  const report = (id: string, plate: string, shiftDate: string, notes: string | null, issues: string | null) => ({
+    id,
+    vehicle_id: `v-${id}`,
+    vehicle_plate: plate,
+    vehicle_name: "Toyota Hilux",
+    driver_id: `d-${id}`,
+    driver_name: "Ali Khan",
+    shift_date: shiftDate,
+    vehicle_condition: "good",
+    handover_notes: notes,
+    issues_reported: issues,
+    created_at: "2026-09-30T08:00:00Z",
+  })
+
+  beforeEach(() => {
+    mockIncidents.mockReturnValue(query([]))
+    mockReports.mockReturnValue(
+      query([
+        report("r1", "AB-1234", "2026-09-10", "Full tank at handover", null),
+        report("r2", "CD-5678", "2026-09-29", "Bumper scraped", "Steering feels heavy"),
+      ])
+    )
+  })
+
+  async function openReports(user: ReturnType<typeof userEvent.setup>) {
+    render(<AccountabilityPage />)
+    await user.click(screen.getByRole("tab", { name: "Shift reports" }))
+  }
+
+  it("shows the vehicle for each report and searches by vehicle plate", async () => {
+    const user = userEvent.setup()
+    await openReports(user)
+    expect(screen.getByRole("link", { name: "AB-1234" })).toBeInTheDocument()
+
+    await user.type(screen.getByRole("textbox", { name: "Search shift reports" }), "cd-5678")
+    expect(screen.getByRole("link", { name: "CD-5678" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "AB-1234" })).not.toBeInTheDocument()
+  })
+
+  it("searches handover notes and reported issues", async () => {
+    const user = userEvent.setup()
+    await openReports(user)
+    const box = screen.getByRole("textbox", { name: "Search shift reports" })
+
+    await user.type(box, "full tank")
+    expect(screen.getByRole("link", { name: "AB-1234" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "CD-5678" })).not.toBeInTheDocument()
+
+    await user.clear(box)
+    await user.type(box, "steering")
+    expect(screen.getByRole("link", { name: "CD-5678" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "AB-1234" })).not.toBeInTheDocument()
+  })
+
+  it("filters by shift date range, inclusive of both ends", async () => {
+    const user = userEvent.setup()
+    await openReports(user)
+
+    await user.type(screen.getByLabelText("From date"), "2026-09-29")
+    expect(screen.getByRole("link", { name: "CD-5678" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "AB-1234" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Clear" }))
+    await user.type(screen.getByLabelText("To date"), "2026-09-10")
+    expect(screen.getByRole("link", { name: "AB-1234" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "CD-5678" })).not.toBeInTheDocument()
+  })
+
+  it("says 'No matches' rather than 'no reports yet' when filters exclude everything", async () => {
+    const user = userEvent.setup()
+    await openReports(user)
+    await user.type(screen.getByRole("textbox", { name: "Search shift reports" }), "zzz")
+    expect(screen.getByText("No matches")).toBeInTheDocument()
+  })
+})
+
+describe("Assignment date range", () => {
+  const vehicle = (id: string, plate: string) => ({ id, plate_number: plate, make: "Toyota", model: "Hilux", current_odometer: 0 })
+  const current = (driver: string, assignedAt: string) => ({
+    data: [{ driver_id: "d", driver_name: driver, released_at: null, assigned_at: assignedAt }],
+  })
+
+  beforeEach(() => {
+    mockVehicles.mockReturnValue(query([vehicle("v1", "AB-1234"), vehicle("v2", "CD-5678"), vehicle("v3", "EF-9012")]))
+    // v3 has no current driver.
+    mockAssignmentQueries.mockReturnValue([
+      current("Ali Khan", "2026-09-05T10:00:00Z"),
+      current("Bilal Ahmed", "2026-09-29T10:00:00Z"),
+      { data: [] },
+    ])
+  })
+
+  it("filters vehicles by when the current assignment started", async () => {
+    const user = userEvent.setup()
+    render(<AssignmentPage />)
+
+    await user.type(screen.getByLabelText("From date"), "2026-09-20")
+    expect(screen.getByText("CD-5678")).toBeInTheDocument()
+    expect(screen.queryByText("AB-1234")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Clear" }))
+    await user.type(screen.getByLabelText("To date"), "2026-09-10")
+    expect(screen.getByText("AB-1234")).toBeInTheDocument()
+    expect(screen.queryByText("CD-5678")).not.toBeInTheDocument()
+  })
+
+  it("hides unassigned vehicles once a range is set, and shows them again when it is cleared", async () => {
+    const user = userEvent.setup()
+    render(<AssignmentPage />)
+    expect(screen.getByText("EF-9012")).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText("From date"), "2026-01-01")
+    expect(screen.queryByText("EF-9012")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Clear" }))
+    expect(screen.getByText("EF-9012")).toBeInTheDocument()
+  })
+
+  it("combines the date range with the text search", async () => {
+    const user = userEvent.setup()
+    render(<AssignmentPage />)
+
+    await user.type(screen.getByLabelText("From date"), "2026-09-01")
+    await user.type(screen.getByRole("textbox", { name: "Search assignments" }), "bilal")
+    expect(screen.getByText("CD-5678")).toBeInTheDocument()
+    expect(screen.queryByText("AB-1234")).not.toBeInTheDocument()
   })
 })

@@ -135,3 +135,8 @@ class SupplierCategory(str, enum.Enum):
 class ServiceScale(str, enum.Enum):
     minor = "minor"
     major = "major"
+
+
+class NotificationType(str, enum.Enum):
+    warning = "warning"
+    event = "event"

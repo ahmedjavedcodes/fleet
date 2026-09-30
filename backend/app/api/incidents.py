@@ -9,7 +9,7 @@ from app.models.driver import Driver
 from app.models.enums import IncidentResolutionStatus, IncidentSeverity, IncidentType, UserRole
 from app.models.user import User
 from app.schemas.accountability import IncidentLogCreate, IncidentLogResolutionUpdate, IncidentLogResponse
-from app.services import incident_service
+from app.services import incident_service, notification_service
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["incidents"])
 
@@ -43,6 +43,8 @@ def create_incident(
     db: Session = Depends(get_db),
 ) -> IncidentLogResponse:
     incident = incident_service.create_incident(db, current_user.organization_id, data, current_user.id)
+    # Tell every admin and fleet manager. Best-effort and after the commit: it can't fail the report.
+    notification_service.notify_incident_reported(db, current_user.organization_id, incident)
     return IncidentLogResponse.model_validate(incident)
 
 

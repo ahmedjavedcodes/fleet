@@ -135,3 +135,8 @@ export const documentKeys = {
   all: ["documents"] as const,
   list: () => [...documentKeys.all, "list"] as const,
 }
+
+export const notificationKeys = {
+  all: ["notifications"] as const,
+  list: () => [...notificationKeys.all, "list"] as const,
+}

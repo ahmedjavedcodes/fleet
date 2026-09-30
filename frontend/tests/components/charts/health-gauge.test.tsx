@@ -2,6 +2,10 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { HealthGauge } from "@/components/charts/health-gauge"
 
+function arc() {
+  return screen.queryByTestId("gauge-value")
+}
+
 describe("HealthGauge", () => {
   it("renders the score and label for a high score", () => {
     render(<HealthGauge score={100} />)
@@ -30,5 +34,38 @@ describe("HealthGauge", () => {
     expect(meter).toHaveAttribute("aria-valuetext", "Not available")
     expect(screen.getByText("n/a")).toBeInTheDocument()
     expect(screen.queryByText("0")).not.toBeInTheDocument()
+    expect(arc()).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [100, "100 100"],
+    [80, "80 100"],
+    [63, "63 100"],
+    [1, "1 100"],
+  ])("maps a score of %i to a stroke-dasharray of '%s' over a path normalised to 100", (score, dash) => {
+    render(<HealthGauge score={score} />)
+    expect(arc()).toHaveAttribute("pathLength", "100")
+    expect(arc()).toHaveAttribute("stroke-dasharray", dash)
+  })
+
+  it("draws no value arc at 0, and clamps scores outside 0-100", () => {
+    const { unmount } = render(<HealthGauge score={0} />)
+    expect(arc()).not.toBeInTheDocument()
+    unmount()
+
+    render(<HealthGauge score={140} />)
+    expect(arc()).toHaveAttribute("stroke-dasharray", "100 100")
+  })
+
+  it.each([
+    [95, "var(--success)"],
+    [80, "var(--success)"],
+    [79, "var(--warning)"],
+    [50, "var(--warning)"],
+    [49, "var(--destructive)"],
+    [5, "var(--destructive)"],
+  ])("colours a score of %i with %s, matching its badge", (score, colour) => {
+    render(<HealthGauge score={score} />)
+    expect(arc()).toHaveAttribute("stroke", colour)
   })
 })

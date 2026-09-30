@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { dateStringSchema, dateTimeStringSchema, uuidSchema } from "./common"
+import { dateStringSchema, dateTimeStringSchema, uuidSchema, vehicleDriverRefsShape } from "./common"
 import { vehicleConditionSchema } from "./enums"
 
 // Mirrors backend/app/schemas/accountability.py DriverReport*.
@@ -7,6 +7,7 @@ import { vehicleConditionSchema } from "./enums"
 // PATCH/PUT return 405. Never render an edit action for these (CLAUDE.md §2.1).
 
 export const driverReportSchema = z.object({
+  ...vehicleDriverRefsShape,
   id: uuidSchema,
   driver_id: uuidSchema,
   vehicle_id: uuidSchema,

@@ -10,7 +10,7 @@ import { formatDateTime } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { Vehicle } from "@/lib/schemas/vehicle"
-import { matchesSearch } from "@/lib/table-filters"
+import { inDateRange, matchesSearch } from "@/lib/table-filters"
 import { AssignDriverDialog, ReleaseDriverFlow } from "@/components/fleet/assign-release-dialog"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
@@ -43,6 +43,7 @@ export default function AssignmentPage() {
   const [assigning, setAssigning] = useState<Vehicle | undefined>(undefined)
   const [releasing, setReleasing] = useState<Vehicle | undefined>(undefined)
   const [search, setSearch] = useState("")
+  const [range, setRange] = useState({ from: "", to: "" })
 
   const assignmentQueries = useQueries({
     queries: vehicles.map((v) => ({
@@ -124,7 +125,10 @@ export default function AssignmentPage() {
           const filtered = rows.filter((v) => {
             const idx = vehicles.findIndex((x) => x.id === v.id)
             const current = assignmentQueries[idx]?.data?.find((a) => a.released_at === null)
-            return matchesSearch(search, v.plate_number, v.make, v.model, `${v.make} ${v.model}`, current?.driver_name)
+            // The range applies to when the current assignment started, so a vehicle with no
+            // current driver has no date to match and drops out once a range is set.
+            const inRange = !range.from && !range.to ? true : current ? inDateRange(current.assigned_at, range.from, range.to) : false
+            return inRange && matchesSearch(search, v.plate_number, v.make, v.model, `${v.make} ${v.model}`, current?.driver_name)
           })
           return (
             <div className="space-y-4">
@@ -133,9 +137,10 @@ export default function AssignmentPage() {
                 onSearchChange={setSearch}
                 searchLabel="Search assignments"
                 searchPlaceholder="Search plate, vehicle or driver…"
+                dateRange={{ from: range.from, to: range.to, onChange: setRange }}
               />
               {filtered.length === 0 ? (
-                <EmptyState icon={ArrowLeftRight} title="No matches" description="No vehicles or drivers match your search." />
+                <EmptyState icon={ArrowLeftRight} title="No matches" description="No vehicles or drivers match your search or dates." />
               ) : (
                 <DataTable columns={columns} rows={filtered} getRowId={(r) => r.id} />
               )}

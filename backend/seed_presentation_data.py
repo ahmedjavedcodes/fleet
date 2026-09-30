@@ -7,7 +7,7 @@ Run it once, after seed_dummy_data.py. It refuses to run a second time (it looks
 for the fuel slip it creates). What it adds:
 
   * a second fuel log for AB-1234 at 45,500 km, so cost_per_km is calculated
-  * an estimated cost of 15,000 on CD-5678's incident
+  * an estimated cost of 15,000 on CD-5678's incident, and notifications about it
   * service intervals on two vehicles, one overdue and one due within 500 km
   * compliance rules and shift (driver) reports
   * a few received purchase orders, so supplier reliability and lead time show
@@ -46,6 +46,7 @@ from app.services import (
     fuel_service,
     inventory_service,
     maintenance_service,
+    notification_service,
     purchase_order_service,
 )
 
@@ -118,6 +119,11 @@ def seed() -> None:
         incident.updated_by = admin.id
         db.commit()
         summary.append("incident CD-5678 estimated_cost 15,000")
+
+        # The workbook seed inserts incidents directly, so nobody was told about it. Notify the
+        # admins and fleet managers the way the API would have, so the Notifications page has content.
+        told = notification_service.notify_incident_reported(db, org.id, incident)
+        summary.append(f"{len(told)} notifications for the CD-5678 incident")
 
         # 3. Service intervals + one overdue and one upcoming vehicle -----------------
         # Intervals go on first: create_maintenance_log freezes next_due_* from them.

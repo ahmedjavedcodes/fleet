@@ -11,7 +11,7 @@ import { INCIDENT_RESOLUTION_LABELS, INCIDENT_SEVERITY_LABELS, INCIDENT_SEVERITY
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { IncidentLog } from "@/lib/schemas/incident"
-import { ALL, matchesSearch } from "@/lib/table-filters"
+import { ALL, inDateRange, matchesSearch } from "@/lib/table-filters"
 import type { DriverReport } from "@/lib/schemas/driver-report"
 import { Button } from "@/components/ui/button"
 import { VehicleLink } from "@/components/fleet/vehicle-link"
@@ -42,6 +42,8 @@ export default function AccountabilityPage() {
   const [search, setSearch] = useState("")
   const [severity, setSeverity] = useState(ALL)
   const [resolution, setResolution] = useState(ALL)
+  const [reportSearch, setReportSearch] = useState("")
+  const [reportRange, setReportRange] = useState({ from: "", to: "" })
 
   const incidentsQuery = useIncidents()
   const reportsQuery = useDriverReports()
@@ -82,6 +84,8 @@ export default function AccountabilityPage() {
 
   const reportColumns: DataTableColumn<DriverReport>[] = [
     { key: "date", header: "Shift date", cell: (r) => formatDate(r.shift_date) },
+    { key: "vehicle", header: "Vehicle", cell: (r) => <VehicleLink vehicleId={r.vehicle_id} plate={r.vehicle_plate} name={r.vehicle_name} /> },
+    { key: "driver", header: "Driver", cell: (r) => r.driver_name ?? "—" },
     { key: "condition", header: "Vehicle condition", cell: (r) => VEHICLE_CONDITION_LABELS[r.vehicle_condition] },
     { key: "handover", header: "Handover notes", cell: (r) => r.handover_notes ?? "—" },
     { key: "issues", header: "Issues reported", cell: (r) => r.issues_reported ?? "—" },
@@ -174,8 +178,29 @@ export default function AccountabilityPage() {
             areaLabel="shift reports"
           >
             {(rows) => {
-              const sorted = [...rows].sort((a, b) => b.shift_date.localeCompare(a.shift_date))
-              return <DataTable columns={reportColumns} rows={sorted} getRowId={(r) => r.id} />
+              const filtered = rows
+                .filter(
+                  (r) =>
+                    matchesSearch(reportSearch, r.vehicle_plate, r.vehicle_name, r.handover_notes, r.issues_reported) &&
+                    inDateRange(r.shift_date, reportRange.from, reportRange.to)
+                )
+                .sort((a, b) => b.shift_date.localeCompare(a.shift_date))
+              return (
+                <div className="space-y-4">
+                  <FilterBar
+                    search={reportSearch}
+                    onSearchChange={setReportSearch}
+                    searchLabel="Search shift reports"
+                    searchPlaceholder="Search vehicle or notes…"
+                    dateRange={{ from: reportRange.from, to: reportRange.to, onChange: setReportRange }}
+                  />
+                  {filtered.length === 0 ? (
+                    <EmptyState icon={ClipboardList} title="No matches" description="No shift reports match your search or dates." />
+                  ) : (
+                    <DataTable columns={reportColumns} rows={filtered} getRowId={(r) => r.id} />
+                  )}
+                </div>
+              )
             }}
           </QueryRegion>
         </TabsContent>

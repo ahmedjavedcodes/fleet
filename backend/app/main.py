@@ -14,6 +14,7 @@ from app.api.incidents import router as incidents_router
 from app.api.inventory import router as inventory_router
 from app.api.maintenance import router as maintenance_router
 from app.api.memory import router as memory_router
+from app.api.notifications import router as notifications_router
 from app.api.purchase_orders import router as purchase_orders_router
 from app.api.suppliers import router as suppliers_router
 from app.api.trips import router as trips_router
@@ -49,3 +50,4 @@ app.include_router(dashboard_router)
 app.include_router(assignments_router)
 app.include_router(memory_router)
 app.include_router(documents_router)
+app.include_router(notifications_router)

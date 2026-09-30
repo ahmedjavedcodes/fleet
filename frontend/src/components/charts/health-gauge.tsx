@@ -1,4 +1,4 @@
-import { healthScoreLabel } from "@/lib/health-score"
+import { clampScore, healthScoreLabel } from "@/lib/health-score"
 import { cn } from "@/lib/utils"
 
 const SIZES = {
@@ -6,27 +6,22 @@ const SIZES = {
   lg: { box: 160, stroke: 14, font: "text-h1" },
 } as const
 
-const CENTER = 100
-const RADIUS = 90
+const STROKE_BY_TONE = {
+  success: "var(--success)",
+  warning: "var(--warning)",
+  destructive: "var(--destructive)",
+} as const
 
-/** A point on the gauge's semicircle for a fraction `f` (0–1) of it filled,
- * sweeping left (f=0) → top (f=0.5) → right (f=1). */
-function pointAt(f: number): { x: number; y: number } {
-  const angleDeg = 180 - f * 180
-  const angleRad = (angleDeg * Math.PI) / 180
-  return { x: CENTER + RADIUS * Math.cos(angleRad), y: CENTER - RADIUS * Math.sin(angleRad) }
-}
+// One left-to-right semicircle, used for both the track and the value. Its
+// pathLength is normalised to 100, so the value stroke is simply
+// `stroke-dasharray: <score> 100` — the score is the arc length, no trigonometry.
+const ARC = "M 10 100 A 90 90 0 0 1 190 100"
+const PATH_LENGTH = 100
 
-function arcPath(fFrom: number, fTo: number): string {
-  const start = pointAt(fFrom)
-  const end = pointAt(fTo)
-  const largeArc = fTo - fFrom > 0.5 ? 1 : 0
-  return `M ${start.x} ${start.y} A ${RADIUS} ${RADIUS} 0 ${largeArc} 1 ${end.x} ${end.y}`
-}
-
-// Semicircle arc with a gradient value stroke on a track (plans/00 §5,
-// plans/04 §5). `score: null` renders an empty track and "n/a" — CLAUDE.md
-// §4.4: a null signal is "n/a", never 0.
+// Semicircle gauge (plans/00 §5, plans/04 §5). The colour follows the same
+// thresholds as the Good/Fair/Poor badge (lib/health-score). `score: null`
+// renders an empty track and "n/a" — CLAUDE.md §4.4: a null signal is "n/a",
+// never 0.
 export function HealthGauge({
   score,
   size = "lg",
@@ -37,9 +32,8 @@ export function HealthGauge({
   className?: string
 }) {
   const { box, stroke, font } = SIZES[size]
-  const fraction = score === null ? 0 : Math.max(0, Math.min(100, score)) / 100
-  const { label } = score === null ? { label: null } : healthScoreLabel(score)
-  const gradientId = `health-gauge-gradient-${size}`
+  const value = score === null ? 0 : clampScore(score)
+  const health = score === null ? null : healthScoreLabel(score)
 
   return (
     <div
@@ -47,25 +41,22 @@ export function HealthGauge({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={score ?? undefined}
-      aria-valuetext={score === null ? "Not available" : `${score} out of 100 — ${label}`}
+      aria-valuetext={health === null ? "Not available" : `${score} out of 100 — ${health.label}`}
       className={cn("relative inline-flex flex-col items-center", className)}
       style={{ width: box }}
     >
       <svg viewBox="0 0 200 110" width={box} height={box / 2 + 10} aria-hidden>
-        <defs>
-          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="var(--gauge-start)" />
-            <stop offset="100%" stopColor="var(--gauge-end)" />
-          </linearGradient>
-        </defs>
-        <path d={arcPath(0, 1)} fill="none" stroke="var(--gauge-track)" strokeWidth={stroke} strokeLinecap="round" />
-        {score !== null && fraction > 0 && (
+        <path d={ARC} fill="none" stroke="var(--gauge-track)" strokeWidth={stroke} strokeLinecap="round" />
+        {health !== null && value > 0 && (
           <path
-            d={arcPath(0, fraction)}
+            data-testid="gauge-value"
+            d={ARC}
+            pathLength={PATH_LENGTH}
             fill="none"
-            stroke={`url(#${gradientId})`}
+            stroke={STROKE_BY_TONE[health.tone as keyof typeof STROKE_BY_TONE]}
             strokeWidth={stroke}
             strokeLinecap="round"
+            strokeDasharray={`${value} ${PATH_LENGTH}`}
           />
         )}
       </svg>

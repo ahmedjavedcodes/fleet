@@ -6,6 +6,7 @@ from app.models.fuel import FuelLog, FuelReceipt
 from app.models.inventory import PartsInventory, PurchaseOrder
 from app.models.maintenance import ComplianceRule, MaintenanceLog, MaintenanceLogService, MechanicReport
 from app.models.memory import AgentMessage, AgentSession, FailedVectorJob, SemanticMemory
+from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.supplier import Supplier
 from app.models.user import User
@@ -13,6 +14,7 @@ from app.models.vehicle import Vehicle
 
 __all__ = [
     "Organization",
+    "Notification",
     "User",
     "Driver",
     "Vehicle",

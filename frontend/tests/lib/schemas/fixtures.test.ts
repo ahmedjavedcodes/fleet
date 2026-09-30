@@ -231,6 +231,11 @@ describe("trip / driver-report / incident schemas", () => {
     expect(
       driverReportSchema.parse({
         id: "77777777-7777-4777-8777-777777777777",
+        vehicle_plate: "AB-1234",
+        vehicle_make: "Toyota",
+        vehicle_model: "Hilux",
+        vehicle_name: "Toyota Hilux",
+        driver_name: "Ali Khan",
         driver_id: "22222222-2222-4222-8222-222222222222",
         vehicle_id: "11111111-1111-4111-8111-111111111111",
         shift_date: "2026-06-12",
