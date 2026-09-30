@@ -1,5 +1,6 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -312,3 +313,26 @@ def test_cross_tenant_inventory_list_never_leaks(
     client.post("/api/v1/inventory", json=_part_payload(), headers=auth_headers(admin))
     response = client.get("/api/v1/inventory", headers=auth_headers(other_org_admin))
     assert response.json() == []
+
+
+def test_receive_updates_supplier_reliability_and_lead_time_in_the_suppliers_list(
+    client: TestClient, db_session: Session, organization: Organization, admin
+) -> None:
+    supplier = make_supplier(db_session, organization)
+    part = make_part(db_session, organization, qty_on_hand=5)
+    order_date = date.today() - timedelta(days=4)
+    order = client.post(
+        "/api/v1/purchase-orders",
+        json=_po_payload(supplier.id, part.id, order_date=str(order_date), expected_delivery=str(date.today() + timedelta(days=1))),
+        headers=auth_headers(admin),
+    ).json()
+
+    before = next(s for s in client.get("/api/v1/suppliers", headers=auth_headers(admin)).json() if s["id"] == str(supplier.id))
+    assert before["reliability_score"] is None
+    assert before["avg_lead_time_days"] is None
+
+    assert client.patch(f"/api/v1/purchase-orders/{order['id']}/receive", headers=auth_headers(admin)).status_code == 200
+
+    after = next(s for s in client.get("/api/v1/suppliers", headers=auth_headers(admin)).json() if s["id"] == str(supplier.id))
+    assert Decimal(after["reliability_score"]) == Decimal("1")
+    assert after["avg_lead_time_days"] == 4

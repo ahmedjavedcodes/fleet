@@ -7,15 +7,17 @@ import { useIncidents } from "@/lib/api/incidents"
 import { useDriverReports } from "@/lib/api/driver-reports"
 import { formatMoney } from "@/lib/api/decimal"
 import { formatDate, formatDateTime } from "@/lib/format-date"
-import { INCIDENT_RESOLUTION_LABELS, INCIDENT_SEVERITY_TONE, INCIDENT_TYPE_LABELS, VEHICLE_CONDITION_LABELS } from "@/lib/enum-labels"
+import { INCIDENT_RESOLUTION_LABELS, INCIDENT_SEVERITY_LABELS, INCIDENT_SEVERITY_TONE, INCIDENT_TYPE_LABELS, VEHICLE_CONDITION_LABELS } from "@/lib/enum-labels"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { IncidentLog } from "@/lib/schemas/incident"
+import { ALL, matchesSearch } from "@/lib/table-filters"
 import type { DriverReport } from "@/lib/schemas/driver-report"
 import { Button } from "@/components/ui/button"
 import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
 import { StatusPill } from "@/components/primitives/status-pill"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
@@ -37,6 +39,9 @@ export default function AccountabilityPage() {
   const [incidentFormOpen, setIncidentFormOpen] = useState(searchParams.get("new") === "1")
   const [reportFormOpen, setReportFormOpen] = useState(false)
   const [resolving, setResolving] = useState<IncidentLog | undefined>(undefined)
+  const [search, setSearch] = useState("")
+  const [severity, setSeverity] = useState(ALL)
+  const [resolution, setResolution] = useState(ALL)
 
   const incidentsQuery = useIncidents()
   const reportsQuery = useDriverReports()
@@ -109,8 +114,45 @@ export default function AccountabilityPage() {
             areaLabel="incidents"
           >
             {(rows) => {
-              const sorted = [...rows].sort((a, b) => b.date.localeCompare(a.date))
-              return <DataTable columns={incidentColumns} rows={sorted} getRowId={(r) => r.id} />
+              const filtered = rows
+                .filter(
+                  (r) =>
+                    matchesSearch(search, r.vehicle_plate, r.vehicle_name, r.driver_name) &&
+                    (severity === ALL || r.severity === severity) &&
+                    (resolution === ALL || r.resolution_status === resolution)
+                )
+                .sort((a, b) => b.date.localeCompare(a.date))
+              return (
+                <div className="space-y-4">
+                  <FilterBar
+                    search={search}
+                    onSearchChange={setSearch}
+                    searchLabel="Search incidents"
+                    searchPlaceholder="Search vehicle or driver…"
+                    selects={[
+                      {
+                        label: "Filter by severity",
+                        value: severity,
+                        onChange: setSeverity,
+                        allLabel: "All severities",
+                        options: Object.entries(INCIDENT_SEVERITY_LABELS).map(([value, label]) => ({ value, label })),
+                      },
+                      {
+                        label: "Filter by status",
+                        value: resolution,
+                        onChange: setResolution,
+                        allLabel: "All statuses",
+                        options: Object.entries(INCIDENT_RESOLUTION_LABELS).map(([value, label]) => ({ value, label })),
+                      },
+                    ]}
+                  />
+                  {filtered.length === 0 ? (
+                    <EmptyState icon={ShieldAlert} title="No matches" description="No incidents match your search or filters." />
+                  ) : (
+                    <DataTable columns={incidentColumns} rows={filtered} getRowId={(r) => r.id} />
+                  )}
+                </div>
+              )
             }}
           </QueryRegion>
         </TabsContent>

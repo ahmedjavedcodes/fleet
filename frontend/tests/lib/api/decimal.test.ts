@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatInt, formatMoney, formatMoneyValue, formatNumber, formatNumberValue, parseDecimal } from "@/lib/api/decimal"
+import { formatInt, formatMoney, formatMoneyValue, formatNumber, formatNumberValue, formatRate, parseDecimal } from "@/lib/api/decimal"
 
 describe("parseDecimal", () => {
   it("parses a backend decimal string into a number", () => {
@@ -53,5 +53,13 @@ describe("formatMoneyValue / formatNumberValue", () => {
   it("format an already-parsed number the same way formatMoney/formatNumber format the equivalent string", () => {
     expect(formatMoneyValue(1234.5)).toBe(formatMoney("1234.5"))
     expect(formatNumberValue(12.34567, 2)).toBe(formatNumber("12.34567", 2))
+  })
+})
+
+describe("formatRate", () => {
+  it("keeps two decimals where formatMoney would round PKR to whole rupees", () => {
+    expect(formatMoney("25.20")).toMatch(/25$/)
+    expect(formatRate("25.20")).toMatch(/25.20$/)
+    expect(formatRate("280.5")).toMatch(/280.50$/)
   })
 })

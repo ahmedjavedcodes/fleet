@@ -172,3 +172,26 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 - At the user's request, removed all frontend application code on the `frontend` branch: every page (login, dashboard, copilot, fuel, maintenance, incidents, registry), components, the auth/API client layer, middleware, types/schemas and the 8 vitest test files (`src/` and `tests/`, 45 files).
 - Kept only the project setup: `package.json`/`package-lock.json`, `tsconfig.json`, `next.config.ts`, `next-env.d.ts`, `eslint.config.mjs`, `postcss.config.mjs`, `vitest.config.mts`/`vitest.setup.mts`, `Dockerfile`, `.env.example` and `frontend/CLAUDE.md`, plus empty `src/app`, `src/components`, `src/lib` (`.gitkeep`) so the directory contract stays visible.
 - The removed code remains recoverable from git history (and on the `backend`/`ai-agents` branches, which were deliberately left untouched). Until a new `src/app/layout.tsx` + `page.tsx` exist, `next dev`/`next build` have no routes to serve and `npm test` finds no test files.
+
+## 2026-09-30 — Documents page wired to the RAG backend
+
+- The Documents page (`/documents`) had been a "not available yet" placeholder since the frontend was split from the backend. `/api/v1/documents` (upload, list, get, search, delete) and the RAG ingestion pipeline are live on this branch, so the page now uses them; the typed stubs in `lib/api/documents.ts` were replaced by a real adapter plus React Query hooks.
+- Decisions:
+  - Upload resolves on the backend's 202; the list polls every 3 s only while some document is `processing` and stops on its own. A toast announces ready/failed on the transition. No upload progress percentage is shown: `fetch` exposes none, and a fake one would mislead.
+  - Upload and delete are shown to admin and fleet manager only (the backend enforces it); fleet managers can't pick "legal" (the backend rejects it). Search is open to all roles, and the backend already narrows results to the types the caller's role may see.
+  - The library shows the vehicle's plate number instead of its raw id, and a failed document's `error_message` under its status.
+- Verified live: a text file uploaded through the Next.js proxy was extracted and embedded in about 2 s, searched back at 0.999 relevance, driver upload returned 403, and the test documents were then deleted.
+- Tests: rewrote the two tests that asserted the stub (adapter via mocked `fetch`, page via mocked hooks); frontend total 542 passing, lint and tsc clean.
+
+## 2026-09-30 — Table filters, calculated fields, presentation seed data
+
+- **Filters.** One shared `FilterBar` (search, dropdowns, optional date range) plus `lib/table-filters.ts` (`matchesSearch`, `inDateRange`, `distinctOptions`), applied to Drivers, Suppliers, Assignments, Fuel & Trips, Maintenance and Incidents. Search matches every typed word against any of the row's fields. The driver `license_status` dropdown is built from the values actually present, because that field is free text. The fuel date range is sent to the API (the list is capped at 50 rows, so filtering locally would only see one page); trips filter locally. "Date range picker" is two native date inputs; there is no calendar component in the UI kit.
+- **Calculated fields, verified rather than assumed.**
+  - Fuel `cost_per_km` was already correct (`total_cost / (odometer - previous odometer)`, null with no earlier log). The dashes were just data: the seed had only one fuel log per vehicle.
+  - Incident `estimated_cost` was already in the model, the schemas and the table; the dashes were null data.
+  - Real bug: PKR formats with no decimals, so a cost/km of 25.20 rendered as "Rs 25". Added `formatRate` (two decimals) for price per litre and cost per km.
+  - Real gap: `avg_lead_time_days` was a column nothing ever calculated. It is now recomputed on receipt of a purchase order (mean of `actual_delivery - order_date`, rounded half up), in the same transaction as reliability, and replaces any hand-entered estimate once real deliveries exist.
+  - Reliability is a 0-1 ratio and was shown as "0.5"/"1"; it now shows as a percentage.
+  - Two purchase-order tests that had started failing were a time bomb, not an app bug: they hard-coded `TODAY = 2026-09-17` while the service stamps the real delivery date. They now use the real date.
+- **Seed script** (`backend/seed_presentation_data.py`): goes through the service layer so the app's own rules apply. Vehicles store `service_interval_months` (not days), so the 90-day interval is 3 months. Incident `estimated_cost` is immutable through the API, so that one value is a direct update. It also seeds received purchase orders, which the request did not list, because supplier reliability and lead time only appear once orders have been received. Refuses to run twice.
+- Fixed on the way: the Assignments page linked every plate to `/foundation/vehicles/` with no id.

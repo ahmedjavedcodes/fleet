@@ -10,6 +10,7 @@ import { formatDate } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { Driver } from "@/lib/schemas/driver"
+import { ALL, distinctOptions, matchesSearch } from "@/lib/table-filters"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
 import { StatusPill } from "@/components/primitives/status-pill"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
@@ -47,6 +49,8 @@ export default function DriversPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Driver | undefined>(undefined)
   const [deleting, setDeleting] = useState<Driver | undefined>(undefined)
+  const [search, setSearch] = useState("")
+  const [licenseStatus, setLicenseStatus] = useState(ALL)
 
   function confirmDelete() {
     if (!deleting) return
@@ -145,7 +149,37 @@ export default function DriversPage() {
         isEmpty={(drivers) => drivers.length === 0}
         areaLabel="drivers"
       >
-        {(drivers) => <DataTable columns={columns} rows={drivers} getRowId={(row) => row.id} />}
+        {(drivers) => {
+          const filtered = drivers.filter(
+            (d) =>
+              matchesSearch(search, d.full_name, d.license_number) &&
+              (licenseStatus === ALL || d.license_current_status === licenseStatus)
+          )
+          return (
+            <div className="space-y-4">
+              <FilterBar
+                search={search}
+                onSearchChange={setSearch}
+                searchLabel="Search drivers"
+                searchPlaceholder="Search name or license number…"
+                selects={[
+                  {
+                    label: "Filter by license status",
+                    value: licenseStatus,
+                    onChange: setLicenseStatus,
+                    allLabel: "All license statuses",
+                    options: distinctOptions(drivers.map((d) => d.license_current_status)),
+                  },
+                ]}
+              />
+              {filtered.length === 0 ? (
+                <EmptyState icon={Users} title="No matches" description="No drivers match your search or filter." />
+              ) : (
+                <DataTable columns={columns} rows={filtered} getRowId={(row) => row.id} />
+              )}
+            </div>
+          )
+        }}
       </QueryRegion>
 
       <DriverFormDialog open={formOpen} onOpenChange={setFormOpen} driver={editing} />

@@ -119,7 +119,7 @@ def receive_purchase_order(db: Session, org_id: uuid.UUID, po_id: uuid.UUID, rec
       1. Fetch PO (org-scoped). 409 if status is already 'received' or 'cancelled'.
       2. Set actual_delivery = today, status = 'received'.
       3. Increment stock for every line item.
-      4. Recalculate the supplier's reliability_score.
+      4. Recalculate the supplier's reliability_score and avg_lead_time_days.
       5. Commit. Any failure rolls all of the above back together.
     """
     order = get_purchase_order(db, org_id, po_id)
@@ -138,6 +138,7 @@ def receive_purchase_order(db: Session, org_id: uuid.UUID, po_id: uuid.UUID, rec
     # the order currently being received from its own reliability computation.
     db.flush()
     supplier_service._recalculate_reliability_score(db, org_id, order.supplier_id)
+    supplier_service._recalculate_avg_lead_time(db, org_id, order.supplier_id)
 
     db.commit()
     db.refresh(order)

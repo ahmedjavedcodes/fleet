@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -13,7 +13,9 @@ from app.schemas.inventory import PurchaseOrderCreate, PurchaseOrderLineItem, Pu
 from app.services import purchase_order_service
 from tests.conftest import make_part, make_supplier, make_user
 
-TODAY = date(2026, 9, 17)
+# The service stamps actual_delivery with the real current date, so this must be the real today too
+# -- a hard-coded date turns "due in 5 days" into "already late" once the calendar passes it.
+TODAY = datetime.now(timezone.utc).date()
 
 
 @pytest.fixture()
@@ -21,11 +23,11 @@ def admin(db_session: Session, organization: Organization) -> User:
     return make_user(db_session, organization, role=UserRole.admin)
 
 
-def _create(db_session: Session, org: Organization, admin: User, supplier, *parts, expected_delivery=None):
+def _create(db_session: Session, org: Organization, admin: User, supplier, *parts, expected_delivery=None, order_date=None):
     line_items = [PurchaseOrderLineItem(part_id=p.id, qty=10, unit_price=Decimal("5.00")) for p in parts]
     data = PurchaseOrderCreate(
         supplier_id=supplier.id,
-        order_date=TODAY,
+        order_date=order_date or TODAY,
         expected_delivery=expected_delivery or TODAY,
         line_items=line_items,
     )
@@ -218,3 +220,56 @@ def test_purchase_order_org_scoping(db_session: Session, organization: Organizat
     db_session.commit()
 
     assert purchase_order_service.list_purchase_orders(db_session, other_org.id) == []
+
+
+# --- Supplier average lead time (calculated on receive, like reliability) ---------
+
+
+def test_avg_lead_time_null_until_first_receive(db_session: Session, organization: Organization) -> None:
+    supplier = make_supplier(db_session, organization)
+    assert supplier.avg_lead_time_days is None
+
+
+def test_avg_lead_time_is_mean_of_order_to_delivery_days_rounded_half_up(
+    db_session: Session, organization: Organization, admin: User
+) -> None:
+    supplier = make_supplier(db_session, organization)
+    part = make_part(db_session, organization, qty_on_hand=100)
+
+    # Both are received today, so they took 3 and 6 days: mean 4.5 -> 5.
+    first = _create(db_session, organization, admin, supplier, part, order_date=TODAY - timedelta(days=3))
+    purchase_order_service.receive_purchase_order(db_session, organization.id, first.id, admin.id)
+    db_session.refresh(supplier)
+    assert supplier.avg_lead_time_days == 3
+
+    second = _create(db_session, organization, admin, supplier, part, order_date=TODAY - timedelta(days=6))
+    purchase_order_service.receive_purchase_order(db_session, organization.id, second.id, admin.id)
+    db_session.refresh(supplier)
+    assert supplier.avg_lead_time_days == 5
+
+
+def test_avg_lead_time_ignores_orders_not_yet_received(
+    db_session: Session, organization: Organization, admin: User
+) -> None:
+    supplier = make_supplier(db_session, organization)
+    part = make_part(db_session, organization, qty_on_hand=100)
+
+    _create(db_session, organization, admin, supplier, part, order_date=TODAY - timedelta(days=50))  # still pending
+    received = _create(db_session, organization, admin, supplier, part, order_date=TODAY - timedelta(days=2))
+    purchase_order_service.receive_purchase_order(db_session, organization.id, received.id, admin.id)
+
+    db_session.refresh(supplier)
+    assert supplier.avg_lead_time_days == 2
+
+
+def test_avg_lead_time_replaces_a_hand_entered_estimate(
+    db_session: Session, organization: Organization, admin: User
+) -> None:
+    supplier = make_supplier(db_session, organization, avg_lead_time_days=30)
+    part = make_part(db_session, organization, qty_on_hand=100)
+
+    order = _create(db_session, organization, admin, supplier, part, order_date=TODAY - timedelta(days=4))
+    purchase_order_service.receive_purchase_order(db_session, organization.id, order.id, admin.id)
+
+    db_session.refresh(supplier)
+    assert supplier.avg_lead_time_days == 4

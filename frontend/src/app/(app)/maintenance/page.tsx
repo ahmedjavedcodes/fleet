@@ -10,10 +10,12 @@ import { SERVICE_SCALE_LABELS, SERVICE_TYPE_LABELS } from "@/lib/enum-labels"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { MaintenanceLog } from "@/lib/schemas/maintenance"
+import { ALL, matchesSearch } from "@/lib/table-filters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
 import { PageHeader } from "@/components/layout/page-header"
 import { AccessDenied } from "@/components/states/access-denied"
 import { EmptyState } from "@/components/states/empty-state"
@@ -30,6 +32,8 @@ export default function MaintenancePage() {
   const canWrite = Boolean(role && can(role, "maintenance:write"))
 
   const [formOpen, setFormOpen] = useState(searchParams.get("new") === "1")
+  const [search, setSearch] = useState("")
+  const [scale, setScale] = useState(ALL)
 
   const logsQuery = useMaintenanceLogs(vehicleId ? { vehicle_id: vehicleId } : {}, { enabled: canRead })
 
@@ -75,8 +79,37 @@ export default function MaintenancePage() {
         areaLabel="maintenance logs"
       >
         {(rows) => {
-          const sorted = [...rows].sort((a, b) => b.date.localeCompare(a.date))
-          return <DataTable columns={columns} rows={sorted} getRowId={(r) => r.id} />
+          const filtered = rows
+            .filter(
+              (r) =>
+                matchesSearch(search, r.vehicle_plate, r.vehicle_name, r.mechanic_name, r.driver_name) &&
+                (scale === ALL || r.service_scale === scale)
+            )
+            .sort((a, b) => b.date.localeCompare(a.date))
+          return (
+            <div className="space-y-4">
+              <FilterBar
+                search={search}
+                onSearchChange={setSearch}
+                searchLabel="Search maintenance"
+                searchPlaceholder="Search vehicle, mechanic or driver…"
+                selects={[
+                  {
+                    label: "Filter by service scale",
+                    value: scale,
+                    onChange: setScale,
+                    allLabel: "All scales",
+                    options: Object.entries(SERVICE_SCALE_LABELS).map(([value, label]) => ({ value, label })),
+                  },
+                ]}
+              />
+              {filtered.length === 0 ? (
+                <EmptyState icon={Wrench} title="No matches" description="No service logs match your search or filter." />
+              ) : (
+                <DataTable columns={columns} rows={filtered} getRowId={(r) => r.id} />
+              )}
+            </div>
+          )
         }}
       </QueryRegion>
 

@@ -34,3 +34,6 @@ Thumbs.db
 
 # Alembic
 backend/alembic/versions/*.pyc
+
+# Local test credentials (plaintext)
+test_credentials.txt

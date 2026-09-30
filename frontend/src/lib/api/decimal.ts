@@ -41,6 +41,20 @@ export function formatMoney(value: string, currency = "PKR", locale = "en-PK"): 
   return formatMoneyValue(parseDecimal(value), currency, locale)
 }
 
+/**
+ * Formats a per-unit rate (price per liter, cost per km) as currency with two
+ * decimals. formatMoney rounds PKR to whole rupees, which would turn a 25.20
+ * cost/km into "Rs 25" and hide most of a rate that is only ever a few dozen.
+ */
+export function formatRate(value: string, currency = "PKR", locale = "en-PK"): string {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(parseDecimal(value))
+}
+
 /** Formats an already-numeric value with a bounded number of decimal places. */
 export function formatNumberValue(value: number, maximumFractionDigits = 2, locale = "en-PK"): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)

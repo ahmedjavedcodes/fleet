@@ -10,9 +10,11 @@ import { formatDateTime } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { Vehicle } from "@/lib/schemas/vehicle"
+import { matchesSearch } from "@/lib/table-filters"
 import { AssignDriverDialog, ReleaseDriverFlow } from "@/components/fleet/assign-release-dialog"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
 import { PageHeader } from "@/components/layout/page-header"
 import { EmptyState } from "@/components/states/empty-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
@@ -40,6 +42,7 @@ export default function AssignmentPage() {
 
   const [assigning, setAssigning] = useState<Vehicle | undefined>(undefined)
   const [releasing, setReleasing] = useState<Vehicle | undefined>(undefined)
+  const [search, setSearch] = useState("")
 
   const assignmentQueries = useQueries({
     queries: vehicles.map((v) => ({
@@ -55,7 +58,7 @@ export default function AssignmentPage() {
       header: "Vehicle",
       cell: (row) => (
         <div>
-          <Link href={`/foundation/vehicles/`} className="font-semibold text-foreground hover:underline">
+          <Link href={`/foundation/vehicles/${row.id}`} className="font-semibold text-foreground hover:underline">
             {row.plate_number}
           </Link>
           <p className="text-caption text-muted-foreground">
@@ -117,7 +120,28 @@ export default function AssignmentPage() {
         isEmpty={(rows) => rows.length === 0}
         areaLabel="the custody board"
       >
-        {(rows) => <DataTable columns={columns} rows={rows} getRowId={(r) => r.id} />}
+        {(rows) => {
+          const filtered = rows.filter((v) => {
+            const idx = vehicles.findIndex((x) => x.id === v.id)
+            const current = assignmentQueries[idx]?.data?.find((a) => a.released_at === null)
+            return matchesSearch(search, v.plate_number, v.make, v.model, `${v.make} ${v.model}`, current?.driver_name)
+          })
+          return (
+            <div className="space-y-4">
+              <FilterBar
+                search={search}
+                onSearchChange={setSearch}
+                searchLabel="Search assignments"
+                searchPlaceholder="Search plate, vehicle or driver…"
+              />
+              {filtered.length === 0 ? (
+                <EmptyState icon={ArrowLeftRight} title="No matches" description="No vehicles or drivers match your search." />
+              ) : (
+                <DataTable columns={columns} rows={filtered} getRowId={(r) => r.id} />
+              )}
+            </div>
+          )
+        }}
       </QueryRegion>
 
       <p className="text-caption text-muted-foreground">

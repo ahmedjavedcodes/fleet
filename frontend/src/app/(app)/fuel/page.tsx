@@ -4,16 +4,18 @@ import { useState } from "react"
 import { Fuel as FuelIcon, Plus, Route } from "lucide-react"
 import { useFuelLogs, useFuelSummary } from "@/lib/api/fuel"
 import { useTrips } from "@/lib/api/trips"
-import { formatInt, formatMoney, formatNumber } from "@/lib/api/decimal"
+import { formatInt, formatMoney, formatNumber, formatRate } from "@/lib/api/decimal"
 import { formatDate, formatDateTime, formatDurationBetween } from "@/lib/format-date"
 import { can } from "@/lib/rbac"
 import { useCurrentUser } from "@/lib/auth/use-current-user"
 import type { FuelLog } from "@/lib/schemas/fuel"
 import type { TripLog } from "@/lib/schemas/trip"
+import { inDateRange, matchesSearch } from "@/lib/table-filters"
 import { Button } from "@/components/ui/button"
 import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
 import { KpiTile } from "@/components/primitives/kpi-tile"
 import { SectionPanel } from "@/components/primitives/section-panel"
 import { StatusPill } from "@/components/primitives/status-pill"
@@ -57,8 +59,12 @@ export default function FuelPage() {
 
   const [fuelFormOpen, setFuelFormOpen] = useState(false)
   const [tripFormOpen, setTripFormOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const [range, setRange] = useState({ from: "", to: "" })
 
-  const fuelLogsQuery = useFuelLogs({ limit: 50 })
+  // Fuel dates are filtered by the server (the list is capped at 50 rows, so a client-side
+  // filter would only ever see the first page); trips are few, so they filter locally.
+  const fuelLogsQuery = useFuelLogs({ limit: 50, date_from: range.from || undefined, date_to: range.to || undefined })
   const tripsQuery = useTrips()
   const summaryQuery = useFuelSummary(todayMonth(), { enabled: canSeeSummary })
 
@@ -71,9 +77,9 @@ export default function FuelPage() {
     { key: "payment", header: "Payment", cell: (r) => <PaymentCell method={r.payment_method} card={r.card_used} /> },
     { key: "odometer", header: "Odometer", align: "right", cell: (r) => formatInt(r.odometer_reading) },
     { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.liters_filled) },
-    { key: "price", header: "Price/L", align: "right", cell: (r) => formatMoney(r.price_per_liter) },
+    { key: "price", header: "Price/L", align: "right", cell: (r) => formatRate(r.price_per_liter) },
     { key: "total", header: "Total", align: "right", cell: (r) => formatMoney(r.total_cost) },
-    { key: "cost_per_km", header: "Cost/km", align: "right", cell: (r) => (r.cost_per_km ? formatMoney(r.cost_per_km) : "—") },
+    { key: "cost_per_km", header: "Cost/km", align: "right", cell: (r) => (r.cost_per_km ? formatRate(r.cost_per_km) : "—") },
     {
       key: "anomaly",
       header: "",
@@ -93,6 +99,16 @@ export default function FuelPage() {
     { key: "duration", header: "Duration", cell: (r) => formatDurationBetween(r.start_time, r.end_time) },
     { key: "fuel", header: "Fuel used (L)", align: "right", cell: (r) => (r.fuel_consumed ? formatNumber(r.fuel_consumed) : "—") },
   ]
+
+  const filterBar = (
+    <FilterBar
+      search={search}
+      onSearchChange={setSearch}
+      searchLabel="Search fuel and trips"
+      searchPlaceholder="Search vehicle or driver…"
+      dateRange={{ from: range.from, to: range.to, onChange: setRange }}
+    />
+  )
 
   return (
     <div className="space-y-6">
@@ -114,14 +130,28 @@ export default function FuelPage() {
               </Button>
             ) : null}
           </div>
+          {filterBar}
           <QueryRegion
             query={fuelLogsQuery}
             skeleton={<PageSkeleton />}
-            empty={<EmptyState icon={FuelIcon} title="No fuel logs yet" description="Fuel logs will appear here once recorded." />}
+            empty={
+              <EmptyState
+                icon={FuelIcon}
+                title={range.from || range.to ? "No matches" : "No fuel logs yet"}
+                description={range.from || range.to ? "No fuel logs fall in this date range." : "Fuel logs will appear here once recorded."}
+              />
+            }
             isEmpty={(rows) => rows.length === 0}
             areaLabel="fuel logs"
           >
-            {(rows) => <DataTable columns={fuelColumns} rows={rows} getRowId={(r) => r.id} />}
+            {(rows) => {
+              const filtered = rows.filter((r) => matchesSearch(search, r.vehicle_plate, r.vehicle_name, r.driver_name))
+              return filtered.length === 0 ? (
+                <EmptyState icon={FuelIcon} title="No matches" description="No fuel logs match your search or dates." />
+              ) : (
+                <DataTable columns={fuelColumns} rows={filtered} getRowId={(r) => r.id} />
+              )
+            }}
           </QueryRegion>
         </TabsContent>
 
@@ -134,6 +164,7 @@ export default function FuelPage() {
               </Button>
             ) : null}
           </div>
+          {filterBar}
           <QueryRegion
             query={tripsQuery}
             skeleton={<PageSkeleton />}
@@ -141,7 +172,18 @@ export default function FuelPage() {
             isEmpty={(rows) => rows.length === 0}
             areaLabel="trips"
           >
-            {(rows) => <DataTable columns={tripColumns} rows={rows} getRowId={(r) => r.id} />}
+            {(rows) => {
+              const filtered = rows.filter(
+                (r) =>
+                  matchesSearch(search, r.vehicle_plate, r.vehicle_name, r.driver_name) &&
+                  inDateRange(r.start_time, range.from, range.to)
+              )
+              return filtered.length === 0 ? (
+                <EmptyState icon={Route} title="No matches" description="No trips match your search or dates." />
+              ) : (
+                <DataTable columns={tripColumns} rows={filtered} getRowId={(r) => r.id} />
+              )
+            }}
           </QueryRegion>
         </TabsContent>
 
@@ -182,7 +224,7 @@ export default function FuelPage() {
                           },
                           { key: "cost", header: "Cost", align: "right", cell: (r) => formatMoney(r.total_cost) },
                           { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.total_liters) },
-                          { key: "avg", header: "Avg cost/km", align: "right", cell: (r) => (r.avg_cost_per_km ? formatMoney(r.avg_cost_per_km) : "—") },
+                          { key: "avg", header: "Avg cost/km", align: "right", cell: (r) => (r.avg_cost_per_km ? formatRate(r.avg_cost_per_km) : "—") },
                         ]}
                         rows={summary.by_vehicle}
                         getRowId={(r) => r.vehicle_id}

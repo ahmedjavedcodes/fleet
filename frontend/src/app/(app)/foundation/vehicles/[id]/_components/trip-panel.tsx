@@ -5,7 +5,7 @@ import { ChartLine } from "lucide-react"
 import { useFuelLogs } from "@/lib/api/fuel"
 import { useIncidents } from "@/lib/api/incidents"
 import { useTrips } from "@/lib/api/trips"
-import { formatMoney, formatNumber } from "@/lib/api/decimal"
+import { formatNumber, formatRate } from "@/lib/api/decimal"
 import { formatDate, formatDurationBetween } from "@/lib/format-date"
 import { INCIDENT_TYPE_LABELS } from "@/lib/enum-labels"
 import type { UserRole } from "@/lib/schemas/enums"
@@ -98,7 +98,7 @@ export function TripPanel({ vehicleId, role }: { vehicleId: string; role: UserRo
               {anomalousFuel ? (
                 <Callout
                   title={`Unusual fuel cost on ${formatDate(anomalousFuel.date)}`}
-                  detail={`Cost per km was ${formatMoney(anomalousFuel.cost_per_km ?? "0")}, more than 20% off this vehicle's 3-month average.`}
+                  detail={`Cost per km was ${formatRate(anomalousFuel.cost_per_km ?? "0")}, more than 20% off this vehicle's 3-month average.`}
                   href="/fuel"
                 />
               ) : latestIncident ? (
