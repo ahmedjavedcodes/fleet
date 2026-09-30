@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -34,8 +34,13 @@ def _driver_row_filter(current_user: User, driver_profile: Driver | None) -> uui
 def create_trip(
     data: TripLogCreate,
     current_user: User = Depends(require_role(*_WRITE_ROLES)),
+    driver_profile: Driver | None = Depends(get_current_driver_profile),
     db: Session = Depends(get_db),
 ) -> TripLogResponse:
+    # A driver may only log their own trips. Rejected rather than silently
+    # rewritten, so a client sending the wrong driver_id finds out.
+    if current_user.role == UserRole.driver and (driver_profile is None or data.driver_id != driver_profile.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Drivers can only log trips for themselves")
     trip = trip_service.create_trip(db, current_user.organization_id, data, current_user.id)
     return TripLogResponse.model_validate(trip)
 

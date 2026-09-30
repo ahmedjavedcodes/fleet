@@ -227,3 +227,39 @@ def test_cross_tenant_driver_report_returns_404(client: TestClient, db_session: 
 
     response = client.get(f"/api/v1/driver-reports/{report['id']}", headers=auth_headers(other_org_admin))
     assert response.status_code == 404
+
+
+def test_driver_cannot_log_a_trip_for_another_driver(
+    client: TestClient, db_session: Session, organization: Organization, driver_setup
+) -> None:
+    driver_user, _ = driver_setup
+    someone_else = make_driver(db_session, organization)
+    vehicle = make_vehicle(db_session, organization)
+
+    spoofed = client.post("/api/v1/trips", json=_trip_payload(someone_else.id, vehicle.id), headers=auth_headers(driver_user))
+
+    assert spoofed.status_code == 403
+    assert spoofed.json()["detail"] == "Drivers can only log trips for themselves"
+    admin = make_user(db_session, organization, role=UserRole.admin)
+    assert client.get("/api/v1/trips", headers=auth_headers(admin)).json() == []  # nothing was written
+
+
+def test_driver_without_a_linked_profile_cannot_log_trips(client: TestClient, db_session: Session, organization: Organization) -> None:
+    unlinked = make_user(db_session, organization, role=UserRole.driver)
+    vehicle = make_vehicle(db_session, organization)
+    target = make_driver(db_session, organization)
+
+    response = client.post("/api/v1/trips", json=_trip_payload(target.id, vehicle.id), headers=auth_headers(unlinked))
+
+    assert response.status_code == 403
+
+
+def test_admin_can_still_log_a_trip_for_any_driver(client: TestClient, db_session: Session, organization: Organization) -> None:
+    admin = make_user(db_session, organization, role=UserRole.admin)
+    driver = make_driver(db_session, organization)
+    vehicle = make_vehicle(db_session, organization)
+
+    response = client.post("/api/v1/trips", json=_trip_payload(driver.id, vehicle.id), headers=auth_headers(admin))
+
+    assert response.status_code == 201
+    assert response.json()["driver_id"] == str(driver.id)

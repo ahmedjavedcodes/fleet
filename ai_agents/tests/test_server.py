@@ -228,3 +228,28 @@ def test_observer_steps_stream_live_as_activity_events(client, monkeypatch):
         ("orchestrator", "Drafting final response...", True),
     ]
     assert server._SESSIONS[session_id].deps.observer.activity_sink is None  # detached after the turn
+
+
+def test_sessions_get_document_search_and_rag_sampling(monkeypatch):
+    from mcp_server.document_tools import BackendDocumentRetriever
+    from orchestrator.rag_eval import RagTriadEvaluator
+    from orchestrator.tools import build_llm_tools
+
+    built = {}
+
+    class _Capture(_FakeSession):
+        def __init__(self, token, **kwargs):
+            super().__init__(token, **kwargs)
+            built["deps"] = kwargs["deps"]
+
+    monkeypatch.setattr(server, "OrchestratorSession", _Capture)
+    monkeypatch.setattr(server, "_fact_checker_llm", lambda: None)
+    monkeypatch.setattr(server, "_shared_memory", lambda: None)
+    server._open_session(_token())
+
+    deps = built["deps"]
+    assert isinstance(deps.documents, BackendDocumentRetriever)
+    assert isinstance(deps.rag_evaluator, RagTriadEvaluator)
+    # What the plan node binds for this session: the six sub-agents plus search_documents.
+    names = [t.name for t in build_llm_tools(include_memory=deps.memory is not None, include_documents=deps.documents is not None)]
+    assert "search_documents" in names and len(names) == 7

@@ -28,6 +28,11 @@ services:
     restart: unless-stopped
     env_file:
       - ./ai_agents/.env
+    environment:
+      # The name tools/api_client.py reads. Inside the network the backend is
+      # reachable by its service name; this overrides any local-dev value
+      # (127.0.0.1) carried in ai_agents/.env.
+      BACKEND_API_BASE_URL: http://backend:8000
     depends_on:
       - postgres
       - backend

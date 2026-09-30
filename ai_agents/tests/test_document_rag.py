@@ -272,3 +272,18 @@ def test_retriever_posts_to_the_backend_with_the_callers_token(monkeypatch) -> N
     assert document_tools.BackendDocumentRetriever().search(ctx, "brake pads", ["manual"]) == [_hit("x")]
     assert sent == {"method": "POST", "path": "/api/v1/documents/search", "token": "jwt-abc",
                     "json": {"query": "brake pads", "document_types": ["manual"]}}
+
+
+def test_system_prompt_directs_policy_and_manual_questions_to_search_documents_only_when_bound() -> None:
+    with_docs = _ScriptedLLM([AIMessage(content=""), AIMessage(content="ok")])
+    OrchestratorSession(_token(), deps=OrchestratorDeps(llm=with_docs, runner=_Runner(), documents=_Retriever())).run(
+        "What is our fuel card policy?"
+    )
+    system_prompt = str(with_docs.seen[0][0].content)
+    assert "search_documents" in system_prompt
+    assert all(word in system_prompt for word in ("policies", "manuals", "tyre pressures"))
+    assert "documents don't cover it" in system_prompt
+
+    without_docs = _ScriptedLLM([AIMessage(content=""), AIMessage(content="ok")])
+    OrchestratorSession(_token(), deps=OrchestratorDeps(llm=without_docs, runner=_Runner())).run("What is our fuel card policy?")
+    assert "search_documents" not in str(without_docs.seen[0][0].content)  # never told to use a tool it lacks

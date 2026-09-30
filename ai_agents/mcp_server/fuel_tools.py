@@ -55,10 +55,9 @@ def get_trip_logs_tool(context: AgentContext) -> list[dict[str, Any]]:
 def create_trip_log_tool(context: AgentContext, data: TripLogCreateInput) -> dict[str, Any]:
     _require_role(context, _LOG_WRITE_ROLES, "create_trip_log_tool")
 
-    # The real /api/v1/trips POST route has no driver-id override for a
-    # 'driver'-role caller (unlike /api/v1/fuel, which forces it server
-    # side) -- without this, a driver could log a trip under someone else's
-    # driver_id. Compensate for that gap here (fuel-agent.md FR 7).
+    # /api/v1/trips rejects (403) a driver-role caller whose driver_id isn't
+    # their own, rather than rewriting it like /api/v1/fuel does -- so fill in
+    # the caller's own Driver.id here, whatever the LLM put in trip_fields.
     payload = data.model_dump(mode="json")
     if context.role == "driver":
         payload["driver_id"] = _own_driver_id(context)

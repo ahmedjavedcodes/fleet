@@ -33,8 +33,8 @@ on a HITL pause). This is a real response from a real multi-agent run, not
 a fake typing effect over mock data — only the chunking is presentational.
 
 Every session gets the full hook set (see _build_deps): agent memory, the
-shared execution cache, the observer, the alert dispatcher and the
-fact-checker. OrchestratorDeps defaults all of them to None, so leaving one
+shared execution cache, the observer, the alert dispatcher, the
+fact-checker, document search (search_documents) and RAG triad sampling. OrchestratorDeps defaults all of them to None, so leaving one
 out here silently switches that hook off in production.
 """
 
@@ -63,11 +63,13 @@ from pydantic import BaseModel, Field  # noqa: E402
 from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
 from mcp_server import memory_tools  # noqa: E402
+from mcp_server.document_tools import BackendDocumentRetriever  # noqa: E402
 from memory.service import AgentMemory  # noqa: E402
 from orchestrator.cache import ExecutionCache  # noqa: E402
 from orchestrator.callbacks import ORCHESTRATOR_AGENT, FleetLiveObserver  # noqa: E402
 from orchestrator.fact_check import _default_fact_checker_llm  # noqa: E402
 from orchestrator.graph import OrchestratorDeps  # noqa: E402
+from orchestrator.rag_eval import RagTriadEvaluator  # noqa: E402
 from orchestrator.session import OrchestratorSession, TurnResult  # noqa: E402
 from orchestrator.webhooks import AlertDispatcher  # noqa: E402
 from tools.api_client import BackendAPIError  # noqa: E402
@@ -140,6 +142,13 @@ def _shared_memory() -> AgentMemory | None:
 # org's namespace for every conversation, not just the one that wrote.
 _EXECUTION_CACHE = ExecutionCache()
 
+# Stateless: every search carries the caller's own token, and the backend
+# decides which document types that role may see.
+_DOCUMENT_RETRIEVER = BackendDocumentRetriever()
+# Samples ~5% of document-grounded answers on a background thread; its judge
+# LLM is built lazily on first use, so an unset key can't break startup.
+_RAG_EVALUATOR = RagTriadEvaluator()
+
 
 @lru_cache(maxsize=1)
 def _fact_checker_llm():
@@ -164,6 +173,8 @@ def _build_deps(context: AgentContext) -> OrchestratorDeps:
         ),
         webhooks=AlertDispatcher(),
         fact_checker_llm=_fact_checker_llm(),
+        documents=_DOCUMENT_RETRIEVER,
+        rag_evaluator=_RAG_EVALUATOR,
     )
 
 
