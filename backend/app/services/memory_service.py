@@ -20,13 +20,15 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.driver import Driver
-from app.models.enums import MemoryEntityType, MemoryScope, UserRole
+from app.models.enums import AgentMessageRole, MemoryEntityType, MemoryScope, UserRole
 from app.models.memory import AgentMessage, AgentSession, FailedVectorJob, SemanticMemory
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.memory import (
+    AgentSessionListItem,
     AgentMessageCreate,
     AgentSessionSummaryUpdate,
     SemanticMemoryCreate,
@@ -102,9 +104,80 @@ def _unsummarized_stmt(session_id: uuid.UUID):
     return select(AgentMessage).where(AgentMessage.session_id == session_id, AgentMessage.is_summarized.is_(False))
 
 
+TITLE_MAX_LENGTH = 60
+UNTITLED = "New chat"
+
+
+def derive_title(text: str) -> str:
+    """A short sidebar title from the first thing the user said: whitespace collapsed,
+    cut at a word boundary. Deliberately not an LLM call -- it must be instant, free,
+    and unable to fail a chat turn."""
+    flat = " ".join(text.split())
+    if not flat:
+        return UNTITLED
+    if len(flat) <= TITLE_MAX_LENGTH:
+        return flat
+    cut = flat[: TITLE_MAX_LENGTH - 1].rsplit(" ", 1)[0] or flat[: TITLE_MAX_LENGTH - 1]
+    return cut.rstrip(" ,.;:-") + "…"
+
+
+def list_sessions(db: Session, user: User, limit: int = 100) -> list[AgentSessionListItem]:
+    """The caller's own conversations, most recently active first. Empty sessions (created
+    but never used, e.g. by opening a new chat) are left out."""
+    first_user_message = (
+        select(AgentMessage.content)
+        .where(AgentMessage.session_id == AgentSession.id, AgentMessage.role == AgentMessageRole.user)
+        .order_by(AgentMessage.created_at)
+        .limit(1)
+        .scalar_subquery()
+    )
+    message_count = (
+        select(func.count(AgentMessage.id)).where(AgentMessage.session_id == AgentSession.id).scalar_subquery()
+    )
+    rows = db.execute(
+        select(AgentSession, message_count, first_user_message)
+        .where(AgentSession.organization_id == user.organization_id, AgentSession.user_id == user.id)
+        .where(message_count > 0)
+        .order_by(AgentSession.updated_at.desc(), AgentSession.id)
+        .limit(limit)
+    ).all()
+    return [
+        AgentSessionListItem(
+            id=s.id,
+            title=s.title or (derive_title(first) if first else UNTITLED),
+            message_count=count,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s, count, first in rows
+    ]
+
+
+def rename_session(db: Session, user: User, session_id: uuid.UUID, title: str) -> AgentSession:
+    session = _get_own_session(db, user, session_id)
+    session.title = title
+    # Renaming isn't activity. Marking updated_at as written (with its unchanged value) keeps the
+    # onupdate hook from bumping it, so the conversation keeps its place in the list.
+    flag_modified(session, "updated_at")
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def list_messages(db: Session, user: User, session_id: uuid.UUID) -> tuple[AgentSession, list[AgentMessage]]:
+    """The full transcript, including messages already folded into the running summary."""
+    session = _get_own_session(db, user, session_id)
+    messages = db.execute(
+        select(AgentMessage).where(AgentMessage.session_id == session.id).order_by(AgentMessage.created_at)
+    ).scalars().all()
+    return session, list(messages)
+
+
 def append_message(db: Session, user: User, session_id: uuid.UUID, data: AgentMessageCreate) -> tuple[AgentMessage, int]:
     session = _get_own_session(db, user, session_id)
     message = AgentMessage(session_id=session.id, role=data.role, content=data.content)
+    if session.title is None and data.role == AgentMessageRole.user:
+        session.title = derive_title(data.content)
     db.add(message)
     session.updated_at = datetime.now(timezone.utc)
     db.commit()

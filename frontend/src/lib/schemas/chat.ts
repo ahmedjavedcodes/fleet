@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { dateTimeStringSchema } from "./common"
 import { documentSearchHitSchema } from "./document"
 
 // Mirrors ai_agents/orchestrator/{session,state}.py exactly (verified
@@ -54,3 +55,27 @@ export const chatMessageSchema = z.object({
   citations: z.array(documentSearchHitSchema).optional(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
+
+// --- Stored conversations (the sidebar) --------------------------------------
+// Mirrors ai_agents/server.py's ChatSessionSummary / ChatMessageOut, which pass
+// through the backend's persisted memory sessions.
+
+export const chatSessionSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  message_count: z.number().int(),
+  created_at: dateTimeStringSchema,
+  updated_at: dateTimeStringSchema,
+})
+export type ChatSessionSummary = z.infer<typeof chatSessionSummarySchema>
+
+export const storedChatMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  created_at: dateTimeStringSchema,
+})
+export type StoredChatMessage = z.infer<typeof storedChatMessageSchema>
+
+export const renamedChatSessionSchema = z.object({ id: z.string(), title: z.string() })
+export type RenamedChatSession = z.infer<typeof renamedChatSessionSchema>

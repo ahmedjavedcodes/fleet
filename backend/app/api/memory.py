@@ -12,6 +12,8 @@ from app.schemas.memory import (
     AgentMessageCreate,
     AgentMessageResponse,
     AgentSessionContextResponse,
+    AgentSessionListItem,
+    AgentSessionRename,
     AgentSessionResponse,
     AgentSessionSummaryUpdate,
     SemanticMemoryCreate,
@@ -34,6 +36,29 @@ router = APIRouter(prefix="/api/v1/memory", tags=["agent-memory"])
 @router.post("/sessions", response_model=AgentSessionResponse, status_code=status.HTTP_201_CREATED)
 def create_session(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> AgentSessionResponse:
     return AgentSessionResponse.model_validate(memory_service.create_session(db, current_user))
+
+
+@router.get("/sessions", response_model=list[AgentSessionListItem])
+def list_sessions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[AgentSessionListItem]:
+    return memory_service.list_sessions(db, current_user)
+
+
+@router.patch("/sessions/{session_id}", response_model=AgentSessionResponse)
+def rename_session(
+    session_id: uuid.UUID,
+    data: AgentSessionRename,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AgentSessionResponse:
+    return AgentSessionResponse.model_validate(memory_service.rename_session(db, current_user, session_id, data.title))
+
+
+@router.get("/sessions/{session_id}/messages", response_model=list[AgentMessageResponse])
+def list_session_messages(
+    session_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[AgentMessageResponse]:
+    _, messages = memory_service.list_messages(db, current_user, session_id)
+    return [AgentMessageResponse.model_validate(m) for m in messages]
 
 
 @router.get("/sessions/{session_id}/context", response_model=AgentSessionContextResponse)

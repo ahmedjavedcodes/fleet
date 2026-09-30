@@ -83,6 +83,11 @@ class OrchestratorSession:
             "memory_session_id": self.memory_session_id,
         }
 
+    @property
+    def user_id(self) -> str:
+        """The authenticated user this conversation belongs to (from the JWT it was opened with)."""
+        return self._context.user_id
+
     def _open_memory_session(self, requested_id: str | None) -> tuple[str | None, list[dict[str, str]]]:
         memory = self.deps.memory
         if requested_id:

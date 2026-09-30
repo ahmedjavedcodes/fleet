@@ -20,10 +20,27 @@ class AgentSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    title: str | None = None
     running_summary: str
     summary_version: int
     created_at: datetime
     updated_at: datetime
+
+
+class AgentSessionListItem(BaseModel):
+    """One row of the chat sidebar. Only sessions with at least one message are listed."""
+
+    id: uuid.UUID
+    title: str
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentSessionRename(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=200)
 
 
 class AgentMessageCreate(BaseModel):

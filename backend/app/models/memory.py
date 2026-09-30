@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,9 @@ class AgentSession(Base, OrgScopedMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    # Shown in the chat sidebar. Set from the first user message and editable by the owner;
+    # NULL only for sessions that predate titles (the list falls back to their first message).
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     running_summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     # Bumped on every summary write; a summarizer must present the version it
     # read, so two workers summarizing from the same stale summary can't both win.

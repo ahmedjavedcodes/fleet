@@ -31,6 +31,18 @@ def append_message_tool(context: AgentContext, session_id: str, role: str, conte
     )
 
 
+def list_sessions_tool(context: AgentContext, *, timeout: float = 10.0) -> list[dict[str, Any]]:
+    return call_backend("GET", f"{_PREFIX}/sessions", token=context.token, timeout=timeout)
+
+
+def get_session_messages_tool(context: AgentContext, session_id: str, *, timeout: float = 10.0) -> list[dict[str, Any]]:
+    return call_backend("GET", f"{_PREFIX}/sessions/{session_id}/messages", token=context.token, timeout=timeout)
+
+
+def rename_session_tool(context: AgentContext, session_id: str, title: str, *, timeout: float = 10.0) -> dict[str, Any]:
+    return call_backend("PATCH", f"{_PREFIX}/sessions/{session_id}", token=context.token, json={"title": title}, timeout=timeout)
+
+
 def apply_summary_tool(
     context: AgentContext, session_id: str, *, message_ids: list[str], running_summary: str, expected_summary_version: int
 ) -> dict[str, Any]:

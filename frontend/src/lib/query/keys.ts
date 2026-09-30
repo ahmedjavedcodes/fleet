@@ -140,3 +140,9 @@ export const notificationKeys = {
   all: ["notifications"] as const,
   list: () => [...notificationKeys.all, "list"] as const,
 }
+
+export const chatKeys = {
+  all: ["chat"] as const,
+  sessions: () => [...chatKeys.all, "sessions"] as const,
+  messages: (id: string) => [...chatKeys.all, "messages", id] as const,
+}
