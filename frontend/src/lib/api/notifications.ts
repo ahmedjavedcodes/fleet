@@ -36,7 +36,7 @@ export function useNotifications(options?: { limit?: number }) {
   const limit = options?.limit ?? BELL_PREVIEW_LIMIT
   return useQuery({
     queryKey: notificationKeys.list(limit),
-    queryFn: () => listNotifications({ limit }),
+    queryFn: () => listNotifications({ unreadOnly: true, limit }),
     refetchInterval: NOTIFICATION_POLL_MS,
   })
 }
@@ -51,11 +51,11 @@ export function useHasUnreadNotifications() {
   })
 }
 
-/** One tab of the notifications page, loaded page by page ("Load more"): warnings or events. */
+/** One tab of the notifications page (unread only: tapped ones vanish), loaded page by page ("Load more"): warnings or events. */
 export function useNotificationPages(type: Notification["type"]) {
   return useInfiniteQuery({
     queryKey: notificationKeys.pages(type),
-    queryFn: ({ pageParam }) => listNotifications({ type, limit: NOTIFICATION_PAGE_SIZE, offset: pageParam }),
+    queryFn: ({ pageParam }) => listNotifications({ type, unreadOnly: true, limit: NOTIFICATION_PAGE_SIZE, offset: pageParam }),
     initialPageParam: 0,
     // This list sends no total: a full page means there may be more.
     getNextPageParam: (last, all) =>
@@ -78,11 +78,10 @@ export function useMarkNotificationRead() {
       await queryClient.cancelQueries({ queryKey: notificationKeys.all })
       const previousLists = queryClient.getQueriesData<Notification[]>({ queryKey: notificationKeys.list() })
       const previousPages = queryClient.getQueriesData<InfiniteData<Notification[]>>({ queryKey: notificationKeys.pages() })
-      queryClient.setQueriesData<Notification[]>({ queryKey: notificationKeys.list() }, (rows) =>
-        rows?.map((n) => (n.id === id ? { ...n, is_read: true } : n))
-      )
+      // The lists show unread entries only: a tapped one disappears at once (the refetch on settle confirms it).
+      queryClient.setQueriesData<Notification[]>({ queryKey: notificationKeys.list() }, (rows) => rows?.filter((n) => n.id !== id))
       queryClient.setQueriesData<InfiniteData<Notification[]>>({ queryKey: notificationKeys.pages() }, (data) =>
-        data ? { ...data, pages: data.pages.map((page) => page.map((n) => (n.id === id ? { ...n, is_read: true } : n))) } : data
+        data ? { ...data, pages: data.pages.map((page) => page.filter((n) => n.id !== id)) } : data
       )
       return { previousLists, previousPages }
     },

@@ -33,4 +33,4 @@ def list_notifications(
 def mark_notification_read(
     notification_id: uuid.UUID, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> NotificationResponse:
-    return NotificationResponse.model_validate(notification_service.mark_read(db, current_user, notification_id))
+    return notification_service.mark_read_or_dismiss(db, current_user, notification_id)

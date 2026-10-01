@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accountability import IncidentLog
 from app.models.enums import IncidentResolutionStatus, IncidentSeverity, NotificationType, UserRole
-from app.models.notification import Notification
+from app.models.notification import Notification, NotificationDismissal
 from app.models.user import User
 from app.schemas.notification import NotificationResponse
 
@@ -44,7 +44,7 @@ def _incident_feed(db: Session, user: User, type: NotificationType | None, limit
     (imports, bulk loads, anything older than the feature) never produced one, and the Warnings feed read "No warnings"
     while the dashboard counted hundreds of open incidents. This maps the incidents themselves: severe and critical
     ones are warnings, minor and moderate ones are events, matching notify_incident_reported. Only admins and fleet
-    managers (the roles that are told about incidents) see them. They carry no read state, so they are always read."""
+    managers (the roles that are told about incidents) see them. Marking one read dismisses it for that user only."""
     if user.role not in INCIDENT_RECIPIENT_ROLES:
         return []
     stmt = select(IncidentLog).where(
@@ -55,6 +55,8 @@ def _incident_feed(db: Session, user: User, type: NotificationType | None, limit
         IncidentLog.id.not_in(
             select(Notification.incident_id).where(Notification.user_id == user.id, Notification.incident_id.is_not(None))
         ),
+        # ... and one this user has already tapped away is gone for them (and only them).
+        IncidentLog.id.not_in(select(NotificationDismissal.incident_id).where(NotificationDismissal.user_id == user.id)),
     )
     if type == NotificationType.warning:
         stmt = stmt.where(IncidentLog.severity.in_(_WARNING_SEVERITIES))
@@ -74,7 +76,7 @@ def _incident_feed(db: Session, user: User, type: NotificationType | None, limit
                 title=f"Open {severity} incident on {plate}",
                 message=f"{incident.description} (reported{who} on {incident.date}; {incident.resolution_status.value}).",
                 type=NotificationType.warning if incident.severity in _WARNING_SEVERITIES else NotificationType.event,
-                is_read=True,
+                is_read=False,
                 created_at=happened,
                 source="incident",
                 incident_id=incident.id,
@@ -89,12 +91,39 @@ def list_feed(
     """The caller's stored notifications merged with the incident-derived entries, newest first, one page.
 
     Each source is read only as far as this page needs (limit + offset rows) in SQL, so the cost does not grow with
-    how many incidents exist. unread_only skips the derived entries, which are never unread."""
+    how many incidents exist. Derived entries are unread until dismissed, so unread_only keeps them."""
     window = limit + offset
     stored = [NotificationResponse.model_validate(n) for n in list_notifications(db, user, type=type, unread_only=unread_only, limit=window)]
-    derived = [] if unread_only else _incident_feed(db, user, type, window)
+    derived = _incident_feed(db, user, type, window)  # unread until this user dismisses them
     merged = sorted(stored + derived, key=lambda n: n.created_at, reverse=True)
     return merged[offset : offset + limit]
+
+
+def mark_read_or_dismiss(db: Session, user: User, notification_id: uuid.UUID) -> NotificationResponse:
+    """Mark one of the caller's stored notifications read, or, when the id is an unresolved incident the caller's feed
+    derives an entry from, dismiss it for the caller only. Anything else (including another user's notification) is a 404."""
+    try:
+        return NotificationResponse.model_validate(mark_read(db, user, notification_id))
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND or user.role not in INCIDENT_RECIPIENT_ROLES:
+            raise
+    incident = db.execute(
+        select(IncidentLog).where(
+            IncidentLog.id == notification_id, IncidentLog.organization_id == user.organization_id, IncidentLog.is_deleted.is_(False)
+        )
+    ).scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    if db.get(NotificationDismissal, (user.id, incident.id)) is None:
+        db.add(NotificationDismissal(user_id=user.id, incident_id=incident.id))
+        db.commit()
+    plate = incident.vehicle_plate or "a vehicle"
+    return NotificationResponse(
+        id=incident.id, title=f"Open {incident.severity.value} incident on {plate}", message=incident.description,
+        type=NotificationType.warning if incident.severity in _WARNING_SEVERITIES else NotificationType.event,
+        is_read=True, created_at=incident.incident_time or datetime.combine(incident.date, time(0, 0), tzinfo=timezone.utc),
+        source="incident", incident_id=incident.id,
+    )
 
 
 def mark_read(db: Session, user: User, notification_id: uuid.UUID) -> Notification:

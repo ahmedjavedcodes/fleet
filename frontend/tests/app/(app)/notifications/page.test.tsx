@@ -6,6 +6,8 @@ import { renderWithProviders as render } from "../../../test-utils"
 
 type Row = ReturnType<typeof notification>
 const feeds: Record<"warning" | "event", ReturnType<typeof feed>> = { warning: feed([]), event: feed([]) }
+const mockPush = vi.fn()
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }))
 const mockMarkRead = vi.fn()
 vi.mock("@/lib/api/notifications", () => ({
   useNotificationPages: (type: "warning" | "event") => feeds[type],
@@ -31,6 +33,7 @@ function feed(rows: Row[], extra: Record<string, unknown> = {}) {
 describe("NotificationsPage", () => {
   beforeEach(() => {
     mockMarkRead.mockReset()
+    mockPush.mockReset()
     feeds.warning = feed([notification("1", "warning", false, "Severe incident on CD-5678")])
     feeds.event = feed([notification("2", "event", false, "Minor incident on AB-1234"), notification("3", "event", true, "Moderate incident on EF-9012")])
   })
@@ -70,17 +73,13 @@ describe("NotificationsPage", () => {
     expect(within(screen.getByRole("tab", { name: /Notified events/ })).getByLabelText("1 unread")).toBeInTheDocument()
   })
 
-  it("marks a notification read when it is clicked, and does nothing for one already read", async () => {
+  it("marks a notification read (so it vanishes for this user) when it is clicked", async () => {
     const user = userEvent.setup()
     render(<NotificationsPage />)
 
     await user.click(screen.getByText("Severe incident on CD-5678"))
     expect(mockMarkRead).toHaveBeenCalledWith("1")
-
-    mockMarkRead.mockReset()
-    await user.click(screen.getByRole("tab", { name: /Notified events/ }))
-    await user.click(screen.getByText("Moderate incident on EF-9012"))
-    expect(mockMarkRead).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled() // no incident behind it
   })
 
   it("shows an empty state per tab when it has nothing", async () => {
@@ -101,22 +100,20 @@ describe("NotificationsPage", () => {
   })
 
   describe("warnings derived from open incidents", () => {
-    it("displays them in the Warnings feed as links to the accountability page, not as something to mark read", async () => {
+    it("opens the tapped incident and dismisses the entry", async () => {
       const user = userEvent.setup()
       feeds.warning = feed([
-        notification("11111111-1111-1111-1111-111111111111", "warning", true, "Open critical incident on KL-1234", "incident"),
+        notification("11111111-1111-1111-1111-111111111111", "warning", false, "Open critical incident on KL-1234", "incident"),
         notification("22222222-2222-2222-2222-222222222222", "warning", true, "Open severe incident on MN-5678", "incident"),
       ])
       render(<NotificationsPage />)
 
       expect(screen.queryByText("No warnings")).not.toBeInTheDocument()
-      const first = screen.getByText("Open critical incident on KL-1234").closest("a")!
-      expect(first).toHaveAttribute("href", "/accountability")
       expect(screen.getByText("Details of Open severe incident on MN-5678")).toBeInTheDocument()
-      expect(within(first).queryByTestId("unread-dot")).not.toBeInTheDocument()
 
-      await user.click(first)
-      expect(mockMarkRead).not.toHaveBeenCalled()
+      await user.click(screen.getByText("Open critical incident on KL-1234"))
+      expect(mockMarkRead).toHaveBeenCalledWith("11111111-1111-1111-1111-111111111111")
+      expect(mockPush).toHaveBeenCalledWith("/accountability?incident=11111111-1111-1111-1111-111111111111")
     })
 
     it("lists them alongside stored notifications", () => {
@@ -126,8 +123,8 @@ describe("NotificationsPage", () => {
       ])
       render(<NotificationsPage />)
 
-      expect(screen.getByText("New severe incident on CD-5678").closest("button")).toBeInTheDocument()
-      expect(screen.getByTestId("incident-notification")).toBeInTheDocument()
+      expect(screen.getByText("New severe incident on CD-5678").closest("button")).toHaveAttribute("data-source", "notification")
+      expect(screen.getByText("Open severe incident on MN-5678").closest("button")).toHaveAttribute("data-source", "incident")
     })
   })
 

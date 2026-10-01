@@ -492,3 +492,9 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 ## Dashboard "Upcoming & overdue" card: latest first, top 7
 
 - Calendar query now orders by `next_due_date DESC NULLS LAST` (was overdue first, oldest due first, which surfaced 2024 items). The dashboard asks for `limit=7`; the card also slices to 7. "View all" links to `/maintenance` (there is no `/maintenance/schedule` route). Tests updated; the calendar Load more button was removed from the card.
+
+## Notification tap: navigate + per-user dismissal
+
+- Both lists were already newest-first (calendar `next_due_date DESC`; notifications merged by `created_at` DESC, incidents `date DESC`); no sort change needed.
+- Stored notifications were already per user (`user_id`, `is_read`). Incident-derived entries had no state: new table `notification_dismissals(user_id, incident_id)` (migration c92a5d7e1f04). `PATCH /notifications/{id}/read` marks a stored one read or, for an unresolved incident id (admin/fleet manager only), records a dismissal for that user only; the incident is untouched and others still see it. Derived entries are now unread until dismissed; the pages and bell ask `unread_only=true`, so a tapped entry vanishes (optimistically, confirmed by refetch).
+- Tap = dismiss + open `/accountability?incident={id}` (no incident detail page exists, so the incidents list filters to that one). Old stored notifications without an incident link just vanish.

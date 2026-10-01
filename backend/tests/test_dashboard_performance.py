@@ -289,7 +289,7 @@ def test_open_severe_and_critical_incidents_are_warnings_even_with_no_stored_not
     assert sorted(w.title for w in warnings) == ["Open critical incident on WRN-001", "Open severe incident on WRN-001"]
     first = next(w for w in warnings if "severe" in w.title)
     assert first.type == NotificationType.warning and first.source == "incident" and first.incident_id == first.id
-    assert first.is_read is True and "Rolled over on the motorway" in first.message
+    assert first.is_read is False and "Rolled over on the motorway" in first.message
 
 
 def test_minor_and_moderate_open_incidents_are_events_and_every_open_incident_is_somewhere(db_session: Session, organization: Organization, admin) -> None:
@@ -327,9 +327,7 @@ def test_stored_notifications_and_derived_ones_are_merged(db_session: Session, o
     feed = notification_service.list_feed(db_session, admin, type=NotificationType.warning)
 
     assert {n.source for n in feed} == {"notification", "incident"} and stored[0].id in {n.id for n in feed}
-    assert notification_service.list_feed(db_session, admin, type=NotificationType.warning, unread_only=True) == [
-        n for n in feed if n.source == "notification" and not n.is_read
-    ]
+    assert notification_service.list_feed(db_session, admin, type=NotificationType.warning, unread_only=True) == [n for n in feed if not n.is_read]
 
 
 def test_only_admins_and_fleet_managers_see_incident_warnings(client: TestClient, db_session: Session, organization: Organization, admin) -> None:
@@ -343,9 +341,32 @@ def test_only_admins_and_fleet_managers_see_incident_warnings(client: TestClient
     assert seen["admin"][0]["source"] == "incident" and seen["admin"][0]["type"] == "warning"
 
 
-def test_an_incident_entry_cannot_be_marked_read_and_another_orgs_incidents_never_appear(client: TestClient, db_session: Session, organization: Organization, admin) -> None:
+def test_tapping_an_incident_entry_dismisses_it_for_that_user_only(client: TestClient, db_session: Session, organization: Organization, admin) -> None:
     incident = make_incident(db_session, organization, make_vehicle(db_session, organization), admin, severity=IncidentSeverity.severe)
-    assert client.patch(f"/api/v1/notifications/{incident.id}/read", headers=auth_headers(admin)).status_code == 404
+    manager = make_user(db_session, organization, role=UserRole.fleet_manager)
+    feed = lambda user: client.get("/api/v1/notifications?type=warning&unread_only=true", headers=auth_headers(user)).json()  # noqa: E731
+    assert [n["id"] for n in feed(admin)] == [n["id"] for n in feed(manager)] == [str(incident.id)]
+
+    tapped = client.patch(f"/api/v1/notifications/{incident.id}/read", headers=auth_headers(admin))
+    again = client.patch(f"/api/v1/notifications/{incident.id}/read", headers=auth_headers(admin))
+
+    assert tapped.status_code == again.status_code == 200 and tapped.json()["is_read"] is True  # idempotent
+    assert feed(admin) == []  # gone for the admin
+    assert [n["id"] for n in feed(manager)] == [str(incident.id)]  # still there for the manager
+    db_session.expire_all()
+    assert incident_service.get_incident(db_session, organization.id, incident.id).resolution_status == IncidentResolutionStatus.open  # the incident is untouched
+
+
+def test_a_driver_cannot_dismiss_incidents_and_unknown_ids_are_404(client: TestClient, db_session: Session, organization: Organization, admin) -> None:
+    incident = make_incident(db_session, organization, make_vehicle(db_session, organization), admin, severity=IncidentSeverity.severe)
+    driver_user = make_user(db_session, organization, role=UserRole.driver)
+
+    assert client.patch(f"/api/v1/notifications/{incident.id}/read", headers=auth_headers(driver_user)).status_code == 404
+    assert client.patch(f"/api/v1/notifications/{uuid.uuid4()}/read", headers=auth_headers(admin)).status_code == 404
+
+
+def test_another_orgs_incidents_never_appear(client: TestClient, db_session: Session, organization: Organization, admin) -> None:
+    make_incident(db_session, organization, make_vehicle(db_session, organization), admin, severity=IncidentSeverity.severe)
 
     other_org = Organization(id=uuid.uuid4(), name="Other Co", slug=f"other-{uuid.uuid4().hex[:8]}")
     db_session.add(other_org)

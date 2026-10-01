@@ -1,10 +1,11 @@
 "use client"
 
 import { AlertTriangle, BellRing } from "lucide-react"
-import { useMarkNotificationRead, useNotificationPages } from "@/lib/api/notifications"
+import { useNotificationPages } from "@/lib/api/notifications"
 import type { Notification } from "@/lib/schemas/notification"
 import { PageHeader } from "@/components/layout/page-header"
 import { NotificationItem } from "@/components/notifications/notification-item"
+import { useOpenNotification } from "@/components/notifications/use-open-notification"
 import { EmptyState } from "@/components/states/empty-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
@@ -68,11 +69,7 @@ function Feed({
 export default function NotificationsPage() {
   const warningsQuery = useNotificationPages("warning")
   const eventsQuery = useNotificationPages("event")
-  const markRead = useMarkNotificationRead()
-
-  function open(notification: Notification) {
-    if (!notification.is_read) markRead.mutate(notification.id)
-  }
+  const open = useOpenNotification()
 
   return (
     <div className="space-y-6">

@@ -2,8 +2,8 @@
 
 import { Bell } from "lucide-react"
 import Link from "next/link"
-import { useHasUnreadNotifications, useMarkNotificationRead, useNotifications } from "@/lib/api/notifications"
-import type { Notification } from "@/lib/schemas/notification"
+import { useHasUnreadNotifications, useNotifications } from "@/lib/api/notifications"
+import { useOpenNotification } from "@/components/notifications/use-open-notification"
 import { NotificationItem } from "@/components/notifications/notification-item"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -15,13 +15,9 @@ const PREVIEW_COUNT = 5
 export function NotificationBell() {
   const query = useNotifications({ limit: PREVIEW_COUNT })
   const unreadQuery = useHasUnreadNotifications()
-  const markRead = useMarkNotificationRead()
+  const open = useOpenNotification()
   const rows = query.data ?? []
   const hasUnread = unreadQuery.data === true || rows.some((n) => !n.is_read)
-
-  function open(notification: Notification) {
-    if (!notification.is_read) markRead.mutate(notification.id)
-  }
 
   return (
     <Popover>

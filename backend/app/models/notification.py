@@ -9,6 +9,17 @@ from app.core.database import Base
 from app.models.enums import NotificationType
 
 
+class NotificationDismissal(Base):
+    """One user's dismissal of an incident-derived feed entry (see notification_service._incident_feed). Per user: it
+    hides the entry for that user only and never touches the incident, so everyone else still sees it."""
+
+    __tablename__ = "notification_dismissals"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    incident_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("incident_logs.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class Notification(Base):
     """A per-user, in-app notification log entry. Deliberately not org-scoped or
     audited like the operational models: it belongs to exactly one user, and every

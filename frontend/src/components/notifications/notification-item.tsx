@@ -1,6 +1,5 @@
 "use client"
 
-import Link from "next/link"
 import { formatDateTime } from "@/lib/format-date"
 import type { Notification } from "@/lib/schemas/notification"
 import { cn } from "@/lib/utils"
@@ -8,8 +7,8 @@ import { cn } from "@/lib/utils"
 // One notification row. Unread ones carry a blue dot and a bold title; clicking
 // (or pressing Enter/Space) reports it via onOpen so the caller can mark it read.
 // Read rows stay buttons for a consistent tab order, and simply do nothing new.
-// An entry derived from an open incident has no read state to change: it is a
-// link to where incidents are handled instead.
+// Tapping any row (stored or derived from an open incident) hands it to onOpen,
+// which dismisses it for this user and opens the incident it is about.
 export function NotificationItem({
   notification,
   onOpen,
@@ -37,15 +36,8 @@ export function NotificationItem({
     </>
   )
 
-  if (notification.source === "incident") {
-    return (
-      <Link href="/accountability" className={className} data-testid="incident-notification">
-        {content}
-      </Link>
-    )
-  }
   return (
-    <button type="button" onClick={() => onOpen(notification)} className={className}>
+    <button type="button" onClick={() => onOpen(notification)} className={className} data-source={notification.source}>
       {content}
     </button>
   )

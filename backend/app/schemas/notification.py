@@ -17,6 +17,6 @@ class NotificationResponse(BaseModel):
     is_read: bool
     created_at: datetime
     # "incident": derived at read time from an unresolved incident (see notification_service.list_feed), not a stored
-    # notification: it has no read state (always is_read=True), cannot be marked read, and links to incident_id.
+    # notification. It is unread until this user dismisses it (marking it read), which hides it for them only.
     source: Literal["notification", "incident"] = "notification"
     incident_id: uuid.UUID | None = None

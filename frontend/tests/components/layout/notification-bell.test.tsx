@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { NotificationBell } from "@/components/layout/notification-bell"
 
+const mockPush = vi.fn()
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }))
 const mockNotifications = vi.fn()
 const mockHasUnread = vi.fn()
 const mockMarkRead = vi.fn()
@@ -22,6 +24,7 @@ function state(data: unknown, extra: Record<string, unknown> = {}) {
 describe("NotificationBell", () => {
   beforeEach(() => {
     mockMarkRead.mockReset()
+    mockPush.mockReset()
     mockNotifications.mockReset()
     mockNotifications.mockReturnValue(state([]))
     mockHasUnread.mockReturnValue({ data: false })
@@ -67,17 +70,26 @@ describe("NotificationBell", () => {
     expect(screen.getByRole("link", { name: /go to notifications/i })).toHaveAttribute("href", "/notifications")
   })
 
+  it("asks for unread entries only and vanishes a tapped one (marked read), opening its incident when it has one", async () => {
+    const user = userEvent.setup()
+    mockNotifications.mockReturnValue(state([{ ...notification("9", false, "Open severe incident on KL-1234"), source: "incident", incident_id: "inc-9" }]))
+    render(<NotificationBell />)
+    await user.click(screen.getByRole("button", { name: /notifications/i }))
+
+    await user.click(await screen.findByText("Open severe incident on KL-1234"))
+    expect(mockMarkRead).toHaveBeenCalledWith("9")
+    expect(mockPush).toHaveBeenCalledWith("/accountability?incident=inc-9")
+  })
+
   it("marks an unread notification read when it is clicked, but not one already read", async () => {
     const user = userEvent.setup()
     mockNotifications.mockReturnValue(state([notification("1", false, "Unread one"), notification("2", true, "Read one")]))
     render(<NotificationBell />)
     await user.click(screen.getByRole("button", { name: /notifications/i }))
 
-    await user.click(await screen.findByText("Read one"))
-    expect(mockMarkRead).not.toHaveBeenCalled()
-
-    await user.click(screen.getByText("Unread one"))
+    await user.click(await screen.findByText("Unread one"))
     expect(mockMarkRead).toHaveBeenCalledWith("1")
+    expect(mockPush).not.toHaveBeenCalled()  // a stored notification with no incident just vanishes
   })
 
   it("says so when it is empty or fails to load", async () => {

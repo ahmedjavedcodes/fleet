@@ -32,6 +32,8 @@ export default function AccountabilityPage() {
   const { role } = useCurrentUser()
   const searchParams = useSearchParams()
   const vehicleId = searchParams.get("vehicle_id") ?? undefined
+  // Arriving from a notification: show just that incident.
+  const incidentId = searchParams.get("incident") ?? undefined
 
   const canCreateIncident = Boolean(role && can(role, "incident:create"))
   const canResolveIncident = Boolean(role && can(role, "incident:resolve"))
@@ -122,6 +124,7 @@ export default function AccountabilityPage() {
               const filtered = rows
                 .filter(
                   (r) =>
+                    (!incidentId || r.id === incidentId) &&
                     matchesSearch(search, r.vehicle_plate, r.vehicle_name, r.driver_name) &&
                     (severity === ALL || r.severity === severity) &&
                     (resolution === ALL || r.resolution_status === resolution)
