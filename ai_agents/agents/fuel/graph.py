@@ -119,6 +119,11 @@ def classify_intent(state: FuelAgentState) -> FuelAgentState:
         # already be in fuel_fields. Validate up front so a missing/extra key halts
         # with a readable reason instead of a traceback at the create node.
         fields = dict(state["fuel_fields"])
+        if not fields.get("date"):
+            fields["date"] = date.today().isoformat()  # a typed fill with no date is today's
+        if fields.get("odometer_reading") in (None, "") and fields.get("vehicle_id"):
+            # Take the vehicle's last recorded reading as the baseline (see validate_odometer) instead of asking.
+            return {**state, "intent": "fuel_log", "fuel_fields": fields, "extracted": {}, "stage": "resolving_vehicle"}
         amounts = _resolve_amounts(fields, {})  # two of litres / price / total give the third
         if amounts is not None:
             fields["liters_filled"], fields["price_per_liter"], fields["total_cost"] = amounts
@@ -262,19 +267,27 @@ def sanitize(state: FuelAgentState) -> FuelAgentState:
         if value not in (None, ""):
             bridged[key] = value
 
+    if stated.get("notes"):
+        bridged["notes"] = "; ".join(filter(None, [str(stated["notes"]), bridged.get("notes")]))
+
     # The user's vehicle beat the photo's plate (see resolve_vehicle): leave a trace if they disagree.
     receipt_plate = sanitize_plate_number(extracted.get("plate_number"))
     if receipt_plate and state.get("vehicle_plate") and sanitize_plate_number(state["vehicle_plate"]) != receipt_plate:
         bridged["notes"] = "; ".join(filter(None, [bridged.get("notes"), f"Receipt shows plate {receipt_plate}"]))
 
     if bridged["date"] is None:
-        return {**state, "stage": "halted", "halt_reason": "Could not determine the receipt's date."}
+        bridged["date"] = date.today().isoformat()  # an undated receipt is today's fill
 
     return {**state, "sanitized": bridged, "stage": "validating_odometer"}
 
 
 def validate_odometer(state: FuelAgentState) -> FuelAgentState:
     sanitized = state.get("sanitized") or {}
+    if sanitized.get("odometer_reading") in (None, "") and (state.get("current_odometer") or 0) > 0:
+        # Not on the receipt or in the message: the last recorded reading is the baseline, and the log says so.
+        note = "odometer not stated: last recorded reading used"
+        sanitized = {**sanitized, "odometer_reading": state["current_odometer"], "notes": "; ".join(filter(None, [sanitized.get("notes"), note]))}
+        return {**state, "sanitized": sanitized, "stage": "creating"}
     try:
         check_odometer_continuity(sanitized.get("odometer_reading"), state.get("current_odometer") or 0)
     except OdometerContinuityError as exc:
@@ -288,6 +301,8 @@ def _make_create_fuel_node(deps: FuelAgentDeps):
         sanitized = state.get("sanitized") or {}
         try:
             record = deps.create_fuel_log(context, FuelLogCreateInput(**sanitized))
+        except (ValidationError, TypeError) as exc:
+            return {**state, "stage": "halted", "halt_reason": f"Invalid fuel_fields: {exc}"}
         except PermissionDeniedError as exc:
             return {**state, "stage": "halted", "halt_reason": str(exc)}
         except BackendAPIError as exc:
@@ -388,6 +403,7 @@ def build_fuel_graph(deps: FuelAgentDeps | None = None) -> StateGraph:
         {
             "end": END,
             "extracting": "extracting",
+            "resolving_vehicle": "resolving_vehicle",
             "creating": "creating",
             "creating_trip": "creating_trip",
             "querying": "querying",

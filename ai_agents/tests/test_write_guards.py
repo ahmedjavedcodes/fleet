@@ -24,13 +24,13 @@ INCIDENT = "a description of the incident (what happened, when, where, which veh
 @pytest.mark.parametrize(
     ("agent", "args", "image", "expected"),
     [
-        ("fuel", {"fuel_fields": {"vehicle_id": "v1", "liters_filled": 50}}, False, ["the date", "the exact odometer reading", "the price per liter", "the total cost", "the liters filled"][:0] or ["the date", "the exact odometer reading", "the price per liter", "the total cost"]),
+        ("fuel", {"fuel_fields": {"vehicle_id": "v1", "liters_filled": 50}}, False, ["the price per liter", "the total cost"]),
         ("fuel", {"fuel_fields": FULL_FUEL}, False, []),
         ("fuel", {"fuel_fields": {k: v for k, v in FULL_FUEL.items() if k != "total_cost"}}, False, []),  # two of three give the third
         ("fuel", {"fuel_fields": {"vehicle_id": "v1"}}, True, []),  # the receipt photo supplies the rest
         ("fuel", {"query_entity": "fuel_logs"}, False, []),
         ("assignment", {"assign_request": {"vehicle_plate": "AB-1234"}}, False,
-         ["the driver's name", "the odometer reading at the start", "the vehicle's condition when taken (good, fair or poor)"]),
+         ["the driver's name"]),  # odometer and condition are defaulted
         ("assignment", {"terminate_request": {"vehicle_plate": "AB-1234", "end_odometer": 5, "leave_condition": "good"}}, False, []),
         ("maintenance", {"document_type": "work_order"}, False, [WORK_ORDER]),
         ("maintenance", {"document_type": "work_order", "document_text": "oil change"}, False, []),
@@ -109,8 +109,8 @@ def test_an_incomplete_fuel_log_is_not_run_and_the_model_is_told_to_ask() -> Non
     assert runner.calls == []  # nothing ran, so no approval card with blanks
     assert result.status == "done" and result.hitl_state is None
     prompt = _last_prompt(llm)
-    assert "NOT RUN" in prompt and "the exact odometer reading" in prompt and "the date" in prompt
-    assert "ask the user" in prompt.lower()
+    assert "NOT RUN" in prompt and "the price per liter" in prompt and "the total cost" in prompt
+    assert "ask for all" in prompt.lower() and "one short message" in prompt.lower()
 
 
 def test_a_complete_fuel_log_reaches_the_sub_agent() -> None:

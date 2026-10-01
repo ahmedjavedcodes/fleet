@@ -53,7 +53,8 @@ def missing_fields(agent: str, args: dict[str, Any], *, has_image: bool) -> list
         fields = fields or {}
         if has_image:
             return []  # the receipt supplies what is missing; whatever it cannot show comes back as a halt
-        absent = [f for f in ("vehicle_id", "date", "odometer_reading") if _blank(fields.get(f))]
+        # date (today) and odometer (the vehicle's last reading) are defaulted by the sub-agent, never asked for.
+        absent = [f for f in ("vehicle_id",) if _blank(fields.get(f))]
         amounts = [f for f in ("liters_filled", "price_per_liter", "total_cost") if _blank(fields.get(f))]
         if len(amounts) > 1:  # two of the three give the third
             absent += amounts
@@ -62,9 +63,9 @@ def missing_fields(agent: str, args: dict[str, Any], *, has_image: bool) -> list
     if agent == "assignment":
         absent = []
         if (request := args.get("assign_request")) is not None:
-            absent = [f for f in ("vehicle_plate", "driver_name", "start_odometer", "take_condition") if _blank(request.get(f))]
+            absent = [f for f in ("vehicle_plate", "driver_name") if _blank(request.get(f))]
         elif (request := args.get("terminate_request")) is not None:
-            absent = [f for f in ("vehicle_plate", "end_odometer", "leave_condition") if _blank(request.get(f))]
+            absent = [f for f in ("vehicle_plate",) if _blank(request.get(f))]
         return _names(absent)
 
     if agent == "maintenance" and args.get("document_type") and not has_image and _blank(args.get("document_text")):
@@ -81,8 +82,9 @@ def missing_fields(agent: str, args: dict[str, Any], *, has_image: bool) -> list
 
 def not_run_observation(agent: str, missing: list[str]) -> str:
     return (
-        f"{agent} NOT RUN -- missing required information: {'; '.join(missing)}. Ask the user for exactly these in one "
-        "short message. Do not guess, and do not call the tool again until they have answered."
+        f"{agent} NOT RUN -- missing required information: {'; '.join(missing)}. Ask for ALL of these in ONE short "
+        "message. When the user answers, call this same tool again at once with their earlier details plus the answer "
+        "merged in (for a typed work order, append it to document_text); ask nothing else first."
     )
 
 
@@ -96,8 +98,9 @@ def needs_user_input(halt_reason: str | None) -> bool:
 
 def needs_input_observation(agent: str, halt_reason: str) -> str:
     return (
-        f"{agent} halted and needs more information from the user: {halt_reason} Ask the user for exactly what is "
-        "missing in one short message; do not guess, do not log or change anything, and do not retry until they answer."
+        f"{agent} halted and needs more information from the user: {halt_reason} Ask for everything missing in ONE "
+        "short message; do not guess. When they answer, call this same tool again at once with their earlier details "
+        "plus the answer merged in (a typed work order: append it to document_text); never ask them for a record type."
     )
 
 

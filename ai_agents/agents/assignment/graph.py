@@ -131,6 +131,18 @@ def _make_resolve_entities_node(deps: AssignmentAgentDeps):
 
         result: AssignmentAgentState = {**state, "vehicle_id": vehicle["id"], "stage": "validating_conflicts"}
 
+        # Handover details nobody stated have obvious values: the odometer is the vehicle's last recorded reading
+        # and the condition is "good" (the approval card shows both, so the manager can correct them).
+        key, odo, cond = ("assign_request", "start_odometer", "take_condition") if intent == "assign_asset" else (
+            "terminate_request", "end_odometer", "leave_condition")
+        defaults = {}
+        if request.get(odo) in (None, "") and vehicle.get("current_odometer"):
+            defaults[odo] = vehicle["current_odometer"]
+        if not request.get(cond):
+            defaults[cond] = "good"
+        if defaults:
+            result[key] = {**request, **defaults}  # type: ignore[literal-required]
+
         if intent == "assign_asset":
             driver = _resolve_driver(deps, context, request.get("driver_name"))
             if driver is None:

@@ -319,7 +319,9 @@ def test_stated_figures_override_the_receipt_and_the_three_always_agree(backend:
 
 def test_a_stated_date_and_odometer_fill_what_the_photo_could_not_read(backend: _FakeBackend) -> None:
     unreadable = _photo_run(backend, {"vehicle_id": "v1"}, odometer=None)
-    assert unreadable["stage"] == "halted" and "odometer" in unreadable["halt_reason"].lower()
+    # Not on the photo and not stated: the vehicle's last recorded reading (1000) is the baseline, and the log says so.
+    assert unreadable["stage"] == "done" and unreadable["created_record"]["odometer_reading"] == 1000
+    assert "last recorded reading used" in unreadable["created_record"]["notes"]
 
     state = _photo_run(backend, {"vehicle_id": "v1", "odometer_reading": 1500, "date": "2026-09-30"}, odometer=None)
     assert state["stage"] == "done"

@@ -189,8 +189,14 @@ def _make_resolve_assets_node(deps: MaintenanceAgentDeps):
         if vehicle is None:
             return {**state, "stage": "halted", "halt_reason": f"No vehicle on file matches plate {plate!r}."}
 
-        if not extracted.get("odometer"):
-            return {**state, "stage": "halted", "halt_reason": "Could not determine the work order's odometer reading."}
+        # No odometer on the work order or in the note: the vehicle's last recorded reading is the baseline, not a
+        # reason to stop the turn. Only a vehicle with no reading on file at all has to be asked.
+        odometer = extracted.get("odometer")
+        if not odometer:
+            odometer = vehicle.get("current_odometer") or None
+            if not odometer:
+                return {**state, "stage": "halted", "halt_reason": "Could not determine the work order's odometer reading."}
+            extracted = {**extracted, "odometer": odometer, "odometer_defaulted": True}
 
         # Best-effort: an unmatched driver name doesn't block filing -- driver_id is optional.
         resolved_driver_id = None
@@ -222,6 +228,7 @@ def _make_resolve_assets_node(deps: MaintenanceAgentDeps):
             "vehicle_id": vehicle["id"],
             "resolved_parts": resolved_parts,
             "resolved_driver_id": resolved_driver_id,
+            "extracted": extracted,
             "stage": "creating_log",
         }
 
@@ -237,6 +244,8 @@ def _make_create_log_node(deps: MaintenanceAgentDeps):
         labor_hours = extracted.get("labor_hours")
         if labor_hours:
             description = f"{description or ''} (labor: {labor_hours}h)".strip()
+        if extracted.get("odometer_defaulted"):
+            description = f"{description or ''} (odometer not stated: last recorded reading used)".strip()
 
         data = MaintenanceLogCreateInput(
             vehicle_id=state["vehicle_id"],
