@@ -42,6 +42,7 @@ from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
 from orchestrator.compaction import cap_text, render_result, shorten_turn
 from orchestrator.approval_summary import approval_question, summarize_pending
+from orchestrator.jev_router import RISK_NOTICE, missing_reply
 from orchestrator.required_fields import fill_defaults, merge_typed_note, missing_fields, needs_input_observation, needs_user_input, not_run_observation
 from orchestrator.retry import ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
@@ -225,6 +226,8 @@ class OrchestratorDeps:
     # same chain plans and replies. Planning (tool choice), the input guard and document retrieval stay on the cheap
     # models either way; retrieval itself is embeddings and a reranker, not a chat model.
     synthesis_llm: Any = None
+    # Jev decision layer (orchestrator/jev_router.py): proposes the route and gates writes. None = every turn is the LLM's.
+    router: Any = None
     # Optional per agent-memory.md -- None means no fetch_memory work, no
     # update_memory tool offered to the LLM, and no staleness post-hook.
     memory: AgentMemory | None = None
@@ -426,9 +429,27 @@ def _make_plan_node(deps: OrchestratorDeps):
             }
             return {**state, "active_tool_calls": [call], "stage": "planning"}
 
-        bound = deps.llm.bind_tools(
-            build_llm_tools(include_memory=deps.memory is not None, include_documents=deps.documents is not None)
-        )
+        if state.get("_deterministic_reply") or (state.get("_routed_direct") and state.get("hop_count", 0) >= 1):
+            # A direct Jev route has run its one tool (or a gate halted the write): nothing left to plan.
+            return {**state, "active_tool_calls": [], "stage": "planning"}
+
+        if deps.router is not None and not state.get("_jev_routed") and not state.get("scratchpad"):
+            state = {**state, "_jev_routed": True}
+            history = [t["content"] for t in (state.get("chat_history") or [])[:-1]]
+            decision = deps.router.route_turn(
+                _latest_user_message(state), role=(state.get("auth_context") or {}).get("role") or "",
+                has_image=state.get("_pending_image_bytes") is not None, documents_available=deps.documents is not None,
+                recent=history, awaiting=next(iter(state.get("_pending_notes") or {}), None),
+            )
+            if decision.kind == "direct" and decision.call is not None:
+                return {**state, "active_tool_calls": [decision.call], "_routed_direct": True, "stage": "planning"}
+            if decision.kind == "restrict":
+                state = {**state, "_restrict_tools": sorted(decision.tools)}
+
+        tools = build_llm_tools(include_memory=deps.memory is not None, include_documents=deps.documents is not None)
+        if state.get("_restrict_tools"):
+            tools = [t for t in tools if t.name in state["_restrict_tools"]]
+        bound = deps.llm.bind_tools(tools)
         start = time.monotonic()
         response = bound.invoke(
             _history_to_messages(state, documents_enabled=deps.documents is not None), **_caps(bound, PLANNER_MAX_TOKENS)
@@ -460,6 +481,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
         # triggers for the truth-checker (see fact_check).
         turn_wrote = bool(state.get("_turn_wrote"))
         pending_notes = dict(state.get("_pending_notes") or {})
+        deterministic_reply = state.get("_deterministic_reply")
         user_message = next((t["content"] for t in reversed(state.get("chat_history") or []) if t["role"] == "user"), "")
 
         for call in state.get("active_tool_calls") or []:
@@ -595,6 +617,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         )
                     continue  # sub-agent runner is entirely bypassed on a cache hit
 
+            risk_flag = False
             if not is_read_only:
                 # Before ANY write: what is required must be in the call or the user's attachment. If not, ask the
                 # user in chat -- never run the sub-agent and never show an approval card with blanks.
@@ -612,6 +635,27 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                             call_id, agent_name, normalized_args, attempt=attempt, status="halted", observation_text=observation
                         )
                     continue
+
+                if deps.router is not None:
+                    # Jev's second look at a write: anything essential still missing (the code can overrule it where
+                    # it sees the item is there), and is it unusually high-impact. A halt here is a fixed question,
+                    # not a model-written one; the write itself still ends at the human approval card either way.
+                    gate = deps.router.gate_write(
+                        agent_name, validated_dict, message=user_message, has_image=state.get("_pending_image_bytes") is not None
+                    )
+                    if gate.missing:
+                        if validated_dict.get("document_text"):
+                            pending_notes[agent_name] = validated_dict["document_text"]
+                        deterministic_reply = missing_reply(gate.missing)
+                        observation = f"{agent_name} NOT RUN -- missing: {'; '.join(gate.missing)}."
+                        _log_tool(agent_name, validated_dict, "GATE_MISSING", observation)
+                        scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": observation})
+                        if deps.observer is not None:
+                            deps.observer.record_tool_result(
+                                call_id, agent_name, normalized_args, attempt=attempt, status="halted", observation_text=observation
+                            )
+                        continue
+                    risk_flag = gate.high_risk
 
             sub_state: dict[str, Any] = {
                 "token": auth_context.get("token"),
@@ -672,7 +716,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         "pending_node": result.pending_node or "",
                         "state": result.state,
                         "summary": summarize_pending(agent_name, result.state),
-                        **({"approval_prompt": q} if (q := approval_question(agent_name)) else {}),
+                        **({"approval_prompt": f"{RISK_NOTICE} {q}" if risk_flag else q} if (q := approval_question(agent_name)) else {}),
                     },
                 }
 
@@ -721,6 +765,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
         return {
             **state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning",
             "_tool_retry_counts": retry_counts, "_turn_wrote": turn_wrote, "_pending_notes": pending_notes,
+            "_deterministic_reply": deterministic_reply,
         }
 
     return execute_tool
@@ -761,6 +806,10 @@ def _make_synthesize_node(deps: OrchestratorDeps):
     def synthesize(state: OrchestratorState) -> OrchestratorState:
         if deps.observer is not None:
             deps.observer.record_node("synthesize")
+
+        reply = state.get("_deterministic_reply")
+        if reply:  # a gate halt: the question is fixed text, no model call
+            return {**state, "final_response": reply, "stage": "done", "_fact_check_warning": None}
 
         state = _merge_ready_memory(state)
         prompt = _SYNTHESIS_PROMPT

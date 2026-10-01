@@ -68,6 +68,13 @@ class OrchestratorState(TypedDict, total=False):
     # A typed work order / incident note that still needs an answer from the user, by agent, so the next turn's call
     # starts from the whole note rather than from the one fragment the user just typed (merge_typed_note).
     _pending_notes: dict[str, str]
+    # Jev routing (orchestrator/jev_router.py), all per turn: routing is decided once (_jev_routed); a direct route skips
+    # the planner after its one tool call (_routed_direct); a restricted route binds only these tools; a gate halt is
+    # answered with a fixed sentence instead of a model-written one (_deterministic_reply).
+    _jev_routed: bool
+    _routed_direct: bool
+    _restrict_tools: list[str] | None
+    _deterministic_reply: str | None
     # Site-relative path of this turn's uploaded image (/uploads/incidents/...),
     # so a filed incident can link the photo the vision model just read.
     _pending_attachment_url: str | None

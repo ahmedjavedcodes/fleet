@@ -208,6 +208,10 @@ class OrchestratorSession:
             "memory_context": None,  # fetch_memory refetches once per user turn
             "_pending_memory_facts": None,
             "_turn_wrote": False,
+            "_jev_routed": False,
+            "_routed_direct": False,
+            "_restrict_tools": None,
+            "_deterministic_reply": None,
             "_pending_attachment_url": attachment_url,
             "_referenced_documents": list(referenced_documents or []),
         }

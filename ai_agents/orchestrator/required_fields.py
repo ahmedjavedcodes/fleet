@@ -127,7 +127,7 @@ def merge_typed_note(agent: str, args: dict[str, Any], *, user_message: str, pen
         args = {**args, "document_type": _NOTE_TYPE[agent]}
     text = str(args.get("document_text") or "").strip()
     if held and held.casefold() not in text.casefold():
-        text = f"{held}. {text or user_message}".strip()
+        text = f"{held.rstrip('. ')}. {text or user_message}".strip()
     plate = _PLATE.search(user_message or "")
     if agent == "maintenance" and plate and plate.group(0).upper() not in text.upper():
         text = f"{text}. Vehicle {plate.group(0).upper()}" if text else f"Vehicle {plate.group(0).upper()}"

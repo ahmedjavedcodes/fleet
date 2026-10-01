@@ -16,6 +16,8 @@ import sys
 
 import httpx
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BACKEND, AGENTS = "http://localhost:8000", "http://localhost:8100"
 LEAK = re.compile(r"DSML|<\s*/?\s*(?:tool_call|function_call|invoke|think)\b|\"tool_calls\"", re.IGNORECASE)
 TURN_1 = "Log a major maintenance service for CD-5678. The mechanic did a brake service and replaced filters for Rs 35,000."
