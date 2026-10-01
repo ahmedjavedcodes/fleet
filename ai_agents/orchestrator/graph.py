@@ -18,6 +18,7 @@ unbounded loop against a live LLM is a real cost/availability risk.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -41,7 +42,7 @@ from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
 from orchestrator.compaction import cap_text, render_result, shorten_turn
 from orchestrator.approval_summary import approval_question, summarize_pending
-from orchestrator.required_fields import fill_defaults, missing_fields, needs_input_observation, needs_user_input, not_run_observation
+from orchestrator.required_fields import fill_defaults, merge_typed_note, missing_fields, needs_input_observation, needs_user_input, not_run_observation
 from orchestrator.retry import ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
 from memory.service import AgentMemory
@@ -62,6 +63,20 @@ from orchestrator.webhooks import AlertDispatcher
 from tools.auth_context import AgentContext
 
 logger = logging.getLogger("fleet.memory")
+tool_logger = logging.getLogger("fleet.tools")
+if not tool_logger.handlers:  # visible under uvicorn too, like the per-call LLM telemetry
+    _tool_handler = logging.StreamHandler()
+    _tool_handler.setFormatter(logging.Formatter("%(levelname)s:     [tools] %(message)s"))
+    tool_logger.addHandler(_tool_handler)
+    tool_logger.setLevel(logging.INFO)
+    tool_logger.propagate = False
+
+
+def _log_tool(agent: str, args: dict[str, Any], status: str, detail: str = "") -> None:
+    """One line per tool call (agent, arguments, outcome) so a live run can be audited from the server log. Arguments
+    are the model's own structured call, never the token or image bytes."""
+    shown = {k: ("<image>" if k == "image_bytes" else v) for k, v in args.items()}
+    tool_logger.info("tool %s %s args=%s %s", agent, status, json.dumps(shown, default=str)[:600], detail[:300])
 
 MAX_HOPS = 8
 HISTORY_WINDOW = int(os.environ.get("LLM_HISTORY_WINDOW", "6"))
@@ -444,6 +459,8 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
         # Whether this turn has dispatched any mutating call -- one of the two
         # triggers for the truth-checker (see fact_check).
         turn_wrote = bool(state.get("_turn_wrote"))
+        pending_notes = dict(state.get("_pending_notes") or {})
+        user_message = next((t["content"] for t in reversed(state.get("chat_history") or []) if t["role"] == "user"), "")
 
         for call in state.get("active_tool_calls") or []:
             agent_name = call["name"]
@@ -582,9 +599,13 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 # Before ANY write: what is required must be in the call or the user's attachment. If not, ask the
                 # user in chat -- never run the sub-agent and never show an approval card with blanks.
                 validated_dict = fill_defaults(agent_name, validated_dict, now=datetime.now())
+                validated_dict = merge_typed_note(agent_name, validated_dict, user_message=user_message, pending=pending_notes)
                 missing = missing_fields(agent_name, validated_dict, has_image=state.get("_pending_image_bytes") is not None)
                 if missing:
+                    if validated_dict.get("document_text"):
+                        pending_notes[agent_name] = validated_dict["document_text"]
                     observation = not_run_observation(agent_name, missing)
+                    _log_tool(agent_name, validated_dict, "NOT_RUN", observation)
                     scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": observation})
                     if deps.observer is not None:
                         deps.observer.record_tool_result(
@@ -628,6 +649,8 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                 continue
 
             if result.status == "awaiting_approval":
+                pending_notes.pop(agent_name, None)
+                _log_tool(agent_name, validated_dict, "AWAITING_APPROVAL", str(result.pending_node))
                 if deps.observer is not None:
                     deps.observer.record_tool_result(
                         call_id, agent_name, normalized_args, attempt=attempt, status="awaiting_approval",
@@ -641,6 +664,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                     "stage": "awaiting_approval",
                     "_tool_retry_counts": retry_counts,
                     "_turn_wrote": turn_wrote,
+                    "_pending_notes": pending_notes,
                     "hitl_state": {
                         "agent_name": agent_name,
                         "thread_id": result.thread_id,
@@ -652,7 +676,13 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                     },
                 }
 
+            if not is_read_only and validated_dict.get("document_text"):
+                if result.status == "halted" and needs_user_input(result.state.get("halt_reason")):
+                    pending_notes[agent_name] = validated_dict["document_text"]
+                else:
+                    pending_notes.pop(agent_name, None)
             observation = _format_observation(agent_name, result)
+            _log_tool(agent_name, validated_dict, result.status.upper(), observation)
             scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": observation})
             if deps.observer is not None:
                 deps.observer.record_tool_result(
@@ -690,7 +720,7 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
 
         return {
             **state, "scratchpad": scratchpad, "hop_count": hop, "stage": "planning",
-            "_tool_retry_counts": retry_counts, "_turn_wrote": turn_wrote,
+            "_tool_retry_counts": retry_counts, "_turn_wrote": turn_wrote, "_pending_notes": pending_notes,
         }
 
     return execute_tool

@@ -185,3 +185,81 @@ def test_the_answer_to_a_missing_slot_runs_the_tool_in_that_same_turn_and_reache
     assert "45000" in runner.calls[1][1]["document_text"] and "brake service" in runner.calls[1][1]["document_text"].lower()
     assert second.hitl_state is not None and second.hitl_state["agent_name"] == "maintenance"  # the approval card, same turn
     assert len(llm.seen) == 4  # turn 2 is one planning call straight to the tool: no confirmation round
+
+
+# --- the note survives the model dropping parts of it (found in the live run) ---------------------------------
+
+
+def test_the_plate_the_user_named_is_added_when_the_model_left_it_out_of_the_note() -> None:
+    from orchestrator.required_fields import merge_typed_note
+
+    args = {"document_type": "work_order", "document_text": "major service, brake service and filters, Rs 35000"}
+    out = merge_typed_note("maintenance", args, user_message="Log a major service for CD-5678. Brake service.", pending={})
+
+    assert out["document_text"].endswith("Vehicle CD-5678") and out["document_text"].startswith("major service")
+    assert merge_typed_note("maintenance", {**args, "document_text": "service on CD-5678"}, user_message="for CD-5678", pending={})["document_text"] == "service on CD-5678"
+
+
+def test_an_answer_fragment_is_put_behind_the_held_back_note_and_never_duplicated() -> None:
+    from orchestrator.required_fields import merge_typed_note
+
+    held = {"maintenance": "Major service for CD-5678: brake service and filters, Rs 35000"}
+    out = merge_typed_note("maintenance", {"document_type": "work_order", "document_text": "odometer 45000"}, user_message="odometer 45000", pending=held)
+    assert out["document_text"] == f"{held['maintenance']}. odometer 45000"
+
+    again = merge_typed_note("maintenance", {"document_type": "work_order", "document_text": out["document_text"]}, user_message="odometer 45000", pending=held)
+    assert again["document_text"] == out["document_text"]
+
+    bare = merge_typed_note("maintenance", {"document_type": "work_order"}, user_message="odometer 45000", pending=held)
+    assert bare["document_text"] == f"{held['maintenance']}. odometer 45000"
+    assert merge_typed_note("fuel", {"fuel_fields": {}}, user_message="x", pending=held) == {"fuel_fields": {}}
+
+
+def test_a_part_that_is_not_in_stock_does_not_block_the_service() -> None:
+    capture = _Capture()
+    deps = MaintenanceAgentDeps(
+        extract_work_order=lambda img, mime, text=None: WorkOrderExtraction(
+            issue_description="Brake service", service_types=["brake_service"], vehicle_plate="CD-5678", odometer=45000,
+            parts_used=[{"name_or_sku": "filters", "qty": None}],
+        ),
+        get_vehicles=lambda ctx: [{"id": "v2", "plate_number": "CD-5678", "current_odometer": 44000}],
+        get_drivers=lambda ctx: [], get_inventory=lambda ctx: [],
+        create_maintenance_log=lambda ctx, data: capture(ctx, data), create_mechanic_report=lambda ctx, log_id, data: {"id": "r1"},
+    )
+
+    state = get_compiled_maintenance_graph(deps).invoke({"token": _token("mechanic"), "document_type": "work_order", "document_text": "brake service and filters"})
+
+    assert state["stage"] == "done", state.get("halt_reason")
+    assert "none deducted: filters" in capture.calls[0]["description"]
+
+
+def test_the_held_back_note_carries_over_even_if_the_model_forgets_it() -> None:
+    halted = RunResult(status="halted", state={"halt_reason": "Could not determine the work order's odometer reading."}, thread_id="t1")
+    pending = RunResult(status="awaiting_approval", state={"extracted": {}}, thread_id="t2", pending_node="creating_log")
+    llm = _LLM(
+        _call({"document_type": "work_order", "document_text": "brake service and filters Rs 35000"}),  # no plate: added from the message
+        AIMessage(content="plan"), AIMessage(content="What is the odometer?"),
+        _call({"document_type": "work_order", "document_text": "odometer 45000"}),  # the bare fragment
+    )
+    runner = _Runner(halted, pending)
+    session = OrchestratorSession(_token(), deps=OrchestratorDeps(llm=llm, runner=runner))
+
+    session.run("Log a major service for CD-5678, brake service and filters Rs 35000")
+    second = session.run("odometer 45000")
+
+    first_note, second_note = (call[1]["document_text"] for call in runner.calls)
+    assert "CD-5678" in first_note
+    assert "brake service and filters" in second_note and "odometer 45000" in second_note and "CD-5678" in second_note
+    assert second.hitl_state is not None
+
+
+def test_a_bare_follow_up_call_with_no_document_type_is_still_the_work_order() -> None:
+    from orchestrator.required_fields import merge_typed_note
+
+    held = {"maintenance": "Major service for ABC-234: brake service, Rs 35000"}
+    out = merge_typed_note("maintenance", {"document_text": "odometer 45000, ABC-234"}, user_message="odometer 45000", pending=held)
+
+    assert out["document_type"] == "work_order" and out["document_text"].startswith(held["maintenance"])
+    assert merge_typed_note("maintenance", {"query_entity": "service_due"}, user_message="x", pending=held) == {"query_entity": "service_due"}
+    assert merge_typed_note("maintenance", {}, user_message="x", pending={}) == {}
+    assert merge_typed_note("accountability", {"document_text": "hit a pole"}, user_message="x", pending={})["document_type"] == "incident_report"

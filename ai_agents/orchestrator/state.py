@@ -65,6 +65,9 @@ class OrchestratorState(TypedDict, total=False):
     turn_kind: str | None
     _pending_memory_facts: Any
     _turn_wrote: bool
+    # A typed work order / incident note that still needs an answer from the user, by agent, so the next turn's call
+    # starts from the whole note rather than from the one fragment the user just typed (merge_typed_note).
+    _pending_notes: dict[str, str]
     # Site-relative path of this turn's uploaded image (/uploads/incidents/...),
     # so a filed incident can link the photo the vision model just read.
     _pending_attachment_url: str | None

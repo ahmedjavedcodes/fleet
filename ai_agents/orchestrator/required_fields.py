@@ -104,6 +104,36 @@ def needs_input_observation(agent: str, halt_reason: str) -> str:
     )
 
 
+_PLATE = re.compile(r"\b[A-Z]{2,3}-\d{3,4}\b", re.IGNORECASE)
+_TYPED_NOTE_AGENTS = ("maintenance", "accountability")
+_NOTE_TYPE = {"maintenance": "work_order", "accountability": "incident_report"}
+
+
+def merge_typed_note(agent: str, args: dict[str, Any], *, user_message: str, pending: dict[str, str]) -> dict[str, Any]:
+    """Keep a typed work order / incident note whole across turns, whatever the model happened to put in the call.
+
+    The model decides what goes in `document_text`, and in practice it drops the plate the user named or, on the
+    answer to a follow-up ("odometer 45000"), sends only the new fragment. So: the note held back from the previous
+    turn (`pending`) is put in front of a call that does not already contain it, and a plate in the user's message
+    that the note lacks is appended. Anything else is left exactly as the model wrote it."""
+    held = pending.get(agent)
+    if agent not in _TYPED_NOTE_AGENTS or args.get("query_entity"):
+        return args
+    if not args.get("document_type"):
+        # The answer to a follow-up often comes back as a bare call with no document_type, which the sub-agent would
+        # read as a query ("missing query_entity"). A held-back note, or a typed note, has a known type.
+        if not (held or args.get("document_text")):
+            return args
+        args = {**args, "document_type": _NOTE_TYPE[agent]}
+    text = str(args.get("document_text") or "").strip()
+    if held and held.casefold() not in text.casefold():
+        text = f"{held}. {text or user_message}".strip()
+    plate = _PLATE.search(user_message or "")
+    if agent == "maintenance" and plate and plate.group(0).upper() not in text.upper():
+        text = f"{text}. Vehicle {plate.group(0).upper()}" if text else f"Vehicle {plate.group(0).upper()}"
+    return {**args, "document_text": text} if text else args
+
+
 def fill_defaults(agent: str, args: dict[str, Any], *, now: datetime) -> dict[str, Any]:
     """The one default that is safe: an assignment taken or released "now" when no time was given."""
     out = dict(args)

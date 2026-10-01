@@ -211,17 +211,19 @@ def _make_resolve_assets_node(deps: MaintenanceAgentDeps):
 
         inventory = deps.get_inventory(context)
         resolved_parts: list[dict[str, Any]] = []
+        unmatched: list[str] = []
         for item in extracted.get("parts_used") or []:
             name_or_sku = item.get("name_or_sku")
             qty = item.get("qty")
             part = _resolve_part(name_or_sku, inventory)
             if part is None or not qty:
-                return {
-                    **state,
-                    "stage": "halted",
-                    "halt_reason": f"No inventory part matches {name_or_sku!r}.",
-                }
+                # A part that is not in stock records (or has no quantity) must not block the service itself: it is
+                # noted on the log and no stock is deducted for it.
+                unmatched.append(str(name_or_sku))
+                continue
             resolved_parts.append({"part_id": part["id"], "qty": qty})
+        if unmatched:
+            extracted = {**extracted, "unmatched_parts": unmatched}
 
         return {
             **state,
@@ -244,6 +246,8 @@ def _make_create_log_node(deps: MaintenanceAgentDeps):
         labor_hours = extracted.get("labor_hours")
         if labor_hours:
             description = f"{description or ''} (labor: {labor_hours}h)".strip()
+        if extracted.get("unmatched_parts"):
+            description = f"{description or ''} (parts not matched to stock, none deducted: {', '.join(extracted['unmatched_parts'])})".strip()
         if extracted.get("odometer_defaulted"):
             description = f"{description or ''} (odometer not stated: last recorded reading used)".strip()
 
