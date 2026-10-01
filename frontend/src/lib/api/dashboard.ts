@@ -29,15 +29,20 @@ export function getFuelTrends(months?: number, vehicleId?: string): Promise<Fuel
 }
 
 /** vehicleId narrows it to one vehicle; limit caps the rows (latest due first). */
-export function getMaintenanceCalendar(windowDays?: number, vehicleId?: string, limit?: number): Promise<MaintenanceCalendarResponse> {
+export function getMaintenanceCalendar(
+  windowDays?: number,
+  vehicleId?: string,
+  limit?: number,
+  search?: string
+): Promise<MaintenanceCalendarResponse> {
   return apiRequest("/dashboard/maintenance-calendar", {
-    query: { window_days: windowDays, vehicle_id: vehicleId, limit },
+    query: { window_days: windowDays, vehicle_id: vehicleId, limit, search: search || undefined },
     schema: maintenanceCalendarResponseSchema,
   })
 }
 
-export function getFleetHealth(): Promise<FleetHealthResponse> {
-  return apiRequest("/dashboard/fleet-health", { schema: fleetHealthResponseSchema })
+export function getFleetHealth(search?: string): Promise<FleetHealthResponse> {
+  return apiRequest("/dashboard/fleet-health", { query: { search: search || undefined }, schema: fleetHealthResponseSchema })
 }
 
 // How many rows the dashboard's lists fetch (and render) at a time; "Load more" fetches the next page.
@@ -126,17 +131,18 @@ export function useFuelTrends(months?: number, vehicleId?: string) {
   return useQuery({ queryKey: dashboardKeys.fuelTrends(months, vehicleId), queryFn: () => getFuelTrends(months, vehicleId) })
 }
 
-export function useMaintenanceCalendar(windowDays?: number, options?: { vehicleId?: string; limit?: number }) {
+/** search: vehicle plate, make, model or driver name (matched by the backend). */
+export function useMaintenanceCalendar(windowDays?: number, options?: { vehicleId?: string; limit?: number; search?: string }) {
   return useQuery({
-    queryKey: dashboardKeys.maintenanceCalendar(windowDays, options?.vehicleId, options?.limit),
-    queryFn: () => getMaintenanceCalendar(windowDays, options?.vehicleId, options?.limit),
+    queryKey: dashboardKeys.maintenanceCalendar(windowDays, options?.vehicleId, options?.limit, options?.search),
+    queryFn: () => getMaintenanceCalendar(windowDays, options?.vehicleId, options?.limit, options?.search),
   })
 }
 
-export function useFleetHealth(options?: { enabled?: boolean }) {
+export function useFleetHealth(options?: { enabled?: boolean; search?: string }) {
   return useQuery({
-    queryKey: dashboardKeys.fleetHealth(),
-    queryFn: getFleetHealth,
+    queryKey: dashboardKeys.fleetHealth(options?.search),
+    queryFn: () => getFleetHealth(options?.search),
     enabled: options?.enabled ?? true,
   })
 }

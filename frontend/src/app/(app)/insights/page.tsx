@@ -5,6 +5,7 @@ import { ChartLine, ListChecks, Search, ShieldAlert } from "lucide-react"
 import Link from "next/link"
 import { useFleetHealth, useFuelTrends, useMaintenanceCalendar } from "@/lib/api/dashboard"
 import { useVehicles } from "@/lib/api/vehicles"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 import { formatInt, formatMoneyValue, formatNumberValue, parseDecimal } from "@/lib/api/decimal"
 import { formatDate, formatMonthLabel } from "@/lib/format-date"
 import { healthScoreLabel } from "@/lib/health-score"
@@ -55,9 +56,19 @@ export default function InsightsPage() {
   const needle = vehicleText.trim().toLowerCase()
   const selectedVehicle = needle ? vehicles.find((v) => v.plate_number.toLowerCase() === needle) : undefined
 
+  // Each list also has its own search (plate, make, model; the calendar also driver), matched by the backend.
+  const [calendarSearch, setCalendarSearch] = useState("")
+  const [healthSearch, setHealthSearch] = useState("")
+  const debouncedCalendarSearch = useDebouncedValue(calendarSearch.trim())
+  const debouncedHealthSearch = useDebouncedValue(healthSearch.trim())
+
   const fuelTrendsQuery = useFuelTrends(Number(months), selectedVehicle?.id)
-  const calendarQuery = useMaintenanceCalendar(Number(windowDays), { vehicleId: selectedVehicle?.id, limit: CALENDAR_LIMIT })
-  const fleetHealthQuery = useFleetHealth({ enabled: canRead })
+  const calendarQuery = useMaintenanceCalendar(Number(windowDays), {
+    vehicleId: selectedVehicle?.id,
+    limit: CALENDAR_LIMIT,
+    search: debouncedCalendarSearch,
+  })
+  const fleetHealthQuery = useFleetHealth({ enabled: canRead, search: debouncedHealthSearch })
 
   if (!canRead) {
     return (
@@ -203,10 +214,23 @@ export default function InsightsPage() {
           </ToggleGroup>
         }
       >
+        <Input
+          aria-label="Search the maintenance calendar"
+          placeholder="Search vehicle, plate or driver…"
+          value={calendarSearch}
+          onChange={(e) => setCalendarSearch(e.target.value)}
+          className="mb-3 max-w-xs"
+        />
         <QueryRegion
           query={calendarQuery}
           skeleton={<SkeletonPanel />}
-          empty={<EmptyState icon={ListChecks} title="Nothing due" description={`No service is due in the next ${windowDays} days.`} />}
+          empty={
+            <EmptyState
+              icon={ListChecks}
+              title={debouncedCalendarSearch ? "No matches" : "Nothing due"}
+              description={debouncedCalendarSearch ? "No due or overdue service matches that search." : `No service is due in the next ${windowDays} days.`}
+            />
+          }
           isEmpty={(items) => items.length === 0}
           areaLabel="the maintenance calendar"
         >
@@ -231,10 +255,17 @@ export default function InsightsPage() {
       </SectionPanel>
 
       <SectionPanel icon={ShieldAlert} title="Fleet health">
+        <Input
+          aria-label="Search fleet health"
+          placeholder="Search plate, make or model…"
+          value={healthSearch}
+          onChange={(e) => setHealthSearch(e.target.value)}
+          className="mb-3 max-w-xs"
+        />
         <QueryRegion
           query={fleetHealthQuery}
           skeleton={<SkeletonTable rows={5} columns={6} />}
-          empty={<EmptyState icon={ShieldAlert} title="No vehicles yet" description="Fleet health appears once vehicles are added." />}
+          empty={<EmptyState icon={ShieldAlert} title="No vehicles found" description="No vehicle matches this search, or none have been added yet." />}
           isEmpty={(rows) => rows.length === 0}
           areaLabel="fleet health"
         >

@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import InsightsPage from "@/app/(app)/insights/page"
@@ -7,10 +7,11 @@ import { renderWithProviders as render } from "../../../test-utils"
 vi.mock("@/lib/auth/use-current-user", () => ({ useCurrentUser: () => ({ role: "admin" }) }))
 const mockTrends = vi.fn()
 const mockCalendar = vi.fn()
+const mockHealth = vi.fn()
 vi.mock("@/lib/api/dashboard", () => ({
   useFuelTrends: (months: number, vehicleId?: string) => mockTrends(months, vehicleId),
   useMaintenanceCalendar: (windowDays: number, options?: unknown) => mockCalendar(windowDays, options),
-  useFleetHealth: () => ({ data: [], isPending: false, error: null, refetch: vi.fn() }),
+  useFleetHealth: (options?: unknown) => mockHealth(options),
 }))
 vi.mock("@/lib/api/vehicles", () => ({
   useVehicles: () => ({ data: [{ id: "veh-1", plate_number: "AB-1234", make: "Toyota", model: "Hilux" }, { id: "veh-2", plate_number: "CD-5678", make: "Ford", model: "Transit" }] }),
@@ -22,12 +23,26 @@ describe("InsightsPage vehicle filter", () => {
   beforeEach(() => {
     mockTrends.mockReturnValue(done([]))
     mockCalendar.mockReturnValue(done([]))
+    mockHealth.mockReturnValue(done([]))
   })
 
   it("starts on the whole fleet, with the calendar capped", () => {
     render(<InsightsPage />)
     expect(mockTrends).toHaveBeenLastCalledWith(24, undefined)
-    expect(mockCalendar).toHaveBeenLastCalledWith(30, { vehicleId: undefined, limit: 50 })
+    expect(mockCalendar).toHaveBeenLastCalledWith(30, { vehicleId: undefined, limit: 50, search: "" })
+    expect(mockHealth).toHaveBeenLastCalledWith({ enabled: true, search: "" })
+  })
+
+  it("sends the calendar search and the fleet-health search to the backend, each on its own", async () => {
+    const user = userEvent.setup()
+    render(<InsightsPage />)
+
+    await user.type(screen.getByLabelText("Search the maintenance calendar"), " Zainab ")
+    await user.type(screen.getByLabelText("Search fleet health"), "hilux")
+
+    await waitFor(() => expect(mockCalendar).toHaveBeenLastCalledWith(30, { vehicleId: undefined, limit: 50, search: "Zainab" }))
+    await waitFor(() => expect(mockHealth).toHaveBeenLastCalledWith({ enabled: true, search: "hilux" }))
+    expect(mockTrends).toHaveBeenLastCalledWith(24, undefined) // the fuel trend is not touched by these searches
   })
 
   it("narrows both the fuel trend and the calendar to the vehicle whose plate is typed, and clears", async () => {
@@ -36,7 +51,7 @@ describe("InsightsPage vehicle filter", () => {
 
     await user.type(screen.getByLabelText("Filter by vehicle"), "cd-5678")
     expect(mockTrends).toHaveBeenLastCalledWith(24, "veh-2")
-    expect(mockCalendar).toHaveBeenLastCalledWith(30, { vehicleId: "veh-2", limit: 50 })
+    expect(mockCalendar).toHaveBeenLastCalledWith(30, { vehicleId: "veh-2", limit: 50, search: "" })
     expect(screen.getByText(/Showing CD-5678/)).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Clear" }))
