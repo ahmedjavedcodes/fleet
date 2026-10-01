@@ -61,10 +61,10 @@ def _text(messages) -> str:
 def test_the_planner_is_told_a_photo_is_attached_and_how_to_route_it() -> None:
     llm, _ = _run(_call("fuel", {"document_type": "receipt"}), image_bytes=b"\xff\xd8", mime_type="image/jpeg")
     planning = _text(llm.seen[0])
-    assert "attached a photo" in planning and "receipt" in planning and "incident_report" in planning
+    assert "A photo is attached" in planning and "receipt" in planning and "incident_report" in planning
 
     without, _ = _run(_call("fuel", {"query_entity": "fuel_logs"}), message="Show fuel logs")
-    assert "attached a photo" not in _text(without.seen[0])
+    assert "A photo is attached" not in _text(without.seen[0])
 
 
 def test_image_and_its_url_reach_the_incident_agent() -> None:

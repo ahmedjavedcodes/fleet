@@ -101,7 +101,7 @@ def test_ac1_write_invalidates_cached_reads_for_own_and_insights_namespace() -> 
     # all three agent calls actually reached the sub-agent runner -- the
     # third dashboard read was NOT served from the (now-invalidated) cache.
     assert len(runner.run_calls) == 3
-    assert "total_vehicles': 11" in third.state["scratchpad"][0]["observation"]
+    assert "total_vehicles\":11" in third.state["scratchpad"][0]["observation"]
 
 
 def test_read_only_calls_never_trigger_invalidation() -> None:

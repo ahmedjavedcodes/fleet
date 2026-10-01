@@ -92,10 +92,9 @@ def test_the_system_prompt_maps_every_sub_agent_to_its_real_tool_name() -> None:
 
 def test_the_strict_separation_rule_and_service_due_routing_are_stated() -> None:
     prompt = _system_prompt(documents=True)
-    assert "structured operational data, live database records and fleet metrics MUST ALWAYS be routed to the six sub-agents" in prompt
-    assert "Never use search_documents for vehicles, odometers, fuel logs, costs, service due dates" in prompt
+    assert "Vehicles, odometers, fuel, costs, service dates, incidents, assignments, stock and metrics always go to the six tools" in prompt
     assert "which vehicles are due or overdue for service (query_entity=service_due)" in prompt
-    assert "manufacturer manuals" in prompt and "safety protocols" in prompt
+    assert "manuals, policies and safety protocols" in prompt
 
 
 def test_document_search_rules_appear_only_when_the_tool_is_bound() -> None:

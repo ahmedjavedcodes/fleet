@@ -380,7 +380,7 @@ def test_compact_tool_schemas_keep_the_contract_and_stay_within_the_token_budget
     assert tools["search_documents"]["parameters"]["required"] == ["query"]
 
     tokens = len(tiktoken.get_encoding("cl100k_base").encode(encoded))
-    assert tokens < 3300, tokens  # was 3,911 before compaction
+    assert tokens < 2700, tokens  # was 3,911, then 3,195
 
 
 def test_with_the_llm_down_the_fuel_question_is_answered_as_a_calculated_markdown_summary() -> None:

@@ -275,7 +275,7 @@ def test_the_planning_prompt_carries_the_same_discipline() -> None:
     llm = _LLM(AIMessage(content="ok"))
     _session(llm, _Retriever()).run("What is our fuel card policy?")
 
-    assert "extract only the specific fact asked" in _text(llm.seen[0])
+    assert "extract only the fact asked" in _text(llm.seen[0])
 
 
 def test_passages_reach_the_model_as_evidence_with_their_section_and_source() -> None:

@@ -79,7 +79,7 @@ from memory.service import AgentMemory  # noqa: E402
 from orchestrator.cache import ExecutionCache  # noqa: E402
 from orchestrator.callbacks import ORCHESTRATOR_AGENT, FleetLiveObserver  # noqa: E402
 from orchestrator.fact_check import _default_fact_checker_llm  # noqa: E402
-from orchestrator.graph import OrchestratorDeps, get_shared_llm  # noqa: E402
+from orchestrator.graph import OrchestratorDeps, get_shared_llm, get_synthesis_llm  # noqa: E402
 from orchestrator.rag_eval import RagTriadEvaluator  # noqa: E402
 from orchestrator.session import OrchestratorSession, TurnResult  # noqa: E402
 from orchestrator.webhooks import AlertDispatcher  # noqa: E402
@@ -195,6 +195,7 @@ def _build_deps(context: AgentContext) -> OrchestratorDeps:
         webhooks=AlertDispatcher(),
         fact_checker_llm=_fact_checker_llm(),
         guard_llm=_guard_llm(),
+        synthesis_llm=get_synthesis_llm(),
         documents=_DOCUMENT_RETRIEVER,
         rag_evaluator=_RAG_EVALUATOR,
     )

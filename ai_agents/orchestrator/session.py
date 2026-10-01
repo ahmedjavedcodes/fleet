@@ -32,7 +32,7 @@ from core.llm_failover import BudgetExhausted, InvalidModelOutput
 from core.tool_markup import strip_tool_markup
 from orchestrator.offline import answer_offline
 
-from orchestrator.graph import OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
+from orchestrator.graph import HISTORY_WINDOW, OrchestratorDeps, _format_observation, get_compiled_orchestrator_graph
 from orchestrator.security import DEFAULT_SECURITY_CONFIG, SecurityConfig, scan_user_input
 from orchestrator.state import OrchestratorState
 from orchestrator.tool_errors import tool_failure_observation
@@ -188,7 +188,9 @@ class OrchestratorSession:
             self.state = {**self.state, "chat_history": chat_history}
             return TurnResult(status="halted", final_response=violation.rejection_message, hitl_state=None, state=self.state)
 
-        chat_history = list(self.state.get("chat_history") or []) + [{"role": "user", "content": message}]
+        # Sliding window: the model sees only the last HISTORY_WINDOW messages anyway (older context lives in the
+        # memory summary), so the in-process copy is cut to twice that instead of growing for the whole session.
+        chat_history = (list(self.state.get("chat_history") or []) + [{"role": "user", "content": message}])[-2 * HISTORY_WINDOW :]
         input_state = {
             **self.state,
             "chat_history": chat_history,
