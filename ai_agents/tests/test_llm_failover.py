@@ -110,7 +110,7 @@ def test_both_spellings_of_the_openrouter_key_are_accepted(monkeypatch) -> None:
     assert openrouter_api_key() == "sk-or-test"
 
 
-def test_default_chain_is_two_free_groq_models_then_cheap_openrouter_then_a_free_model(monkeypatch) -> None:
+def test_default_chain_is_openrouter_first_then_two_free_groq_models_then_a_free_model(monkeypatch) -> None:
     import core.llm_failover as lf
 
     monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
@@ -120,12 +120,12 @@ def test_default_chain_is_two_free_groq_models_then_cheap_openrouter_then_a_free
     monkeypatch.setattr(lf, "_ollama_model", lambda: None)
     llm = get_resilient_chat_model(groq_model="openai/gpt-oss-20b")
     assert [m.model_name for m in llm.models] == [
-        "openai/gpt-oss-20b", "openai/gpt-oss-120b", "deepseek/deepseek-v4-flash", "nvidia/nemotron-3.5-lightning:free",
+        "deepseek/deepseek-v4-flash", "openai/gpt-oss-20b", "openai/gpt-oss-120b", "nvidia/nemotron-3.5-lightning:free",
     ]
-    assert [is_paid(m) for m in llm.models] == [False, False, True, False]  # only the DeepSeek hop can spend money
+    assert [is_paid(m) for m in llm.models] == [True, False, False, False]  # only the DeepSeek hop can spend money
     assert not any("claude" in m.model_name for m in llm.models)
     # Tailored per-provider timeouts, and no SDK-internal retries so failover is immediate.
-    assert [m.request_timeout for m in llm.models] == [4, 4, 10, 8]
+    assert [m.request_timeout for m in llm.models] == [10, 4, 4, 8]
     assert all(m.max_retries == 0 for m in llm.models)
 
     monkeypatch.setenv("OPENROUTER_FREE_MODEL", "")  # empty disables the free last resort
@@ -327,13 +327,13 @@ def test_gpt_oss_models_run_at_low_reasoning_effort_on_both_providers(monkeypatc
     monkeypatch.setenv("OPENROUTER_CHEAP_MODEL", "openai/gpt-oss-20b")
     monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
     monkeypatch.setattr(lf, "_ollama_model", lambda: None)
-    groq20, groq120, cheap, free = get_resilient_chat_model(groq_model="openai/gpt-oss-20b").models
+    cheap, groq20, groq120, free = get_resilient_chat_model(groq_model="openai/gpt-oss-20b").models
     assert groq20.reasoning_effort == "low" and groq120.reasoning_effort == "low"
     assert cheap.extra_body == {"reasoning": {"effort": "low"}}  # OpenRouter's spelling of the same knob
     assert free.extra_body is None  # not a gpt-oss model: no such parameter
 
     monkeypatch.setenv("LLM_REASONING_EFFORT", "")
-    assert get_resilient_chat_model(groq_model="openai/gpt-oss-20b").models[0].reasoning_effort is None
+    assert get_resilient_chat_model(groq_model="openai/gpt-oss-20b").models[1].reasoning_effort is None
 
 
 def _reply(content="ok", finish="stop"):

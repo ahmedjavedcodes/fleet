@@ -473,3 +473,22 @@ def test_extraction_reads_the_photo_through_the_shared_chain(monkeypatch) -> Non
 
     assert (result.liters, result.total_cost) == (50, 14000) and seen["schema"] is FuelReceiptExtraction
     assert seen["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_a_structured_reply_cut_off_mid_json_hands_over_to_the_next_model() -> None:
+    from pydantic import BaseModel, ValidationError
+
+    class Receipt(BaseModel):
+        station: str
+
+    try:
+        Receipt.model_validate_json('{\n  "station_')
+    except ValidationError as exc:
+        truncated = exc
+    cut_off = _StructuredHop("qwen", error=truncated)
+    good = _StructuredHop("gemini", {"raw": AIMessage(content=""), "parsed": {"station": "PGL"}, "parsing_error": None})
+
+    llm = FailoverChatModel(cut_off, good)
+
+    assert llm.with_structured_output(dict).invoke(["read this"]) == {"station": "PGL"}
+    assert (cut_off.calls, good.calls) == (1, 1)

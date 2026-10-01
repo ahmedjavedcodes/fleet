@@ -193,3 +193,35 @@ describe("HaltedCard", () => {
     expect(screen.getByText("Needed a vehicle ID that wasn't provided.")).toBeInTheDocument()
   })
 })
+
+describe("ApprovalCard details", () => {
+  it("shows every row of the pending write, not just the tool name", () => {
+    render(
+      <ApprovalCard
+        hitlState={{
+          agent_name: "maintenance",
+          thread_id: "t",
+          approval_prompt: "Record this maintenance entry?",
+          summary: [
+            { label: "Vehicle", value: "CD-5678" },
+            { label: "Service scale", value: "Major" },
+            { label: "Description", value: "Brake service & filter replacement" },
+            { label: "Total cost", value: "Rs 35,000" },
+          ],
+        }}
+        onApprove={vi.fn()}
+        onModify={vi.fn()}
+        onReject={vi.fn()}
+      />
+    )
+    const details = screen.getByLabelText("Details to be recorded")
+    expect(details).toHaveTextContent("VehicleCD-5678")
+    expect(details).toHaveTextContent("Total costRs 35,000")
+    expect(details).toHaveTextContent("Brake service & filter replacement")
+  })
+
+  it("renders no details block when there is no summary", () => {
+    render(<ApprovalCard hitlState={{ agent_name: "assignment", thread_id: "t" }} onApprove={vi.fn()} onModify={vi.fn()} onReject={vi.fn()} />)
+    expect(screen.queryByLabelText("Details to be recorded")).not.toBeInTheDocument()
+  })
+})

@@ -1,13 +1,13 @@
-"""Multi-provider chat models: an ordered chain, Groq first, then OpenRouter models.
+"""Multi-provider chat models: an ordered chain, OpenRouter first, then Groq.
 
 The orchestrator, fact-checker and memory summarizer all run through this, so a provider
 outage, an exhausted quota (Groq's free tier caps tokens per day) or an empty credit balance
 degrades to the next model instead of failing the user's turn.
 
-Default chain, cheapest and fastest first (an optional local Ollama tier goes in front):
-  Groq gpt-oss-20b       free, ~1 s, 4 s timeout           }  each Groq model has its OWN daily
+Default chain (an optional local Ollama tier goes in front):
+  OpenRouter deepseek-v4-flash   primary: $0.08/$0.16 per M, ~3 s, 10 s timeout (budget-gated)
+  Groq gpt-oss-20b       free, ~1 s, 4 s timeout           }  backup; each Groq model has its OWN daily
   Groq gpt-oss-120b      free, ~1.3 s, 4 s timeout         }  quota, so one running dry isn't an outage
-  OpenRouter deepseek-v4-flash   $0.08/$0.16 per M, ~3 s, 10 s timeout
   a free OpenRouter model        last resort, 8 s timeout
 Claude (premium) is opt-in only (OPENROUTER_PREMIUM_MODEL / ORCHESTRATOR_PROVIDER=openrouter).
 If every model fails the caller can still answer plain reads deterministically
@@ -37,6 +37,8 @@ from functools import lru_cache
 from typing import Any, Callable
 
 import openai
+from langchain_core.exceptions import OutputParserException
+from pydantic import ValidationError
 
 import httpx
 
@@ -232,7 +234,7 @@ class FailoverChatModel:
         does not parse into `schema` hands over to the next model. Returns the parsed object."""
         return _StructuredFailover(self, [m.with_structured_output(schema, include_raw=True, **kwargs) for m in self.models])
 
-    def _run(self, runnables: list[Any], call: Callable[[Any], Any], *, recover_calls: bool = False) -> Any:
+    def _run(self, runnables: list[Any], call: Callable[[Any], Any], *, recover_calls: bool = False, extra_errors: tuple[type[BaseException], ...] = ()) -> Any:
         now = self._clock()
         budget_open = get_tracker().paid_allowed()
         allowed = [i for i in range(len(runnables)) if budget_open or not is_paid(self.models[i])]
@@ -247,7 +249,7 @@ class FailoverChatModel:
             started = self._clock()
             try:
                 result = call(runnables[i])
-            except _FAILOVER_ERRORS as exc:
+            except (*_FAILOVER_ERRORS, *extra_errors) as exc:
                 last_error = exc
                 unreachable = isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError))
                 self._stats[i]["failures"] += 1
@@ -322,7 +324,10 @@ class _StructuredFailover:
         self._parent, self._bound = parent, bound
 
     def invoke(self, messages: Any, **kwargs: Any) -> Any:
-        result = self._parent._run(self._bound, lambda model: model.invoke(messages, **kwargs))
+        # A reply cut off mid-JSON surfaces as a parse error, not an API error: that hop failed, try the next.
+        result = self._parent._run(
+            self._bound, lambda model: model.invoke(messages, **kwargs), extra_errors=(ValidationError, OutputParserException)
+        )
         return result["parsed"]
 
 
@@ -362,13 +367,14 @@ def get_resilient_chat_model(*, groq_model: str, claude_only: bool = False, **ov
         local = _ollama_model()
         if local:
             add(LLMProvider.LOCAL_LLAMA, OLLAMA_TIMEOUT_SECONDS, model=local)
+        # OpenRouter is the primary (budget-gated by core/llm_budget.py); the free Groq models are the backup.
+        if has_openrouter:
+            cheap = os.environ.get("OPENROUTER_CHEAP_MODEL", DEFAULT_CHEAP_OPENROUTER_MODEL).strip()
+            add(LLMProvider.CLAUDE_OPENROUTER, OPENROUTER_TIMEOUT_SECONDS, model=cheap, **_reasoning_kwargs(LLMProvider.CLAUDE_OPENROUTER, cheap))
         add(LLMProvider.GROQ, GROQ_TIMEOUT_SECONDS, model=groq_model, **_reasoning_kwargs(LLMProvider.GROQ, groq_model))
         second = os.environ.get("GROQ_SECOND_MODEL", DEFAULT_GROQ_SECOND_MODEL).strip()
         if second and second != groq_model:
             add(LLMProvider.GROQ, GROQ_TIMEOUT_SECONDS, model=second, **_reasoning_kwargs(LLMProvider.GROQ, second))
-        if has_openrouter:
-            cheap = os.environ.get("OPENROUTER_CHEAP_MODEL", DEFAULT_CHEAP_OPENROUTER_MODEL).strip()
-            add(LLMProvider.CLAUDE_OPENROUTER, OPENROUTER_TIMEOUT_SECONDS, model=cheap, **_reasoning_kwargs(LLMProvider.CLAUDE_OPENROUTER, cheap))
     if has_openrouter:
         free = os.environ.get("OPENROUTER_FREE_MODEL", DEFAULT_FREE_OPENROUTER_MODEL).strip()
         if free:

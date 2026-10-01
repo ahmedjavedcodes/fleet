@@ -180,13 +180,18 @@ def extract_fuel_receipt(image_bytes: bytes, mime_type: str = "image/jpeg") -> F
     derives it from total_cost / liters instead of asking the model for it.
     """
     instruction = (
-        "Read this fuel receipt photo and extract: the fuel station's name, "
-        "the receipt date (as YYYY-MM-DD), liters filled, total cost paid, "
-        "the vehicle's odometer reading if shown, the vehicle's plate number "
-        "if shown, the slip / receipt / transaction ID, the purchase order (PO) "
-        "number, the payment method (e.g. cash, card, fuel_card), and the card "
-        "used (last digits or card name only -- never a full card number). "
-        "Leave any field you cannot clearly read as null -- never guess."
+        "Read this fuel receipt photo and copy these fields exactly as printed, character for character: "
+        "station_name (the outlet's name, e.g. 'Mehar Petroleum Okara', not the brand banner); "
+        "receipt_date as ISO YYYY-MM-DD -- a two-digit year is 20YY, so 'DATE: Sep 24, 26' is 2026-09-24; "
+        "product (the fuel grade, e.g. 'Hi-Super'); "
+        "liters (the quantity, e.g. 39.20 from 'Qty: 39.20 Ltr'); "
+        "price_per_liter (the unit price, e.g. 391.96 from 'Price: 391.96 Rs'); "
+        "total_cost (the amount paid, e.g. 15365.00 from 'AMOUNT ... Rs 15365.00'); "
+        "the vehicle's odometer reading if shown; the vehicle's plate number if shown; "
+        "the slip / receipt / transaction ID (TID, invoice or slip number); the purchase order (PO) number; "
+        "the payment method (e.g. cash, card, fuel_card); and the card used (last digits or card name only -- "
+        "never a full card number). Numbers are plain numbers: no currency symbol and no thousands separators. "
+        "Handwriting beside the slip is not part of it. Leave any field you cannot clearly read as null -- never guess."
     )
     return _extract(image_bytes, mime_type, instruction, FuelReceiptExtraction, document_label="fuel receipt")
 

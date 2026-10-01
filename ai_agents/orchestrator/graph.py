@@ -24,6 +24,7 @@ import re
 from functools import lru_cache
 import time
 import uuid
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +38,8 @@ from orchestrator.callbacks import FleetLiveObserver
 from orchestrator.fact_check import MAX_FACT_CHECK_RETRIES, check_response_against_scratchpad, _scratchpad_to_text
 from orchestrator.normalization import normalize_tool_args
 from orchestrator.registry import SUB_AGENT_REGISTRY
+from orchestrator.approval_summary import approval_question, summarize_pending
+from orchestrator.required_fields import fill_defaults, missing_fields, needs_input_observation, needs_user_input, not_run_observation
 from orchestrator.retry import ToolValidationError, validate_tool_args
 from orchestrator.runner import RunResult, SubAgentRunner
 from memory.service import AgentMemory
@@ -138,7 +141,9 @@ _SYNTHESIS_PROMPT = (
     "vehicles or drivers were just to find IDs, so never report their specs, VIN, status or IDs "
     "unless requested. Use **bold** key figures and short bullets, under 150 words. No reasoning, "
     "self-corrections, raw records or field names -- final answer only. If a step halted, failed "
-    "or returned no data, say so in one plain sentence; never claim success for a failed step."
+    "or returned no data, say so in one plain sentence; never claim success for a failed step. If a tool "
+    "result says NOT RUN or needs more information from the user, ask the user for exactly those items in one "
+    "short question, and say nothing was logged yet."
 )
 _STRICT_RETRY_SUFFIX = (
     " Your previous draft contained internal reasoning or raw data. Output ONLY the final answer, "
@@ -543,6 +548,20 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         )
                     continue  # sub-agent runner is entirely bypassed on a cache hit
 
+            if not is_read_only:
+                # Before ANY write: what is required must be in the call or the user's attachment. If not, ask the
+                # user in chat -- never run the sub-agent and never show an approval card with blanks.
+                validated_dict = fill_defaults(agent_name, validated_dict, now=datetime.now())
+                missing = missing_fields(agent_name, validated_dict, has_image=state.get("_pending_image_bytes") is not None)
+                if missing:
+                    observation = not_run_observation(agent_name, missing)
+                    scratchpad.append({"hop": hop, "tool": agent_name, "args": normalized_args, "observation": observation})
+                    if deps.observer is not None:
+                        deps.observer.record_tool_result(
+                            call_id, agent_name, normalized_args, attempt=attempt, status="halted", observation_text=observation
+                        )
+                    continue
+
             sub_state: dict[str, Any] = {
                 "token": auth_context.get("token"),
                 **validated_dict,
@@ -598,6 +617,8 @@ def _make_execute_tool_node(deps: OrchestratorDeps):
                         "tool_name": agent_name,
                         "pending_node": result.pending_node or "",
                         "state": result.state,
+                        "summary": summarize_pending(agent_name, result.state),
+                        **({"approval_prompt": q} if (q := approval_question(agent_name)) else {}),
                     },
                 }
 
@@ -666,7 +687,10 @@ def _is_read_only_call(agent_name: str, validated_args: dict[str, Any]) -> bool:
 
 def _format_observation(agent_name: str, result: RunResult) -> str:
     if result.status == "halted":
-        return f"{agent_name} halted: {result.state.get('halt_reason')}"
+        reason = result.state.get("halt_reason")
+        if needs_user_input(reason):
+            return needs_input_observation(agent_name, str(reason))
+        return f"{agent_name} halted: {reason}"
     for key in ("created_record", "query_result", "audit_result", "updated_parts", "fleet_health", "cost_correlation"):
         if result.state.get(key) is not None:
             return f"{agent_name} succeeded: {key}={result.state[key]!r}"

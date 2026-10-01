@@ -169,8 +169,10 @@ class TripLogCreateInput(BaseModel):
 class FuelReceiptExtraction(BaseModel):
     station_name: str | None = None
     receipt_date: date | None = None
+    product: str | None = None  # the fuel grade as printed, e.g. "Hi-Super"
     liters: float | None = None
-    total_cost: float | None = None
+    price_per_liter: float | None = None  # as printed on the slip, e.g. 391.96
+    total_cost: float | None = None  # the amount paid, e.g. 15365.00
     odometer: int | None = None
     plate_number: str | None = None
     slip_id: str | None = None

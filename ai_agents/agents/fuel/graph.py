@@ -118,11 +118,15 @@ def classify_intent(state: FuelAgentState) -> FuelAgentState:
         # Text-only fuel log (no receipt photo): every FuelLogCreateInput field must
         # already be in fuel_fields. Validate up front so a missing/extra key halts
         # with a readable reason instead of a traceback at the create node.
+        fields = dict(state["fuel_fields"])
+        amounts = _resolve_amounts(fields, {})  # two of litres / price / total give the third
+        if amounts is not None:
+            fields["liters_filled"], fields["price_per_liter"], fields["total_cost"] = amounts
         try:
-            FuelLogCreateInput(**state["fuel_fields"])
+            FuelLogCreateInput(**fields)
         except (ValidationError, TypeError) as exc:
             return {**state, "intent": "fuel_log", "stage": "halted", "halt_reason": f"Invalid fuel_fields: {exc}"}
-        return {**state, "intent": "fuel_log", "sanitized": dict(state["fuel_fields"]), "stage": "creating"}
+        return {**state, "intent": "fuel_log", "sanitized": fields, "stage": "creating"}
     return {**state, "intent": "query", "stage": "querying"}
 
 
@@ -192,7 +196,7 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _resolve_amounts(stated: dict[str, Any], extracted: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal] | None:
+def _resolve_amounts(stated: dict[str, Any], extracted: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal] | None:  # noqa: C901
     """(liters, price_per_liter, total_cost) for the log, or None if they cannot be determined.
 
     What the user states in chat beats what OCR read off the photo, and the three figures must agree with each
@@ -203,6 +207,9 @@ def _resolve_amounts(stated: dict[str, Any], extracted: dict[str, Any]) -> tuple
     given = [v is not None for v in (liters, price, total)].count(True)
     if given == 0:
         liters, total = receipt_liters, receipt_total
+        printed = _decimal(extracted.get("price_per_liter"))
+        if printed and liters and total and abs(printed * liters - total) <= total * Decimal("0.02"):
+            price = printed  # the unit price printed on the slip, when it agrees with litres x price = total
     elif given == 1:
         if liters is not None:
             total = receipt_total
@@ -241,7 +248,8 @@ def sanitize(state: FuelAgentState) -> FuelAgentState:
         "liters_filled": liters_d,
         "price_per_liter": price_per_liter,
         "total_cost": total_cost_d,
-        "notes": f"Station: {station_name}" if station_name else None,
+        "notes": "; ".join(filter(None, [f"Product: {extracted.get('product')}" if extracted.get("product") else None,
+                                        f"Station: {station_name}" if station_name else None])) or None,
         "fuel_station_name": station_name or None,
         "slip_id": (extracted.get("slip_id") or "").strip() or None,
         "po_number": (extracted.get("po_number") or "").strip() or None,

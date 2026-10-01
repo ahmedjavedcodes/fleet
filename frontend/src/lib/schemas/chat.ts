@@ -32,6 +32,8 @@ export const hitlStateSchema = z.object({
   pending_node: z.string().optional(),
   state: z.record(z.string(), z.unknown()).optional(),
   approval_prompt: z.string().optional(),
+  // What the pending write will record, as labelled rows (vehicle, service type, cost ...).
+  summary: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
 })
 export type HitlState = z.infer<typeof hitlStateSchema>
 

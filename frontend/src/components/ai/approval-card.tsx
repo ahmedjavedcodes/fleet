@@ -38,6 +38,16 @@ export function ApprovalCard({
     <div className="space-y-3 rounded-xl border border-warning-border bg-warning-soft p-4">
       <p className="text-sm font-medium text-foreground">{hitlState.approval_prompt ?? "This action needs your approval."}</p>
       <p className="text-caption text-muted-foreground">{hitlState.tool_name ?? hitlState.agent_name}</p>
+      {hitlState.summary && hitlState.summary.length > 0 ? (
+        <dl aria-label="Details to be recorded" className="grid grid-cols-1 gap-x-4 gap-y-1.5 rounded-lg border border-warning-border bg-card p-3 text-sm sm:grid-cols-[max-content_1fr]">
+          {hitlState.summary.map((row) => (
+            <div key={row.label} className="contents">
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="font-medium break-words text-foreground">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
 
       {modifying ? (
         <div className="space-y-2">

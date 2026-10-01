@@ -49,7 +49,7 @@ def _run(tool_call, *, photo=True):
     return runner.calls
 
 
-FUEL_FIELDS = {"vehicle_id": "v1", "liters_filled": 50, "price_per_liter": 280}
+FUEL_FIELDS = {"vehicle_id": "v1", "liters_filled": 50, "price_per_liter": 280, "date": "2026-09-30", "odometer_reading": 46500}
 
 
 def test_a_fuel_log_with_a_photo_attached_is_sent_to_the_vision_model_without_the_model_asking() -> None:
