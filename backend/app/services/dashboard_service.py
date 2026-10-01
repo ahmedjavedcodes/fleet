@@ -64,13 +64,14 @@ def get_summary(db: Session, org_id: uuid.UUID) -> DashboardSummaryResponse:
     )
 
 
-def get_fuel_trends(db: Session, org_id: uuid.UUID, months: int = 12) -> list[FuelTrendPoint]:
-    rows = fuel_service.get_fuel_cost_trend(db, org_id, months=months)
+def get_fuel_trends(db: Session, org_id: uuid.UUID, months: int = 12, vehicle_id: uuid.UUID | None = None) -> list[FuelTrendPoint]:
+    rows = fuel_service.get_fuel_cost_trend(db, org_id, months=months, vehicle_id=vehicle_id)
     return [FuelTrendPoint(month=month, total_cost=total_cost, avg_cost_per_km=avg) for month, total_cost, avg in rows]
 
 
 def get_maintenance_calendar_page(
-    db: Session, org_id: uuid.UUID, window_days: int = 30, *, limit: int | None = None, offset: int = 0, search: str | None = None
+    db: Session, org_id: uuid.UUID, window_days: int = 30, *, limit: int | None = None, offset: int = 0, search: str | None = None,
+    vehicle_id: uuid.UUID | None = None,
 ) -> tuple[list[MaintenanceCalendarItem], int]:
     """
     Overdue items (unfiltered by window -- an item never drops off for being
@@ -83,7 +84,7 @@ def get_maintenance_calendar_page(
     Ordered latest due date first, and paged IN SQL: returns
     (the requested page, the total across all pages). limit=None returns everything.
     """
-    rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset, search=search)
+    rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset, search=search, vehicle_id=vehicle_id)
     return [
         MaintenanceCalendarItem(
             vehicle_id=vehicle_id,

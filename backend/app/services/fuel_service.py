@@ -432,7 +432,9 @@ def get_monthly_summary(db: Session, org_id: uuid.UUID, month: str | None) -> Fu
     )
 
 
-def get_fuel_cost_trend(db: Session, org_id: uuid.UUID, months: int = 12) -> list[tuple[str, Decimal, Decimal | None]]:
+def get_fuel_cost_trend(
+    db: Session, org_id: uuid.UUID, months: int = 12, vehicle_id: uuid.UUID | None = None
+) -> list[tuple[str, Decimal, Decimal | None]]:
     """
     Fleet-wide monthly totals for the trailing `months` months (oldest first,
     ending with the current month). Every month appears even with zero fuel
@@ -462,11 +464,14 @@ def get_fuel_cost_trend(db: Session, org_id: uuid.UUID, months: int = 12) -> lis
     avg_expr = cast(func.avg(FuelLog.cost_per_km), Numeric(10, 4))
     month_expr = func.to_char(FuelLog.date, "YYYY-MM")
 
-    rows = db.execute(
+    stmt = (
         select(month_expr.label("month"), func.coalesce(func.sum(FuelLog.total_cost), 0), avg_expr)
         .where(FuelLog.organization_id == org_id, FuelLog.is_deleted.is_(False), FuelLog.date >= earliest_start)
         .group_by(month_expr)
-    ).all()
+    )
+    if vehicle_id is not None:  # one vehicle's logs only
+        stmt = stmt.where(FuelLog.vehicle_id == vehicle_id)
+    rows = db.execute(stmt).all()
     by_month = {month: (total_cost, avg_cost_per_km) for month, total_cost, avg_cost_per_km in rows}
 
     return [(key, *by_month.get(key, (Decimal("0"), None))) for key in month_keys]

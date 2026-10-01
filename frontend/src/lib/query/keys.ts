@@ -120,14 +120,14 @@ export const driverReportKeys = {
 export const dashboardKeys = {
   all: ["dashboard"] as const,
   summary: () => [...dashboardKeys.all, "summary"] as const,
-  fuelTrends: (months?: number) =>
+  fuelTrends: (months?: number, vehicleId?: string) =>
     months === undefined
       ? ([...dashboardKeys.all, "fuel-trends"] as const)
-      : ([...dashboardKeys.all, "fuel-trends", months] as const),
-  maintenanceCalendar: (windowDays?: number) =>
+      : ([...dashboardKeys.all, "fuel-trends", months, vehicleId ?? ""] as const),
+  maintenanceCalendar: (windowDays?: number, vehicleId?: string, limit?: number) =>
     windowDays === undefined
       ? ([...dashboardKeys.all, "maintenance-calendar"] as const)
-      : ([...dashboardKeys.all, "maintenance-calendar", windowDays] as const),
+      : ([...dashboardKeys.all, "maintenance-calendar", windowDays, vehicleId ?? "", limit ?? 0] as const),
   fleetHealth: () => [...dashboardKeys.all, "fleet-health"] as const,
   // The paged (load-more) variants the dashboard itself uses. Distinct keys: an infinite query's cache holds pages,
   // not a flat list, so it must never share a key with the plain query above.

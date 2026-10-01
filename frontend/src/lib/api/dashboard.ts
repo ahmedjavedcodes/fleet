@@ -24,13 +24,14 @@ export function getDashboardSummary(): Promise<DashboardSummaryResponse> {
   return apiRequest("/dashboard/summary", { schema: dashboardSummaryResponseSchema })
 }
 
-export function getFuelTrends(months?: number): Promise<FuelTrendsResponse> {
-  return apiRequest("/dashboard/fuel-trends", { query: { months }, schema: fuelTrendsResponseSchema })
+export function getFuelTrends(months?: number, vehicleId?: string): Promise<FuelTrendsResponse> {
+  return apiRequest("/dashboard/fuel-trends", { query: { months, vehicle_id: vehicleId }, schema: fuelTrendsResponseSchema })
 }
 
-export function getMaintenanceCalendar(windowDays?: number): Promise<MaintenanceCalendarResponse> {
+/** vehicleId narrows it to one vehicle; limit caps the rows (latest due first). */
+export function getMaintenanceCalendar(windowDays?: number, vehicleId?: string, limit?: number): Promise<MaintenanceCalendarResponse> {
   return apiRequest("/dashboard/maintenance-calendar", {
-    query: { window_days: windowDays },
+    query: { window_days: windowDays, vehicle_id: vehicleId, limit },
     schema: maintenanceCalendarResponseSchema,
   })
 }
@@ -121,14 +122,14 @@ export function useDashboardSummary() {
   return useQuery({ queryKey: dashboardKeys.summary(), queryFn: getDashboardSummary })
 }
 
-export function useFuelTrends(months?: number) {
-  return useQuery({ queryKey: dashboardKeys.fuelTrends(months), queryFn: () => getFuelTrends(months) })
+export function useFuelTrends(months?: number, vehicleId?: string) {
+  return useQuery({ queryKey: dashboardKeys.fuelTrends(months, vehicleId), queryFn: () => getFuelTrends(months, vehicleId) })
 }
 
-export function useMaintenanceCalendar(windowDays?: number) {
+export function useMaintenanceCalendar(windowDays?: number, options?: { vehicleId?: string; limit?: number }) {
   return useQuery({
-    queryKey: dashboardKeys.maintenanceCalendar(windowDays),
-    queryFn: () => getMaintenanceCalendar(windowDays),
+    queryKey: dashboardKeys.maintenanceCalendar(windowDays, options?.vehicleId, options?.limit),
+    queryFn: () => getMaintenanceCalendar(windowDays, options?.vehicleId, options?.limit),
   })
 }
 

@@ -4,6 +4,7 @@ import { useState } from "react"
 import { ChartLine, ListChecks, Search, ShieldAlert } from "lucide-react"
 import Link from "next/link"
 import { useFleetHealth, useFuelTrends, useMaintenanceCalendar } from "@/lib/api/dashboard"
+import { useVehicles } from "@/lib/api/vehicles"
 import { formatInt, formatMoneyValue, formatNumberValue, parseDecimal } from "@/lib/api/decimal"
 import { formatDate, formatMonthLabel } from "@/lib/format-date"
 import { healthScoreLabel } from "@/lib/health-score"
@@ -27,6 +28,7 @@ import { QueryRegion } from "@/components/states/query-boundary"
 
 const MONTH_OPTIONS = ["6", "12", "24"] as const
 const WINDOW_OPTIONS = ["30", "60", "90"] as const
+const CALENDAR_LIMIT = 50 // latest due first; the full list is on the Maintenance page
 
 function SignalCell({ value }: { value: number | null }) {
   return value === null ? <span className="text-muted-foreground">n/a</span> : <span>{formatInt(value)}</span>
@@ -46,8 +48,15 @@ export default function InsightsPage() {
   const [windowDays, setWindowDays] = useState<(typeof WINDOW_OPTIONS)[number]>("30")
   const [nlQuery, setNlQuery] = useState("")
 
-  const fuelTrendsQuery = useFuelTrends(Number(months))
-  const calendarQuery = useMaintenanceCalendar(Number(windowDays))
+  // Narrow the fuel trend and the maintenance calendar to one vehicle: type a plate (or pick from the suggestions).
+  const [vehicleText, setVehicleText] = useState("")
+  const vehiclesQuery = useVehicles()
+  const vehicles = vehiclesQuery.data ?? []
+  const needle = vehicleText.trim().toLowerCase()
+  const selectedVehicle = needle ? vehicles.find((v) => v.plate_number.toLowerCase() === needle) : undefined
+
+  const fuelTrendsQuery = useFuelTrends(Number(months), selectedVehicle?.id)
+  const calendarQuery = useMaintenanceCalendar(Number(windowDays), { vehicleId: selectedVehicle?.id, limit: CALENDAR_LIMIT })
   const fleetHealthQuery = useFleetHealth({ enabled: canRead })
 
   if (!canRead) {
@@ -106,6 +115,36 @@ export default function InsightsPage() {
         </div>
         <p className="text-caption text-muted-foreground">Natural-language questions are coming soon — this box doesn&apos;t send anything yet.</p>
       </SectionPanel>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          aria-label="Filter by vehicle"
+          placeholder="Filter by vehicle: type a plate…"
+          list="insights-vehicles"
+          value={vehicleText}
+          onChange={(e) => setVehicleText(e.target.value)}
+          className="max-w-xs"
+        />
+        <datalist id="insights-vehicles">
+          {vehicles.map((v) => (
+            <option key={v.id} value={v.plate_number}>
+              {`${v.make} ${v.model}`}
+            </option>
+          ))}
+        </datalist>
+        {selectedVehicle ? (
+          <>
+            <span className="text-caption text-muted-foreground">
+              Showing {selectedVehicle.plate_number} ({selectedVehicle.make} {selectedVehicle.model}) in the fuel trend and calendar
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={() => setVehicleText("")}>
+              Clear
+            </Button>
+          </>
+        ) : needle ? (
+          <span className="text-caption text-muted-foreground">No vehicle with that plate: showing the whole fleet</span>
+        ) : null}
+      </div>
 
       <SectionPanel
         icon={ChartLine}
@@ -172,10 +211,10 @@ export default function InsightsPage() {
           areaLabel="the maintenance calendar"
         >
           {(items) => {
-            const sorted = [...items].sort((a, b) => (a.status === "overdue" ? 0 : 1) - (b.status === "overdue" ? 0 : 1))
+            // Latest due date first, as the backend sorted it.
             return (
               <div className="space-y-2">
-                {sorted.map((item) => (
+                {items.map((item) => (
                   <DueRow
                     key={`${item.vehicle_id}-${item.service_type}`}
                     icon={ListChecks}

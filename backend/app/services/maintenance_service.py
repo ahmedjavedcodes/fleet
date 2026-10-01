@@ -295,7 +295,8 @@ def vehicle_search_clause(term: str, *extra):
 
 
 def calendar_page(
-    db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0, search: str | None = None
+    db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0, search: str | None = None,
+    vehicle_id: uuid.UUID | None = None,
 ) -> tuple[list, int]:
     """The maintenance calendar (overdue, plus due within `window_days` and not already overdue) as plain rows, ordered
     latest due date first (nulls last), and cut to one page IN SQL, with the total. Row: (vehicle_id, plate_number, make,
@@ -305,6 +306,8 @@ def calendar_page(
     wanted = or_(overdue, _due_by_date_clause(today, window_days))
     if search and search.strip():
         wanted = and_(wanted, vehicle_search_clause(search, Driver.full_name))
+    if vehicle_id is not None:
+        wanted = and_(wanted, Vehicle.id == vehicle_id)
     total = db.execute(
         _latest_logs_stmt(org_id, func.count()).outerjoin(Driver, Driver.id == MaintenanceLog.driver_id).where(wanted)
     ).scalar_one()

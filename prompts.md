@@ -498,3 +498,7 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 - Both lists were already newest-first (calendar `next_due_date DESC`; notifications merged by `created_at` DESC, incidents `date DESC`); no sort change needed.
 - Stored notifications were already per user (`user_id`, `is_read`). Incident-derived entries had no state: new table `notification_dismissals(user_id, incident_id)` (migration c92a5d7e1f04). `PATCH /notifications/{id}/read` marks a stored one read or, for an unresolved incident id (admin/fleet manager only), records a dismissal for that user only; the incident is untouched and others still see it. Derived entries are now unread until dismissed; the pages and bell ask `unread_only=true`, so a tapped entry vanishes (optimistically, confirmed by refetch).
 - Tap = dismiss + open `/accountability?incident={id}` (no incident detail page exists, so the incidents list filters to that one). Old stored notifications without an incident link just vanish.
+
+## Insights page vehicle filter
+
+- `vehicle_id` (UUID) on `GET /dashboard/fuel-trends` and `/dashboard/maintenance-calendar` (SQL WHERE). Insights page: a plate input with datalist suggestions; an exact plate narrows the fuel trend and the calendar to that vehicle, "Clear" resets, an unknown plate says so and keeps the fleet. The insights calendar was unpaged and re-sorted overdue-first on the client: it now takes the backend order (latest due first) capped at 50.

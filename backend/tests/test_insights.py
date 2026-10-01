@@ -115,3 +115,28 @@ def test_incident_search_matches_description_vehicle_or_driver(client: TestClien
     assert run("windscreen") == ["Windscreen cracked by a stone"]
     assert "Door dent" in run("TST-002") and "Windscreen cracked by a stone" not in run("TST-002")
     assert run("ranger") and all(d == "Door dent" or d == "Scratch" for d in run("ranger"))
+
+
+def test_vehicle_id_narrows_the_calendar_and_the_fuel_trend_to_one_vehicle(client: TestClient, db_session: Session, organization: Organization, fleet) -> None:
+    from decimal import Decimal
+
+    from app.schemas.fuel import FuelLogCreate
+    from app.services import fuel_service
+
+    admin, vehicles = fleet
+    for plate in ("TST-001", "TST-002"):
+        make_maintenance_log(db_session, organization, vehicles[plate], odometer_at_service=1, next_due_km=None, next_due_date=NOW - timedelta(days=5))
+        fuel_service.create_fuel_log(
+            db_session, organization.id,
+            FuelLogCreate(vehicle_id=vehicles[plate].id, date=NOW, odometer_reading=100, liters_filled=Decimal("10"), price_per_liter=Decimal("10"), total_cost=Decimal("100") if plate == "TST-001" else Decimal("250")),
+            admin.id,
+        )
+    headers = auth_headers(admin)
+    cal = lambda **p: client.get("/api/v1/dashboard/maintenance-calendar", params=p, headers=headers)  # noqa: E731
+    trend = lambda **p: client.get("/api/v1/dashboard/fuel-trends", params={"months": 1, **p}, headers=headers).json()[-1]["total_cost"]  # noqa: E731
+
+    assert cal().headers["x-total-count"] == "2"
+    only = cal(vehicle_id=str(vehicles["TST-002"].id))
+    assert [i["plate_number"] for i in only.json()] == ["TST-002"] and only.headers["x-total-count"] == "1"
+    assert Decimal(trend()) == Decimal("350") and Decimal(trend(vehicle_id=str(vehicles["TST-001"].id))) == Decimal("100")
+    assert client.get("/api/v1/dashboard/fuel-trends", params={"vehicle_id": "nope"}, headers=headers).status_code == 422

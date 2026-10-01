@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
@@ -33,10 +35,11 @@ def get_summary(
 @router.get("/fuel-trends", response_model=FuelTrendsResponse)
 def get_fuel_trends(
     months: int = Query(default=12, ge=1, le=24),
+    vehicle_id: uuid.UUID | None = None,
     current_user: User = Depends(require_role(*_ROLES)),
     db: Session = Depends(get_db),
 ) -> FuelTrendsResponse:
-    return dashboard_service.get_fuel_trends(db, current_user.organization_id, months=months)
+    return dashboard_service.get_fuel_trends(db, current_user.organization_id, months=months, vehicle_id=vehicle_id)
 
 
 # Paged lists: `limit`/`offset` cut the result in the database and the unpaged total comes back in X-Total-Count.
@@ -51,11 +54,12 @@ def get_maintenance_calendar(
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None, max_length=100, description="Vehicle plate, make or model, or driver name"),
+    vehicle_id: uuid.UUID | None = None,
     current_user: User = Depends(require_role(*_ROLES)),
     db: Session = Depends(get_db),
 ) -> MaintenanceCalendarResponse:
     items, total = dashboard_service.get_maintenance_calendar_page(
-        db, current_user.organization_id, window_days=window_days, limit=limit, offset=offset, search=search
+        db, current_user.organization_id, window_days=window_days, limit=limit, offset=offset, search=search, vehicle_id=vehicle_id
     )
     response.headers[TOTAL_COUNT_HEADER] = str(total)
     return items
