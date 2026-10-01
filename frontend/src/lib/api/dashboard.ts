@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { z } from "zod"
 import { dashboardKeys } from "@/lib/query/keys"
 import {
   dashboardSummaryResponseSchema,
@@ -48,25 +49,42 @@ function toPagedList<T>(data: { pages: Page<T[]>[] }): PagedList<T> {
   return { items: data.pages.flatMap((p) => p.items), total: data.pages[0]?.total ?? null }
 }
 
-export function getMaintenanceCalendarPage(windowDays: number, offset: number): Promise<Page<MaintenanceCalendarResponse>> {
+/** Fleet-health filters, applied by the backend before paging: search is plate/make/model; health is a 0-100 range. */
+export type FleetHealthFilters = {
+  search?: string
+  healthMin?: number
+  healthMax?: number
+  make?: string
+  status?: string
+}
+
+export function getMaintenanceCalendarPage(windowDays: number, offset: number, search?: string): Promise<Page<MaintenanceCalendarResponse>> {
   return apiRequestPage("/dashboard/maintenance-calendar", {
-    query: { window_days: windowDays, limit: DASHBOARD_PAGE_SIZE, offset },
+    query: { window_days: windowDays, limit: DASHBOARD_PAGE_SIZE, offset, search: search || undefined },
     schema: maintenanceCalendarResponseSchema,
   })
 }
 
-export function getFleetHealthPage(offset: number): Promise<Page<FleetHealthResponse>> {
+export function getFleetHealthPage(offset: number, filters: FleetHealthFilters = {}): Promise<Page<FleetHealthResponse>> {
   return apiRequestPage("/dashboard/fleet-health", {
-    query: { limit: DASHBOARD_PAGE_SIZE, offset },
+    query: {
+      limit: DASHBOARD_PAGE_SIZE,
+      offset,
+      search: filters.search || undefined,
+      health_min: filters.healthMin,
+      health_max: filters.healthMax,
+      make: filters.make,
+      status: filters.status,
+    },
     schema: fleetHealthResponseSchema,
   })
 }
 
 /** Overdue first, then by due date: ordered and cut by the backend, so only one page is ever fetched or rendered. */
-export function useMaintenanceCalendarPages(windowDays: number) {
+export function useMaintenanceCalendarPages(windowDays: number, search?: string) {
   return useInfiniteQuery({
-    queryKey: dashboardKeys.maintenanceCalendarPages(windowDays),
-    queryFn: ({ pageParam }) => getMaintenanceCalendarPage(windowDays, pageParam),
+    queryKey: dashboardKeys.maintenanceCalendarPages(windowDays, search),
+    queryFn: ({ pageParam }) => getMaintenanceCalendarPage(windowDays, pageParam, search),
     initialPageParam: 0,
     getNextPageParam: (last, all) => nextOffset(all, last, DASHBOARD_PAGE_SIZE),
     select: (data): PagedList<MaintenanceCalendarItem> => toPagedList(data),
@@ -74,14 +92,23 @@ export function useMaintenanceCalendarPages(windowDays: number) {
 }
 
 /** Worst health first, one page at a time. */
-export function useFleetHealthPages(options?: { enabled?: boolean }) {
+export function useFleetHealthPages(filters: FleetHealthFilters = {}, options?: { enabled?: boolean }) {
   return useInfiniteQuery({
-    queryKey: dashboardKeys.fleetHealthPages(),
-    queryFn: ({ pageParam }) => getFleetHealthPage(pageParam),
+    queryKey: dashboardKeys.fleetHealthPages(filters),
+    queryFn: ({ pageParam }) => getFleetHealthPage(pageParam, filters),
     initialPageParam: 0,
     getNextPageParam: (last, all) => nextOffset(all, last, DASHBOARD_PAGE_SIZE),
     select: (data): PagedList<VehicleHealthScore> => toPagedList(data),
     enabled: options?.enabled ?? true,
+  })
+}
+
+/** The distinct vehicle makes, for the Make filter. */
+export function useFleetMakes() {
+  return useQuery({
+    queryKey: dashboardKeys.fleetMakes(),
+    queryFn: () => apiRequest("/dashboard/fleet-makes", { schema: z.array(z.string()) }),
+    staleTime: 5 * 60_000,
   })
 }
 

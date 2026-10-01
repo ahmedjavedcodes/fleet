@@ -20,6 +20,7 @@ vi.mock("@/lib/api/dashboard", () => ({
   useDashboardSummary: () => useDashboardSummary(),
   useFuelTrends: () => useFuelTrends(),
   useMaintenanceCalendarPages: () => useMaintenanceCalendar(),
+  useFleetMakes: () => ({ data: [] }),
   useFleetHealthPages: () => useFleetHealth(),
 }))
 

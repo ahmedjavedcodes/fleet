@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -53,6 +53,7 @@ def list_incidents(
     type: IncidentType | None = None,
     severity: IncidentSeverity | None = None,
     status: IncidentResolutionStatus | None = None,  # noqa: A002 -- shadows fastapi.status locally; not used below
+    search: str | None = Query(default=None, max_length=100, description="Vehicle plate/make/model, driver name or description"),
     current_user: User = Depends(require_role(*_CREATE_READ_ROLES)),
     driver_profile: Driver | None = Depends(get_current_driver_profile),
     db: Session = Depends(get_db),
@@ -64,6 +65,7 @@ def list_incidents(
         severity=severity,
         resolution_status=status,
         driver_id_filter=_driver_row_filter(current_user, driver_profile),
+        search=search,
     )
     return [IncidentLogResponse.model_validate(i) for i in incidents]
 

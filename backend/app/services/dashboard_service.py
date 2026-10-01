@@ -70,7 +70,7 @@ def get_fuel_trends(db: Session, org_id: uuid.UUID, months: int = 12) -> list[Fu
 
 
 def get_maintenance_calendar_page(
-    db: Session, org_id: uuid.UUID, window_days: int = 30, *, limit: int | None = None, offset: int = 0
+    db: Session, org_id: uuid.UUID, window_days: int = 30, *, limit: int | None = None, offset: int = 0, search: str | None = None
 ) -> tuple[list[MaintenanceCalendarItem], int]:
     """
     Overdue items (unfiltered by window -- an item never drops off for being
@@ -83,7 +83,7 @@ def get_maintenance_calendar_page(
     Ordered overdue first, then by due date, and paged IN SQL: returns
     (the requested page, the total across all pages). limit=None returns everything.
     """
-    rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset)
+    rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset, search=search)
     return [
         MaintenanceCalendarItem(
             vehicle_id=vehicle_id,
@@ -140,20 +140,41 @@ def _weighted_health_score(signals: dict[str, int | None]) -> int:
     return int((weighted_sum / total_weight).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def fleet_makes(db: Session, org_id: uuid.UUID) -> list[str]:
+    """Distinct makes of the organization's vehicles, for the filter dropdown."""
+    return list(
+        db.execute(
+            select(Vehicle.make).where(Vehicle.organization_id == org_id, Vehicle.is_deleted.is_(False)).distinct().order_by(Vehicle.make)
+        ).scalars()
+    )
+
+
 def get_fleet_health_page(
-    db: Session, org_id: uuid.UUID, *, limit: int | None = None, offset: int = 0
+    db: Session,
+    org_id: uuid.UUID,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    search: str | None = None,
+    health_min: float | None = None,
+    health_max: float | None = None,
+    make: str | None = None,
+    status: VehicleStatus | None = None,
 ) -> tuple[list[VehicleHealthScore], int]:
     """Health score per non-retired vehicle. Every signal is computed fleet-wide in a handful of queries (compliance
     rules and latest services, incident counts, fuel cost/km periods, overdue and due-soon vehicles) rather than a few
     queries per vehicle. With `limit`, the result is sorted worst first (then by plate) and cut to that page; without
     it every vehicle is returned in query order. Returns (vehicles, total number of scored vehicles)."""
-    vehicles = list(
-        db.execute(
-            select(Vehicle).where(
-                Vehicle.organization_id == org_id, Vehicle.is_deleted.is_(False), Vehicle.status != VehicleStatus.retired
-            )
-        ).scalars()
-    )
+    # search / make / status are WHERE clauses on the vehicles query, so only matching vehicles are scored. The score is
+    # computed (it is not a column), so health_min / health_max are applied to the scores, still before limit/offset,
+    # and the total is the filtered count. Retired vehicles are left out unless status asks for them.
+    stmt = select(Vehicle).where(Vehicle.organization_id == org_id, Vehicle.is_deleted.is_(False))
+    stmt = stmt.where(Vehicle.status == status) if status is not None else stmt.where(Vehicle.status != VehicleStatus.retired)
+    if make:
+        stmt = stmt.where(Vehicle.make == make)
+    if search and search.strip():
+        stmt = stmt.where(maintenance_service.vehicle_search_clause(search))
+    vehicles = list(db.execute(stmt).scalars())
     if not vehicles:
         return [], 0
 
@@ -200,6 +221,10 @@ def get_fleet_health_page(
                 previous_cost_per_km=prior_avg,
             )
         )
+    if health_min is not None:
+        results = [r for r in results if r.health_score >= health_min]
+    if health_max is not None:
+        results = [r for r in results if r.health_score <= health_max]
     total = len(results)
     if limit is not None:
         results.sort(key=lambda r: (r.health_score, r.plate_number))

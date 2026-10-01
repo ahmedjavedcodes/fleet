@@ -41,8 +41,25 @@ def list_incidents(
     severity: IncidentSeverity | None = None,
     resolution_status: IncidentResolutionStatus | None = None,
     driver_id_filter: uuid.UUID | None = None,
+    search: str | None = None,
 ) -> list[IncidentLog]:
     stmt = select(IncidentLog).where(IncidentLog.organization_id == org_id, IncidentLog.is_deleted.is_(False))
+    if search and search.strip():
+        from app.models.driver import Driver
+        from app.models.vehicle import Vehicle
+
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(
+            IncidentLog.description.icontains(search.strip(), autoescape=True)
+            | IncidentLog.vehicle_id.in_(
+                select(Vehicle.id).where(
+                    Vehicle.plate_number.icontains(search.strip(), autoescape=True)
+                    | Vehicle.make.icontains(search.strip(), autoescape=True)
+                    | Vehicle.model.icontains(search.strip(), autoescape=True)
+                )
+            )
+            | IncidentLog.driver_id.in_(select(Driver.id).where(Driver.full_name.icontains(search.strip(), autoescape=True)))
+        )
     if driver_id_filter is not None:
         stmt = stmt.where(IncidentLog.driver_id == driver_id_filter)
     if incident_type is not None:

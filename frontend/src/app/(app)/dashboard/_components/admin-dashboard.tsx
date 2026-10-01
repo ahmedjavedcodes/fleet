@@ -3,7 +3,9 @@
 import { useState } from "react"
 import { Building2, ChartLine, Fuel, ListChecks, ShieldAlert, Truck, Users, Wrench } from "lucide-react"
 import Link from "next/link"
-import { useDashboardSummary, useFleetHealthPages, useFuelTrends, useMaintenanceCalendarPages } from "@/lib/api/dashboard"
+import { useDashboardSummary, useFleetHealthPages, useFleetMakes, useFuelTrends, useMaintenanceCalendarPages } from "@/lib/api/dashboard"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
+import { ALL } from "@/lib/table-filters"
 import { formatInt, formatMoneyValue, formatNumberValue, parseDecimal } from "@/lib/api/decimal"
 import { formatDate, formatMonthLabel } from "@/lib/format-date"
 import { healthScoreLabel } from "@/lib/health-score"
@@ -16,6 +18,8 @@ import { AreaTrendChart } from "@/components/charts/area-trend-chart"
 import { HealthGauge } from "@/components/charts/health-gauge"
 import { DueRow } from "@/components/fleet/due-row"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
+import { FilterBar } from "@/components/primitives/filter-bar"
+import { Input } from "@/components/ui/input"
 import { KpiTile } from "@/components/primitives/kpi-tile"
 import { SectionPanel } from "@/components/primitives/section-panel"
 import { StatusPill } from "@/components/primitives/status-pill"
@@ -26,6 +30,23 @@ import { QueryRegion } from "@/components/states/query-boundary"
 import { Greeting } from "./greeting"
 
 const MONTH_OPTIONS = ["6", "12", "24"] as const
+
+// Health presets -> the backend's inclusive 0-100 range (scores are whole numbers).
+const HEALTH_RANGES = {
+  critical: { healthMax: 49 },
+  moderate: { healthMin: 50, healthMax: 80 },
+  good: { healthMin: 81 },
+} as const
+const HEALTH_OPTIONS = [
+  { value: "critical", label: "Critical (< 50)" },
+  { value: "moderate", label: "Moderate (50–80)" },
+  { value: "good", label: "Good (> 80)" },
+]
+const STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "maintenance", label: "In service" },
+  { value: "retired", label: "Decommissioned" },
+]
 
 // The lists below load a page at a time from the backend and render only what has been loaded.
 function LoadMore({
@@ -66,8 +87,24 @@ export function AdminDashboard() {
 
   const summaryQuery = useDashboardSummary()
   const fuelTrendsQuery = useFuelTrends(Number(months))
-  const calendarQuery = useMaintenanceCalendarPages(30)
-  const fleetHealthQuery = useFleetHealthPages()
+  // One search box over the dashboard lists, and filters on the fleet-health table. Every change is sent to the backend
+  // (debounced) and starts again from the first page; nothing is filtered on the client.
+  const [listSearch, setListSearch] = useState("")
+  const [healthSearch, setHealthSearch] = useState("")
+  const [healthRange, setHealthRange] = useState(ALL)
+  const [make, setMake] = useState(ALL)
+  const [status, setStatus] = useState(ALL)
+  const debouncedListSearch = useDebouncedValue(listSearch.trim())
+  const debouncedHealthSearch = useDebouncedValue(healthSearch.trim())
+  const makesQuery = useFleetMakes()
+
+  const calendarQuery = useMaintenanceCalendarPages(30, debouncedListSearch)
+  const fleetHealthQuery = useFleetHealthPages({
+    search: debouncedHealthSearch,
+    ...(healthRange !== ALL ? HEALTH_RANGES[healthRange as keyof typeof HEALTH_RANGES] : {}),
+    make: make !== ALL ? make : undefined,
+    status: status !== ALL ? status : undefined,
+  })
 
   const healthColumns: DataTableColumn<VehicleHealthScore>[] = [
     {
@@ -164,6 +201,14 @@ export function AdminDashboard() {
         )}
       </QueryRegion>
 
+      <Input
+        aria-label="Search the dashboard lists"
+        placeholder="Search vehicle, plate or driver…"
+        value={listSearch}
+        onChange={(e) => setListSearch(e.target.value)}
+        className="max-w-sm"
+      />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <SectionPanel
           icon={ChartLine}
@@ -227,7 +272,13 @@ export function AdminDashboard() {
           <QueryRegion
             query={calendarQuery}
             skeleton={<SkeletonPanel />}
-            empty={<EmptyState icon={ListChecks} title="Nothing due" description="No service is due in the next 30 days." />}
+            empty={
+              <EmptyState
+                icon={ListChecks}
+                title={debouncedListSearch ? "No matches" : "Nothing due"}
+                description={debouncedListSearch ? "No due or overdue service matches that search." : "No service is due in the next 30 days."}
+              />
+            }
             isEmpty={(list) => list.items.length === 0}
             areaLabel="the maintenance calendar"
           >
@@ -254,10 +305,29 @@ export function AdminDashboard() {
       </div>
 
       <SectionPanel icon={ShieldAlert} title="Fleet health">
+        <div className="mb-4">
+          <FilterBar
+            search={healthSearch}
+            onSearchChange={setHealthSearch}
+            searchLabel="Search fleet health"
+            searchPlaceholder="Search plate, make or model…"
+            selects={[
+              { label: "Filter by health score", value: healthRange, onChange: setHealthRange, allLabel: "All health scores", options: HEALTH_OPTIONS },
+              {
+                label: "Filter by make",
+                value: make,
+                onChange: setMake,
+                allLabel: "All makes",
+                options: (makesQuery.data ?? []).map((m) => ({ value: m, label: m })),
+              },
+              { label: "Filter by status", value: status, onChange: setStatus, allLabel: "All statuses", options: STATUS_OPTIONS },
+            ]}
+          />
+        </div>
         <QueryRegion
           query={fleetHealthQuery}
           skeleton={<SkeletonTable rows={5} columns={6} />}
-          empty={<EmptyState icon={Truck} title="No vehicles yet" description="Fleet health appears once vehicles are added." />}
+          empty={<EmptyState icon={Truck} title="No vehicles found" description="No vehicle matches these filters, or none have been added yet." />}
           isEmpty={(list) => list.items.length === 0}
           areaLabel="fleet health"
         >

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import require_role
-from app.models.enums import UserRole
+from app.models.enums import UserRole, VehicleStatus
 from app.models.user import User
 from app.schemas.dashboard import (
     DashboardSummaryResponse,
@@ -50,14 +50,20 @@ def get_maintenance_calendar(
     window_days: int = Query(default=30, ge=1, le=365),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=100, description="Vehicle plate, make or model, or driver name"),
     current_user: User = Depends(require_role(*_ROLES)),
     db: Session = Depends(get_db),
 ) -> MaintenanceCalendarResponse:
     items, total = dashboard_service.get_maintenance_calendar_page(
-        db, current_user.organization_id, window_days=window_days, limit=limit, offset=offset
+        db, current_user.organization_id, window_days=window_days, limit=limit, offset=offset, search=search
     )
     response.headers[TOTAL_COUNT_HEADER] = str(total)
     return items
+
+
+@router.get("/fleet-makes", response_model=list[str])
+def get_fleet_makes(current_user: User = Depends(require_role(*_ROLES)), db: Session = Depends(get_db)) -> list[str]:
+    return dashboard_service.fleet_makes(db, current_user.organization_id)
 
 
 @router.get("/fleet-health", response_model=FleetHealthResponse)
@@ -65,10 +71,19 @@ def get_fleet_health(
     response: Response,
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=100, description="Vehicle plate, make or model"),
+    health_min: float | None = Query(default=None, ge=0, le=100),
+    health_max: float | None = Query(default=None, ge=0, le=100),
+    make: str | None = Query(default=None, max_length=100),
+    status: VehicleStatus | None = None,
     current_user: User = Depends(require_role(*_ROLES)),
     db: Session = Depends(get_db),
 ) -> FleetHealthResponse:
-    """With `limit`: worst health first, one page. Without: every scored vehicle."""
-    items, total = dashboard_service.get_fleet_health_page(db, current_user.organization_id, limit=limit, offset=offset)
+    """With `limit`: worst health first, one page. Without: every scored vehicle. The filters apply before paging and
+    X-Total-Count is the filtered total. Retired vehicles appear only when status=retired."""
+    items, total = dashboard_service.get_fleet_health_page(
+        db, current_user.organization_id, limit=limit, offset=offset, search=search,
+        health_min=health_min, health_max=health_max, make=make, status=status,
+    )
     response.headers[TOTAL_COUNT_HEADER] = str(total)
     return items

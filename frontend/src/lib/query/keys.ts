@@ -131,8 +131,11 @@ export const dashboardKeys = {
   fleetHealth: () => [...dashboardKeys.all, "fleet-health"] as const,
   // The paged (load-more) variants the dashboard itself uses. Distinct keys: an infinite query's cache holds pages,
   // not a flat list, so it must never share a key with the plain query above.
-  maintenanceCalendarPages: (windowDays?: number) => [...dashboardKeys.all, "maintenance-calendar-pages", windowDays] as const,
-  fleetHealthPages: () => [...dashboardKeys.all, "fleet-health-pages"] as const,
+  // Filters are part of the key, so changing one starts a fresh query from the first page.
+  maintenanceCalendarPages: (windowDays?: number, search?: string) =>
+    [...dashboardKeys.all, "maintenance-calendar-pages", windowDays, search ?? ""] as const,
+  fleetHealthPages: (filters?: Record<string, unknown>) => [...dashboardKeys.all, "fleet-health-pages", filters ?? {}] as const,
+  fleetMakes: () => [...dashboardKeys.all, "fleet-makes"] as const,
 }
 
 export const documentKeys = {

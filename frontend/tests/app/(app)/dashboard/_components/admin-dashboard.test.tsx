@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { AdminDashboard } from "@/app/(app)/dashboard/_components/admin-dashboard"
 import { renderWithProviders as render } from "../../../../test-utils"
 
@@ -14,8 +14,9 @@ const mockFleetHealth = vi.fn()
 vi.mock("@/lib/api/dashboard", () => ({
   useDashboardSummary: () => mockSummary(),
   useFuelTrends: () => mockFuelTrends(),
-  useMaintenanceCalendarPages: () => mockCalendar(),
-  useFleetHealthPages: () => mockFleetHealth(),
+  useMaintenanceCalendarPages: (windowDays: number, search?: string) => mockCalendar(windowDays, search),
+  useFleetHealthPages: (filters?: unknown) => mockFleetHealth(filters),
+  useFleetMakes: () => ({ data: ["Ford", "Toyota"] }),
 }))
 
 function pendingQuery() {
@@ -53,6 +54,13 @@ function healthRow(n: number) {
     previous_cost_per_km: null,
   }
 }
+
+// Radix Select (the filter dropdowns) needs these in jsdom.
+beforeAll(() => {
+  Element.prototype.hasPointerCapture = () => false
+  Element.prototype.releasePointerCapture = () => {}
+  Element.prototype.scrollIntoView = () => {}
+})
 
 describe("AdminDashboard", () => {
   beforeEach(() => {
@@ -129,6 +137,64 @@ describe("AdminDashboard", () => {
     const rows = screen.getAllByText(/UP-1|OD-1/)
     expect(rows[0]).toHaveTextContent("OD-1")
     expect(rows[1]).toHaveTextContent("UP-1")
+  })
+
+  describe("search and filters", () => {
+    beforeEach(() => {
+      mockSummary.mockReturnValue(pendingQuery())
+      mockFleetHealth.mockReturnValue(pagedQuery([healthRow(1)]))
+      mockCalendar.mockReturnValue(pagedQuery([]))
+    })
+
+    it("starts with no filters (the default first page)", () => {
+      render(<AdminDashboard />)
+      expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "", make: undefined, status: undefined })
+      expect(mockCalendar).toHaveBeenLastCalledWith(30, "")
+    })
+
+    it("sends the fleet-health search to the backend once typing pauses, trimmed", async () => {
+      render(<AdminDashboard />)
+      await userEvent.setup().type(screen.getByLabelText("Search fleet health"), "  hilux ")
+
+      await waitFor(() => expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "hilux", make: undefined, status: undefined }))
+    })
+
+    it("sends the dashboard search to the calendar", async () => {
+      render(<AdminDashboard />)
+      await userEvent.setup().type(screen.getByLabelText("Search the dashboard lists"), "Zainab")
+
+      await waitFor(() => expect(mockCalendar).toHaveBeenLastCalledWith(30, "Zainab"))
+    })
+
+    it("maps the health preset, make and status dropdowns onto the query params", async () => {
+      const user = userEvent.setup()
+      render(<AdminDashboard />)
+
+      await user.click(screen.getByRole("combobox", { name: "Filter by health score" }))
+      await user.click(screen.getByRole("option", { name: "Critical (< 50)" }))
+      expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "", healthMax: 49, make: undefined, status: undefined })
+
+      await user.click(screen.getByRole("combobox", { name: "Filter by health score" }))
+      await user.click(screen.getByRole("option", { name: "Moderate (50–80)" }))
+      expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "", healthMin: 50, healthMax: 80, make: undefined, status: undefined })
+
+      await user.click(screen.getByRole("combobox", { name: "Filter by make" }))
+      await user.click(screen.getByRole("option", { name: "Toyota" }))
+      await user.click(screen.getByRole("combobox", { name: "Filter by status" }))
+      await user.click(screen.getByRole("option", { name: "Decommissioned" }))
+      expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "", healthMin: 50, healthMax: 80, make: "Toyota", status: "retired" })
+    })
+
+    it("offers Good (> 80) as health_min 81 and the In service status as maintenance", async () => {
+      const user = userEvent.setup()
+      render(<AdminDashboard />)
+      await user.click(screen.getByRole("combobox", { name: "Filter by health score" }))
+      await user.click(screen.getByRole("option", { name: "Good (> 80)" }))
+      await user.click(screen.getByRole("combobox", { name: "Filter by status" }))
+      await user.click(screen.getByRole("option", { name: "In service" }))
+
+      expect(mockFleetHealth).toHaveBeenLastCalledWith({ search: "", healthMin: 81, make: undefined, status: "maintenance" })
+    })
   })
 
   describe("loading lists a page at a time", () => {

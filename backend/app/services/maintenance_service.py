@@ -288,8 +288,14 @@ def due_soon_vehicle_ids(db: Session, org_id: uuid.UUID, window_km: int = 1000) 
     return set(db.execute(stmt).scalars())
 
 
+def vehicle_search_clause(term: str, *extra):
+    """Case-insensitive match of `term` against plate, make, model, "make model" (and any `extra` columns)."""
+    columns = (Vehicle.plate_number, Vehicle.make, Vehicle.model, func.concat(Vehicle.make, " ", Vehicle.model), *extra)
+    return or_(*(c.icontains(term.strip(), autoescape=True) for c in columns))
+
+
 def calendar_page(
-    db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0
+    db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0, search: str | None = None
 ) -> tuple[list, int]:
     """The maintenance calendar (overdue, plus due within `window_days` and not already overdue) as plain rows, ordered
     overdue first, then by due date, and cut to one page IN SQL, with the total. Row: (vehicle_id, plate_number, make,
@@ -297,7 +303,11 @@ def calendar_page(
     today = datetime.now(timezone.utc).date()
     overdue = _overdue_clause(today)
     wanted = or_(overdue, _due_by_date_clause(today, window_days))
-    total = db.execute(_latest_logs_stmt(org_id, func.count()).where(wanted)).scalar_one()
+    if search and search.strip():
+        wanted = and_(wanted, vehicle_search_clause(search, Driver.full_name))
+    total = db.execute(
+        _latest_logs_stmt(org_id, func.count()).outerjoin(Driver, Driver.id == MaintenanceLog.driver_id).where(wanted)
+    ).scalar_one()
     stmt = (
         _latest_logs_stmt(
             org_id, Vehicle.id, Vehicle.plate_number, Vehicle.make, Vehicle.model, Driver.full_name, MaintenanceLog.date,
