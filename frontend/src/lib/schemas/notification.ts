@@ -13,5 +13,9 @@ export const notificationSchema = z.object({
   type: notificationTypeSchema,
   is_read: z.boolean(),
   created_at: dateTimeStringSchema,
+  // "incident": derived from an unresolved incident, not a stored notification. It has no read state (always read),
+  // can't be marked read, and links to the incident.
+  source: z.enum(["notification", "incident"]),
+  incident_id: uuidSchema.nullable(),
 })
 export type Notification = z.infer<typeof notificationSchema>

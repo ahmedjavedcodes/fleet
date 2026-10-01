@@ -2,7 +2,7 @@
 
 import { Bell } from "lucide-react"
 import Link from "next/link"
-import { useMarkNotificationRead, useNotifications } from "@/lib/api/notifications"
+import { useHasUnreadNotifications, useMarkNotificationRead, useNotifications } from "@/lib/api/notifications"
 import type { Notification } from "@/lib/schemas/notification"
 import { NotificationItem } from "@/components/notifications/notification-item"
 import { Button } from "@/components/ui/button"
@@ -13,10 +13,11 @@ const PREVIEW_COUNT = 5
 // A small blue dot (never a count) when anything is unread, and the latest few
 // notifications in the popover. Clicking one marks it read.
 export function NotificationBell() {
-  const query = useNotifications()
+  const query = useNotifications({ limit: PREVIEW_COUNT })
+  const unreadQuery = useHasUnreadNotifications()
   const markRead = useMarkNotificationRead()
   const rows = query.data ?? []
-  const hasUnread = rows.some((n) => !n.is_read)
+  const hasUnread = unreadQuery.data === true || rows.some((n) => !n.is_read)
 
   function open(notification: Notification) {
     if (!notification.is_read) markRead.mutate(notification.id)
@@ -43,7 +44,7 @@ export function NotificationBell() {
           <p className="px-2 py-3 text-caption text-muted-foreground">{query.isPending ? "Loading…" : "You're all caught up."}</p>
         ) : (
           <ul className="space-y-1">
-            {rows.slice(0, PREVIEW_COUNT).map((n) => (
+            {rows.map((n) => (
               <li key={n.id}>
                 <NotificationItem notification={n} onOpen={open} compact />
               </li>

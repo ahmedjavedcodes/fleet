@@ -11,6 +11,13 @@ from app.models.supplier import Supplier
 from app.schemas.supplier import SupplierCreate, SupplierUpdate
 
 
+def count_active_suppliers(db: Session, org_id: uuid.UUID) -> int:
+    """SELECT COUNT(*) of the organization's suppliers that have not been deleted (a supplier has no other "active" flag)."""
+    return db.execute(
+        select(func.count(Supplier.id)).where(Supplier.organization_id == org_id, Supplier.is_deleted.is_(False))
+    ).scalar_one()
+
+
 def create_supplier(db: Session, org_id: uuid.UUID, data: SupplierCreate, created_by: uuid.UUID) -> Supplier:
     supplier = Supplier(id=uuid.uuid4(), organization_id=org_id, created_by=created_by, **data.model_dump())
     db.add(supplier)

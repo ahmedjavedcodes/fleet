@@ -1,9 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { ChartLine, Fuel, ListChecks, PackageMinus, ShieldAlert, Truck, Users, Wrench } from "lucide-react"
+import { Building2, ChartLine, Fuel, ListChecks, ShieldAlert, Truck, Users, Wrench } from "lucide-react"
 import Link from "next/link"
-import { useDashboardSummary, useFleetHealth, useFuelTrends, useMaintenanceCalendar } from "@/lib/api/dashboard"
+import { useDashboardSummary, useFleetHealthPages, useFuelTrends, useMaintenanceCalendarPages } from "@/lib/api/dashboard"
 import { formatInt, formatMoneyValue, formatNumberValue, parseDecimal } from "@/lib/api/decimal"
 import { formatDate, formatMonthLabel } from "@/lib/format-date"
 import { healthScoreLabel } from "@/lib/health-score"
@@ -27,6 +27,29 @@ import { Greeting } from "./greeting"
 
 const MONTH_OPTIONS = ["6", "12", "24"] as const
 
+// The lists below load a page at a time from the backend and render only what has been loaded.
+function LoadMore({
+  query,
+  loaded,
+  total,
+  noun,
+}: {
+  query: { hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => unknown }
+  loaded: number
+  total: number | null
+  noun: string
+}) {
+  if (!query.hasNextPage) return null
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 text-caption text-muted-foreground">
+      <span>{total !== null ? `Showing ${formatInt(loaded)} of ${formatInt(total)} ${noun}` : `Showing ${formatInt(loaded)} ${noun}`}</span>
+      <Button type="button" variant="outline" size="sm" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+        {query.isFetchingNextPage ? "Loading…" : "Load more"}
+      </Button>
+    </div>
+  )
+}
+
 function SignalCell({ value }: { value: number | null }) {
   return value === null ? <span className="text-muted-foreground">n/a</span> : <span>{formatInt(value)}</span>
 }
@@ -43,8 +66,8 @@ export function AdminDashboard() {
 
   const summaryQuery = useDashboardSummary()
   const fuelTrendsQuery = useFuelTrends(Number(months))
-  const calendarQuery = useMaintenanceCalendar(30)
-  const fleetHealthQuery = useFleetHealth()
+  const calendarQuery = useMaintenanceCalendarPages(30)
+  const fleetHealthQuery = useFleetHealthPages()
 
   const healthColumns: DataTableColumn<VehicleHealthScore>[] = [
     {
@@ -121,12 +144,12 @@ export function AdminDashboard() {
               href="/maintenance"
             />
             <KpiTile
-              icon={PackageMinus}
-              tone="amber"
-              label="Low-stock parts"
-              value={String(summary.low_stock_parts_count)}
+              icon={Building2}
+              tone="blue"
+              label="Active suppliers"
+              value={String(summary.active_suppliers_count)}
               format="count"
-              href="/maintenance"
+              href="/foundation/suppliers"
             />
             <KpiTile
               icon={ShieldAlert}
@@ -205,14 +228,14 @@ export function AdminDashboard() {
             query={calendarQuery}
             skeleton={<SkeletonPanel />}
             empty={<EmptyState icon={ListChecks} title="Nothing due" description="No service is due in the next 30 days." />}
-            isEmpty={(items) => items.length === 0}
+            isEmpty={(list) => list.items.length === 0}
             areaLabel="the maintenance calendar"
           >
-            {(items) => {
-              const sorted = [...items].sort((a, b) => (a.status === "overdue" ? 0 : 1) - (b.status === "overdue" ? 0 : 1))
-              return (
+            {(list) => (
+              // Overdue first, then by due date: the backend orders and pages it.
+              <div>
                 <div className="space-y-2">
-                  {sorted.map((item) => (
+                  {list.items.map((item) => (
                     <DueRow
                       key={`${item.vehicle_id}-${item.service_type}`}
                       icon={Wrench}
@@ -223,8 +246,9 @@ export function AdminDashboard() {
                     />
                   ))}
                 </div>
-              )
-            }}
+                <LoadMore query={calendarQuery} loaded={list.items.length} total={list.total} noun="items" />
+              </div>
+            )}
           </QueryRegion>
         </SectionPanel>
       </div>
@@ -234,18 +258,17 @@ export function AdminDashboard() {
           query={fleetHealthQuery}
           skeleton={<SkeletonTable rows={5} columns={6} />}
           empty={<EmptyState icon={Truck} title="No vehicles yet" description="Fleet health appears once vehicles are added." />}
-          isEmpty={(rows) => rows.length === 0}
+          isEmpty={(list) => list.items.length === 0}
           areaLabel="fleet health"
         >
-          {(rows) => {
-            const sorted = [...rows].sort((a, b) => a.health_score - b.health_score)
-            return (
-              <>
-                <DataTable columns={healthColumns} rows={sorted} getRowId={(row) => row.vehicle_id} />
-                <p className="mt-2 text-caption text-muted-foreground">Retired vehicles aren&apos;t scored and don&apos;t appear here.</p>
-              </>
-            )
-          }}
+          {(list) => (
+            // Worst health first: the backend sorts and pages it, so pages are loaded on request rather than all at once.
+            <>
+              <DataTable columns={healthColumns} rows={list.items} getRowId={(row) => row.vehicle_id} pageSize={1000} />
+              <LoadMore query={fleetHealthQuery} loaded={list.items.length} total={list.total} noun="vehicles" />
+              <p className="mt-2 text-caption text-muted-foreground">Retired vehicles aren&apos;t scored and don&apos;t appear here.</p>
+            </>
+          )}
         </QueryRegion>
       </SectionPanel>
     </div>

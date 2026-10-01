@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import Numeric, cast, func, select
+from sqlalchemy import Numeric, and_, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -314,6 +314,40 @@ def attach_receipt(
     db.commit()
     db.refresh(receipt)
     return receipt
+
+
+def month_total_cost(db: Session, org_id: uuid.UUID, as_of: date_type | None = None) -> Decimal:
+    """SELECT SUM(total_cost) for the calendar month containing `as_of` (default: this month), in the database. The same
+    figure as get_monthly_summary(...).total_cost without building the per-vehicle breakdown."""
+    as_of = as_of or datetime.now(timezone.utc).date()
+    period_start = date_type(as_of.year, as_of.month, 1)
+    period_end = date_type(as_of.year, as_of.month, calendar.monthrange(as_of.year, as_of.month)[1])
+    return db.execute(
+        select(func.coalesce(func.sum(FuelLog.total_cost), 0)).where(
+            FuelLog.organization_id == org_id, FuelLog.is_deleted.is_(False), FuelLog.date >= period_start, FuelLog.date <= period_end
+        )
+    ).scalar_one()
+
+
+def cost_per_km_periods_by_vehicle(
+    db: Session, org_id: uuid.UUID, as_of: date_type | None = None
+) -> dict[uuid.UUID, tuple[Decimal | None, Decimal | None]]:
+    """get_vehicle_cost_per_km_periods for every vehicle in ONE grouped query: {vehicle_id: (current_3mo, prior_3mo)}."""
+    as_of = as_of or datetime.now(timezone.utc).date()
+    current_start = _months_before(as_of, ROLLING_WINDOW_MONTHS)
+    prior_start = _months_before(current_start, ROLLING_WINDOW_MONTHS)
+
+    def avg(condition):
+        return cast(func.avg(FuelLog.cost_per_km).filter(condition), Numeric(10, 4))
+
+    rows = db.execute(
+        select(FuelLog.vehicle_id, avg(FuelLog.date >= current_start), avg(and_(FuelLog.date >= prior_start, FuelLog.date < current_start)))
+        .where(
+            FuelLog.organization_id == org_id, FuelLog.is_deleted.is_(False), FuelLog.cost_per_km.is_not(None), FuelLog.date >= prior_start
+        )
+        .group_by(FuelLog.vehicle_id)
+    ).all()
+    return {vehicle_id: (current, prior) for vehicle_id, current, prior in rows}
 
 
 def get_monthly_summary(db: Session, org_id: uuid.UUID, month: str | None) -> FuelSummaryResponse:

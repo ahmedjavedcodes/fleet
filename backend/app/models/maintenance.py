@@ -2,7 +2,7 @@ import uuid
 from datetime import date as date_
 from decimal import Decimal
 
-from sqlalchemy import Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,13 @@ class ComplianceRule(Base, OrgScopedMixin, AuditMixin):
 
 class MaintenanceLog(Base, OrgScopedMixin, AuditMixin, VehicleDriverRefMixin):
     __tablename__ = "maintenance_logs"
+    # "Latest log per vehicle and service", the overdue/upcoming filters and per-org date ranges. (There is no status
+    # column on a maintenance log: overdue/upcoming is derived from next_due_km/next_due_date at read time.)
+    __table_args__ = (
+        Index("ix_maintenance_logs_org_date", "organization_id", "date"),
+        Index("ix_maintenance_logs_vehicle_date", "vehicle_id", "date"),
+        Index("ix_maintenance_logs_org_next_due_date", "organization_id", "next_due_date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     vehicle_id: Mapped[uuid.UUID] = mapped_column(

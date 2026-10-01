@@ -40,6 +40,17 @@ async function parseJsonSafe(response: Response): Promise<unknown> {
   }
 }
 
+/** One page of a list plus the total number of rows across all pages (the backend's X-Total-Count header), or null when the endpoint doesn't send it. */
+export type Page<T> = { items: T; total: number | null }
+
+/** A list request whose response is one page: the body is validated like any other, and the total comes from X-Total-Count. */
+export async function apiRequestPage<T>(path: string, options: BaseOptions & { schema: z.ZodType<T> }): Promise<Page<T>> {
+  const { items, response } = await send<T>(path, options)
+  const header = response.headers.get("X-Total-Count")
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : null
+  return { items, total }
+}
+
 /** Requests that return a parsed, schema-validated body. */
 export async function apiRequest<T>(path: string, options: BaseOptions & { schema: z.ZodType<T> }): Promise<T>
 /** Requests with no response body to validate (e.g. a 204 DELETE). */
@@ -48,6 +59,17 @@ export async function apiRequest<T>(
   path: string,
   options: BaseOptions & { schema?: z.ZodType<T> }
 ): Promise<T | void> {
+  if (!options.schema) {
+    await send(path, options)
+    return undefined
+  }
+  return (await send<T>(path, options as BaseOptions & { schema: z.ZodType<T> })).items
+}
+
+async function send<T>(
+  path: string,
+  options: BaseOptions & { schema?: z.ZodType<T> }
+): Promise<{ items: T; response: Response }> {
   const { method = "GET", body, query, signal, schema } = options
 
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData
@@ -74,7 +96,7 @@ export async function apiRequest<T>(
     throw toApiError(response.status, errorBody, response.headers)
   }
 
-  if (!schema) return undefined
+  if (!schema) return { items: undefined as T, response }
 
   const json = response.status === 204 ? undefined : await parseJsonSafe(response)
   const result = schema.safeParse(json)
@@ -82,5 +104,5 @@ export async function apiRequest<T>(
     console.error(`Schema validation failed for ${method} ${path}:`, result.error)
     throw schemaError(result.error.message)
   }
-  return result.data
+  return { items: result.data, response }
 }

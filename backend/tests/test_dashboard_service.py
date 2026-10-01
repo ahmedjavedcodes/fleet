@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -44,7 +44,7 @@ def test_summary_matches_manual_counts(db_session: Session, organization: Organi
 
     fuel_service.create_fuel_log(
         db_session, organization.id,
-        FuelLogCreate(vehicle_id=fuel_vehicle.id, date=TODAY, odometer_reading=100, liters_filled=Decimal("10.00"), price_per_liter=Decimal("20.00"), total_cost=Decimal("200.00")),
+        FuelLogCreate(vehicle_id=fuel_vehicle.id, date=datetime.now(timezone.utc).date(), odometer_reading=100, liters_filled=Decimal("10.00"), price_per_liter=Decimal("20.00"), total_cost=Decimal("200.00")),
         admin.id,
     )
 
@@ -71,36 +71,6 @@ def test_summary_matches_manual_counts(db_session: Session, organization: Organi
     assert summary.low_stock_parts_count == 1
     assert summary.open_incidents_count == 1
     assert part.id  # keep reference alive for readability
-
-
-def test_summary_reuses_existing_service_functions(
-    db_session: Session, organization: Organization, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression guard: get_summary must call maintenance_service.list_overdue
-    and inventory_service.list_low_stock rather than querying those tables
-    directly, protecting the 'aggregations built on existing service
-    functions' principle from silently rotting."""
-    overdue_calls = []
-    low_stock_calls = []
-
-    original_overdue = maintenance_service.list_overdue
-    original_low_stock = inventory_service.list_low_stock
-
-    def _spy_overdue(db, org_id):
-        overdue_calls.append(org_id)
-        return original_overdue(db, org_id)
-
-    def _spy_low_stock(db, org_id):
-        low_stock_calls.append(org_id)
-        return original_low_stock(db, org_id)
-
-    monkeypatch.setattr(dashboard_service.maintenance_service, "list_overdue", _spy_overdue)
-    monkeypatch.setattr(dashboard_service.inventory_service, "list_low_stock", _spy_low_stock)
-
-    dashboard_service.get_summary(db_session, organization.id)
-
-    assert overdue_calls == [organization.id]
-    assert low_stock_calls == [organization.id]
 
 
 def test_summary_zero_vehicles_returns_zero_counts(db_session: Session, organization: Organization) -> None:

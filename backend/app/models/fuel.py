@@ -2,7 +2,7 @@ import uuid
 from datetime import date as date_
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,6 +13,11 @@ from app.models.mixins import AuditMixin, OrgScopedMixin, VehicleDriverRefMixin
 
 class FuelLog(Base, OrgScopedMixin, AuditMixin, VehicleDriverRefMixin):
     __tablename__ = "fuel_logs"
+    # The dashboard and trend queries filter an org's logs by date range, and per-vehicle history by date.
+    __table_args__ = (
+        Index("ix_fuel_logs_org_date", "organization_id", "date"),
+        Index("ix_fuel_logs_vehicle_date", "vehicle_id", "date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     vehicle_id: Mapped[uuid.UUID] = mapped_column(

@@ -129,6 +129,10 @@ export const dashboardKeys = {
       ? ([...dashboardKeys.all, "maintenance-calendar"] as const)
       : ([...dashboardKeys.all, "maintenance-calendar", windowDays] as const),
   fleetHealth: () => [...dashboardKeys.all, "fleet-health"] as const,
+  // The paged (load-more) variants the dashboard itself uses. Distinct keys: an infinite query's cache holds pages,
+  // not a flat list, so it must never share a key with the plain query above.
+  maintenanceCalendarPages: (windowDays?: number) => [...dashboardKeys.all, "maintenance-calendar-pages", windowDays] as const,
+  fleetHealthPages: () => [...dashboardKeys.all, "fleet-health-pages"] as const,
 }
 
 export const documentKeys = {
@@ -139,7 +143,10 @@ export const documentKeys = {
 
 export const notificationKeys = {
   all: ["notifications"] as const,
-  list: () => [...notificationKeys.all, "list"] as const,
+  list: (limit?: number) =>
+    limit === undefined ? ([...notificationKeys.all, "list"] as const) : ([...notificationKeys.all, "list", limit] as const),
+  unread: () => [...notificationKeys.all, "unread"] as const,
+  pages: (type?: string) => [...notificationKeys.all, "pages", type] as const,
 }
 
 export const chatKeys = {

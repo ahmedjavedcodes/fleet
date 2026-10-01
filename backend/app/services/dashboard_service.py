@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver
-from app.models.enums import DriverStatus, IncidentResolutionStatus, VehicleStatus
+from app.models.enums import DriverStatus, VehicleStatus
 from app.models.vehicle import Vehicle
 from app.schemas.dashboard import (
     DashboardSummaryResponse,
@@ -14,7 +14,7 @@ from app.schemas.dashboard import (
     VehicleHealthScore,
     VehicleHealthSignals,
 )
-from app.services import compliance_service, fuel_service, incident_service, inventory_service, maintenance_service
+from app.services import compliance_service, fuel_service, incident_service, inventory_service, maintenance_service, supplier_service
 
 # --- Fleet-health business constants -----------------------------------------
 #
@@ -38,8 +38,10 @@ _INCIDENT_SIGNAL_DEFAULT = 10
 
 
 def get_summary(db: Session, org_id: uuid.UUID) -> DashboardSummaryResponse:
-    """Composes existing service functions -- does not reimplement any of
-    their queries. Every value reflects the same instant; no writes."""
+    """Every figure is computed by the database (SELECT COUNT(*) / SUM), never by loading rows and counting them in
+    Python: with tens of thousands of rows the old len(list_...) versions dominated the page load. Each count has the
+    same rows as the list function it replaced (maintenance_service.list_overdue, inventory_service.list_low_stock,
+    incident_service.list_incidents for open + investigating). Read-only."""
     total_vehicles = db.execute(
         select(func.count(Vehicle.id)).where(
             Vehicle.organization_id == org_id, Vehicle.is_deleted.is_(False), Vehicle.status != VehicleStatus.retired
@@ -51,20 +53,14 @@ def get_summary(db: Session, org_id: uuid.UUID) -> DashboardSummaryResponse:
         )
     ).scalar_one()
 
-    month_fuel_cost = fuel_service.get_monthly_summary(db, org_id, month=None).total_cost
-    overdue_maintenance_count = len(maintenance_service.list_overdue(db, org_id))
-    low_stock_parts_count = len(inventory_service.list_low_stock(db, org_id))
-    open_incidents_count = len(
-        incident_service.list_incidents(db, org_id, resolution_status=IncidentResolutionStatus.open)
-    ) + len(incident_service.list_incidents(db, org_id, resolution_status=IncidentResolutionStatus.investigating))
-
     return DashboardSummaryResponse(
         total_vehicles=total_vehicles,
         active_drivers=active_drivers,
-        month_fuel_cost=month_fuel_cost,
-        overdue_maintenance_count=overdue_maintenance_count,
-        low_stock_parts_count=low_stock_parts_count,
-        open_incidents_count=open_incidents_count,
+        month_fuel_cost=fuel_service.month_total_cost(db, org_id),
+        overdue_maintenance_count=maintenance_service.count_overdue(db, org_id),
+        low_stock_parts_count=inventory_service.count_low_stock(db, org_id),
+        open_incidents_count=incident_service.count_unresolved(db, org_id),
+        active_suppliers_count=supplier_service.count_active_suppliers(db, org_id),
     )
 
 
@@ -73,55 +69,40 @@ def get_fuel_trends(db: Session, org_id: uuid.UUID, months: int = 12) -> list[Fu
     return [FuelTrendPoint(month=month, total_cost=total_cost, avg_cost_per_km=avg) for month, total_cost, avg in rows]
 
 
+def get_maintenance_calendar_page(
+    db: Session, org_id: uuid.UUID, window_days: int = 30, *, limit: int | None = None, offset: int = 0
+) -> tuple[list[MaintenanceCalendarItem], int]:
+    """
+    Overdue items (unfiltered by window -- an item never drops off for being
+    "too overdue") plus items due within window_days that are not already
+    overdue, so the same (vehicle, service_type) never appears twice. Uses the
+    date window, not list_upcoming's km window: that would miss vehicles with no
+    service_interval_km configured and include ones whose km-distance is close
+    but whose calendar date isn't (see maintenance_service.list_upcoming_by_date).
+
+    Ordered overdue first, then by due date, and paged IN SQL: returns
+    (the requested page, the total across all pages). limit=None returns everything.
+    """
+    rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset)
+    return [
+        MaintenanceCalendarItem(
+            vehicle_id=vehicle_id,
+            plate_number=plate,
+            vehicle_name=f"{make} {model}",
+            driver_name=driver_name,
+            last_service_date=last_date,
+            service_type=service_type,
+            due_date=due_date,
+            due_km=due_km,
+            status=status,
+        )
+        for vehicle_id, plate, make, model, driver_name, last_date, service_type, due_date, due_km, status in rows
+    ], total
+
+
 def get_maintenance_calendar(db: Session, org_id: uuid.UUID, window_days: int = 30) -> list[MaintenanceCalendarItem]:
-    """
-    Merges overdue items (unfiltered by window -- an item never drops off for
-    being "too overdue") with items due within window_days. Uses
-    list_upcoming_by_date, not list_upcoming: the latter's window is km-based
-    and would both miss vehicles with no service_interval_km configured and
-    include vehicles whose km-distance is close but whose calendar date isn't
-    -- the wrong dimension for a "next N days" view (see maintenance_service.
-    list_upcoming_by_date's docstring for the full reasoning).
-    """
-    overdue = maintenance_service.list_overdue(db, org_id)
-    upcoming = maintenance_service.list_upcoming_by_date(db, org_id, window_days=window_days)
-
-    # An item overdue by km can still have a next_due_date inside the window
-    # (e.g. driven far this month), which would otherwise also satisfy
-    # list_upcoming_by_date -- exclude anything already counted as overdue so
-    # the same (vehicle, service_type) never appears on the calendar twice.
-    overdue_keys = {(o.vehicle_id, o.service_type) for o in overdue}
-    upcoming = [u for u in upcoming if (u.vehicle_id, u.service_type) not in overdue_keys]
-
-    items = [
-        MaintenanceCalendarItem(
-            vehicle_id=o.vehicle_id,
-            plate_number=o.plate_number,
-            vehicle_name=o.vehicle_name,
-            driver_name=o.driver_name,
-            last_service_date=o.last_service_date,
-            service_type=o.service_type,
-            due_date=o.next_due_date,
-            due_km=o.next_due_km,
-            status="overdue",
-        )
-        for o in overdue
-    ]
-    items += [
-        MaintenanceCalendarItem(
-            vehicle_id=u.vehicle_id,
-            plate_number=u.plate_number,
-            vehicle_name=u.vehicle_name,
-            driver_name=u.driver_name,
-            last_service_date=u.last_service_date,
-            service_type=u.service_type,
-            due_date=u.next_due_date,
-            due_km=u.next_due_km,
-            status="upcoming",
-        )
-        for u in upcoming
-    ]
-    return items
+    """The whole calendar (no paging): the form the AI agents' tools use."""
+    return get_maintenance_calendar_page(db, org_id, window_days)[0]
 
 
 def _incident_signal(count: int) -> int:
@@ -159,7 +140,13 @@ def _weighted_health_score(signals: dict[str, int | None]) -> int:
     return int((weighted_sum / total_weight).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]:
+def get_fleet_health_page(
+    db: Session, org_id: uuid.UUID, *, limit: int | None = None, offset: int = 0
+) -> tuple[list[VehicleHealthScore], int]:
+    """Health score per non-retired vehicle. Every signal is computed fleet-wide in a handful of queries (compliance
+    rules and latest services, incident counts, fuel cost/km periods, overdue and due-soon vehicles) rather than a few
+    queries per vehicle. With `limit`, the result is sorted worst first (then by plate) and cut to that page; without
+    it every vehicle is returned in query order. Returns (vehicles, total number of scored vehicles)."""
     vehicles = list(
         db.execute(
             select(Vehicle).where(
@@ -168,27 +155,23 @@ def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]
         ).scalars()
     )
     if not vehicles:
-        return []
+        return [], 0
 
-    # Computed once for the whole fleet, not once per vehicle -- still exact
-    # reuse of the existing service functions, just called at their natural
-    # (org-wide) granularity instead of N times.
-    overdue_vehicle_ids = {o.vehicle_id for o in maintenance_service.list_overdue(db, org_id)}
-    due_soon_vehicle_ids = {u.vehicle_id for u in maintenance_service.list_upcoming(db, org_id)}
+    overdue_vehicle_ids = maintenance_service.overdue_vehicle_ids(db, org_id)
+    due_soon_vehicle_ids = maintenance_service.due_soon_vehicle_ids(db, org_id)
+    compliance_by_vehicle = compliance_service.compliance_statuses_by_vehicle(db, org_id, vehicles)
+    incident_counts = incident_service.recent_incident_counts(db, org_id)
+    fuel_periods = fuel_service.cost_per_km_periods_by_vehicle(db, org_id)
 
     results: list[VehicleHealthScore] = []
     for vehicle in vehicles:
-        compliance_result = compliance_service.get_vehicle_compliance(db, org_id, vehicle.id)
-        if compliance_result.items:
-            compliance_signal = round(
-                sum(_COMPLIANCE_STATUS_SCORES[item.status] for item in compliance_result.items)
-                / len(compliance_result.items)
-            )
+        statuses = compliance_by_vehicle.get(vehicle.id) or []
+        if statuses:
+            compliance_signal = round(sum(_COMPLIANCE_STATUS_SCORES[status] for status in statuses) / len(statuses))
         else:
             compliance_signal = None  # no applicable rules -- excluded, not defaulted (spec EC-4)
 
-        incident_count = incident_service.count_recent_incidents_for_vehicle(db, org_id, vehicle.id)
-        incidents_signal = _incident_signal(incident_count)
+        incidents_signal = _incident_signal(incident_counts.get(vehicle.id, 0))
 
         if vehicle.id in overdue_vehicle_ids:
             maintenance_signal = 10
@@ -197,7 +180,7 @@ def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]
         else:
             maintenance_signal = 100
 
-        current_avg, prior_avg = fuel_service.get_vehicle_cost_per_km_periods(db, org_id, vehicle.id)
+        current_avg, prior_avg = fuel_periods.get(vehicle.id, (None, None))
         fuel_signal = _fuel_efficiency_signal(current_avg, prior_avg)
 
         signals = {
@@ -217,4 +200,13 @@ def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]
                 previous_cost_per_km=prior_avg,
             )
         )
-    return results
+    total = len(results)
+    if limit is not None:
+        results.sort(key=lambda r: (r.health_score, r.plate_number))
+        results = results[offset : offset + limit]
+    return results, total
+
+
+def get_fleet_health(db: Session, org_id: uuid.UUID) -> list[VehicleHealthScore]:
+    """Every scored vehicle (no paging), in query order: the form the AI agents' tools use."""
+    return get_fleet_health_page(db, org_id)[0]

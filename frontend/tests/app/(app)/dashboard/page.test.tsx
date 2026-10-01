@@ -19,8 +19,8 @@ const useFleetHealth = vi.fn(pending)
 vi.mock("@/lib/api/dashboard", () => ({
   useDashboardSummary: () => useDashboardSummary(),
   useFuelTrends: () => useFuelTrends(),
-  useMaintenanceCalendar: () => useMaintenanceCalendar(),
-  useFleetHealth: () => useFleetHealth(),
+  useMaintenanceCalendarPages: () => useMaintenanceCalendar(),
+  useFleetHealthPages: () => useFleetHealth(),
 }))
 
 vi.mock("@/lib/api/maintenance", () => ({ useMaintenanceLogs: () => pending() }))

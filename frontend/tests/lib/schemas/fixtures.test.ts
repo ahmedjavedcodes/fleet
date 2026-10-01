@@ -522,6 +522,7 @@ describe("purchase order / assignment / timeline / dashboard schemas", () => {
         overdue_maintenance_count: 2,
         low_stock_parts_count: 1,
         open_incidents_count: 0,
+        active_suppliers_count: 4,
       })
     ).toBeTruthy()
 

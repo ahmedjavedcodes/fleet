@@ -21,11 +21,12 @@ def list_notifications(
     type: NotificationType | None = None,
     unread_only: bool = False,
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[NotificationResponse]:
-    rows = notification_service.list_notifications(db, current_user, type=type, unread_only=unread_only, limit=limit)
-    return [NotificationResponse.model_validate(n) for n in rows]
+    """Stored notifications plus, for admins and fleet managers, the unresolved incidents as warnings/events."""
+    return notification_service.list_feed(db, current_user, type=type, unread_only=unread_only, limit=limit, offset=offset)
 
 
 @router.patch("/{notification_id}/read", response_model=NotificationResponse)

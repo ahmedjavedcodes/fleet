@@ -10,9 +10,12 @@ export const dashboardSummaryResponseSchema = z.object({
   active_drivers: z.number().int(),
   month_fuel_cost: decimalStringSchema,
   overdue_maintenance_count: z.number().int(),
+  // Still returned for the AI agents' summary tool; the dashboard shows suppliers instead.
   low_stock_parts_count: z.number().int(),
   // Counts open + investigating incidents.
   open_incidents_count: z.number().int(),
+  // Suppliers that haven't been deleted (a supplier has no other "active" flag).
+  active_suppliers_count: z.number().int(),
 })
 export type DashboardSummaryResponse = z.infer<typeof dashboardSummaryResponseSchema>
 

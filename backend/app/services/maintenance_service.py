@@ -1,10 +1,10 @@
 import calendar
 import uuid
 from datetime import date as date_type
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.driver import Driver
@@ -216,6 +216,105 @@ def create_mechanic_report(
     db.commit()
     db.refresh(report)
     return report, alerts
+
+
+def _latest_logs_stmt(org_id: uuid.UUID, *columns):
+    """SELECT of `columns` over the latest MaintenanceLog per (vehicle_id, service_type) joined to its Vehicle, built so
+    the same rows can be loaded as entities, counted or paged in SQL. See _latest_logs_joined_with_vehicle."""
+    latest = (
+        select(
+            MaintenanceLog.vehicle_id,
+            MaintenanceLogService.service_type,
+            func.max(MaintenanceLog.date).label("max_date"),
+        )
+        .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
+        .where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False))
+        .group_by(MaintenanceLog.vehicle_id, MaintenanceLogService.service_type)
+        .subquery()
+    )
+    return (
+        select(*columns)
+        .select_from(MaintenanceLog)
+        .join(Vehicle, Vehicle.id == MaintenanceLog.vehicle_id)
+        .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
+        .join(
+            latest,
+            (MaintenanceLog.vehicle_id == latest.c.vehicle_id)
+            & (MaintenanceLogService.service_type == latest.c.service_type)
+            & (MaintenanceLog.date == latest.c.max_date),
+        )
+        .where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False), Vehicle.is_deleted.is_(False))
+    )
+
+
+def _overdue_clause(today: date_type):
+    """current_odometer > next_due_km OR today > next_due_date -- the SQL form of list_overdue's test."""
+    return or_(
+        and_(MaintenanceLog.next_due_km.is_not(None), Vehicle.current_odometer > MaintenanceLog.next_due_km),
+        and_(MaintenanceLog.next_due_date.is_not(None), MaintenanceLog.next_due_date < today),
+    )
+
+
+def _due_by_date_clause(today: date_type, window_days: int):
+    """0 <= (next_due_date - today).days < window_days -- the SQL form of list_upcoming_by_date's test."""
+    return and_(
+        MaintenanceLog.next_due_date.is_not(None),
+        MaintenanceLog.next_due_date >= today,
+        MaintenanceLog.next_due_date < today + timedelta(days=window_days),
+    )
+
+
+def count_overdue(db: Session, org_id: uuid.UUID) -> int:
+    """Same rows as len(list_overdue(...)), counted by the database."""
+    today = datetime.now(timezone.utc).date()
+    stmt = _latest_logs_stmt(org_id, func.count()).where(_overdue_clause(today))
+    return db.execute(stmt).scalar_one()
+
+
+def overdue_vehicle_ids(db: Session, org_id: uuid.UUID) -> set[uuid.UUID]:
+    today = datetime.now(timezone.utc).date()
+    stmt = _latest_logs_stmt(org_id, MaintenanceLog.vehicle_id).where(_overdue_clause(today)).distinct()
+    return set(db.execute(stmt).scalars())
+
+
+def due_soon_vehicle_ids(db: Session, org_id: uuid.UUID, window_km: int = 1000) -> set[uuid.UUID]:
+    """Vehicles with a latest log where 0 <= next_due_km - current_odometer < window_km (list_upcoming's test)."""
+    remaining = MaintenanceLog.next_due_km - Vehicle.current_odometer
+    stmt = (
+        _latest_logs_stmt(org_id, MaintenanceLog.vehicle_id)
+        .where(MaintenanceLog.next_due_km.is_not(None), remaining >= 0, remaining < window_km)
+        .distinct()
+    )
+    return set(db.execute(stmt).scalars())
+
+
+def calendar_page(
+    db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0
+) -> tuple[list, int]:
+    """The maintenance calendar (overdue, plus due within `window_days` and not already overdue) as plain rows, ordered
+    overdue first, then by due date, and cut to one page IN SQL, with the total. Row: (vehicle_id, plate_number, make,
+    model, driver_name, last_service_date, service_type, next_due_date, next_due_km, status)."""
+    today = datetime.now(timezone.utc).date()
+    overdue = _overdue_clause(today)
+    wanted = or_(overdue, _due_by_date_clause(today, window_days))
+    total = db.execute(_latest_logs_stmt(org_id, func.count()).where(wanted)).scalar_one()
+    stmt = (
+        _latest_logs_stmt(
+            org_id, Vehicle.id, Vehicle.plate_number, Vehicle.make, Vehicle.model, Driver.full_name, MaintenanceLog.date,
+            MaintenanceLogService.service_type, MaintenanceLog.next_due_date, MaintenanceLog.next_due_km,
+            case((overdue, "overdue"), else_="upcoming").label("status"),
+        )
+        .outerjoin(Driver, Driver.id == MaintenanceLog.driver_id)
+        .where(wanted)
+        .order_by(
+            case((overdue, 0), else_=1), MaintenanceLog.next_due_date.asc().nulls_last(), Vehicle.plate_number,
+            MaintenanceLogService.service_type,
+        )
+        .offset(offset)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).all()), total
 
 
 def _latest_logs_joined_with_vehicle(

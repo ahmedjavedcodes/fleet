@@ -72,6 +72,32 @@ def update_incident_resolution(
     return incident
 
 
+# What the dashboard calls "open": not yet resolved or closed.
+UNRESOLVED_STATUSES = (IncidentResolutionStatus.open, IncidentResolutionStatus.investigating)
+
+
+def count_unresolved(db: Session, org_id: uuid.UUID) -> int:
+    """SELECT COUNT(*) of open + investigating incidents: ix_incident_logs_org_status_severity serves it."""
+    return db.execute(
+        select(func.count(IncidentLog.id)).where(
+            IncidentLog.organization_id == org_id,
+            IncidentLog.is_deleted.is_(False),
+            IncidentLog.resolution_status.in_(UNRESOLVED_STATUSES),
+        )
+    ).scalar_one()
+
+
+def recent_incident_counts(db: Session, org_id: uuid.UUID, days: int = 90) -> dict[uuid.UUID, int]:
+    """Trailing-`days` incident count per vehicle in ONE grouped query (vehicles with none are absent)."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date()
+    rows = db.execute(
+        select(IncidentLog.vehicle_id, func.count(IncidentLog.id))
+        .where(IncidentLog.organization_id == org_id, IncidentLog.is_deleted.is_(False), IncidentLog.date >= since)
+        .group_by(IncidentLog.vehicle_id)
+    ).all()
+    return {vehicle_id: count for vehicle_id, count in rows}
+
+
 def count_recent_incidents_for_vehicle(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID, days: int = 90) -> int:
     """Count of incidents in the trailing `days` days for one vehicle. Used by
     dashboard_service's fleet-health incident signal, not exposed as its own route."""

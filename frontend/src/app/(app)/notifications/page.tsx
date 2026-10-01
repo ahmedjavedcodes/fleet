@@ -1,17 +1,18 @@
 "use client"
 
 import { AlertTriangle, BellRing } from "lucide-react"
-import { useMarkNotificationRead, useNotifications } from "@/lib/api/notifications"
+import { useMarkNotificationRead, useNotificationPages } from "@/lib/api/notifications"
 import type { Notification } from "@/lib/schemas/notification"
 import { PageHeader } from "@/components/layout/page-header"
 import { NotificationItem } from "@/components/notifications/notification-item"
 import { EmptyState } from "@/components/states/empty-state"
 import { PageSkeleton } from "@/components/states/page-skeleton"
 import { QueryRegion } from "@/components/states/query-boundary"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-function unreadCount(rows: Notification[] | undefined, type: Notification["type"]): number {
-  return rows?.filter((n) => n.type === type && !n.is_read).length ?? 0
+function unreadCount(rows: Notification[] | undefined): number {
+  return rows?.filter((n) => !n.is_read).length ?? 0
 }
 
 function TabLabel({ label, count }: { label: string; count: number }) {
@@ -27,26 +28,50 @@ function TabLabel({ label, count }: { label: string; count: number }) {
   )
 }
 
+type FeedQuery = ReturnType<typeof useNotificationPages>
+
+// One tab: the notifications of one type, a page at a time. Only what has been loaded is rendered, however many
+// incidents there are.
+function Feed({
+  query,
+  empty,
+  onOpen,
+}: {
+  query: FeedQuery
+  empty: React.ReactNode
+  onOpen: (notification: Notification) => void
+}) {
+  return (
+    <QueryRegion query={query} skeleton={<PageSkeleton />} isEmpty={(rows) => rows.length === 0} empty={empty} areaLabel="notifications">
+      {(rows) => (
+        <div className="space-y-3">
+          <ul className="space-y-2">
+            {rows.map((n) => (
+              <li key={n.id}>
+                <NotificationItem notification={n} onOpen={onOpen} />
+              </li>
+            ))}
+          </ul>
+          {query.hasNextPage ? (
+            <div className="flex justify-center">
+              <Button type="button" variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+                {query.isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </QueryRegion>
+  )
+}
+
 export default function NotificationsPage() {
-  const notificationsQuery = useNotifications()
+  const warningsQuery = useNotificationPages("warning")
+  const eventsQuery = useNotificationPages("event")
   const markRead = useMarkNotificationRead()
 
   function open(notification: Notification) {
     if (!notification.is_read) markRead.mutate(notification.id)
-  }
-
-  function list(rows: Notification[], type: Notification["type"], empty: React.ReactNode) {
-    const ofType = rows.filter((n) => n.type === type)
-    if (ofType.length === 0) return empty
-    return (
-      <ul className="space-y-2">
-        {ofType.map((n) => (
-          <li key={n.id}>
-            <NotificationItem notification={n} onOpen={open} />
-          </li>
-        ))}
-      </ul>
-    )
   }
 
   return (
@@ -55,35 +80,27 @@ export default function NotificationsPage() {
       <Tabs defaultValue="warnings">
         <TabsList>
           <TabsTrigger value="warnings">
-            <TabLabel label="Warnings" count={unreadCount(notificationsQuery.data, "warning")} />
+            <TabLabel label="Warnings" count={unreadCount(warningsQuery.data)} />
           </TabsTrigger>
           <TabsTrigger value="events">
-            <TabLabel label="Notified events" count={unreadCount(notificationsQuery.data, "event")} />
+            <TabLabel label="Notified events" count={unreadCount(eventsQuery.data)} />
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="warnings">
-          <QueryRegion query={notificationsQuery} skeleton={<PageSkeleton />} areaLabel="notifications">
-            {(rows) =>
-              list(
-                rows,
-                "warning",
-                <EmptyState icon={AlertTriangle} title="No warnings" description="Serious incidents and alerts will show up here." />
-              )
-            }
-          </QueryRegion>
+          <Feed
+            query={warningsQuery}
+            onOpen={open}
+            empty={<EmptyState icon={AlertTriangle} title="No warnings" description="Serious incidents and alerts will show up here." />}
+          />
         </TabsContent>
 
         <TabsContent value="events">
-          <QueryRegion query={notificationsQuery} skeleton={<PageSkeleton />} areaLabel="notifications">
-            {(rows) =>
-              list(
-                rows,
-                "event",
-                <EmptyState icon={BellRing} title="No notified events" description="Reported incidents and other updates will show up here." />
-              )
-            }
-          </QueryRegion>
+          <Feed
+            query={eventsQuery}
+            onOpen={open}
+            empty={<EmptyState icon={BellRing} title="No notified events" description="Reported incidents and other updates will show up here." />}
+          />
         </TabsContent>
       </Tabs>
     </div>

@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -84,6 +84,17 @@ def list_low_stock(db: Session, org_id: uuid.UUID) -> list[PartsInventory]:
         PartsInventory.qty_on_hand < PartsInventory.reorder_threshold,
     )
     return list(db.execute(stmt).scalars())
+
+
+def count_low_stock(db: Session, org_id: uuid.UUID) -> int:
+    """len(list_low_stock(...)) as a SELECT COUNT(*)."""
+    return db.execute(
+        select(func.count(PartsInventory.id)).where(
+            PartsInventory.organization_id == org_id,
+            PartsInventory.is_deleted.is_(False),
+            PartsInventory.qty_on_hand < PartsInventory.reorder_threshold,
+        )
+    ).scalar_one()
 
 
 def update_part(

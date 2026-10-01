@@ -136,7 +136,7 @@ def test_list_returns_only_the_callers_own_notifications(client: TestClient, db_
     assert [r["title"] for r in driver_rows] == ["Only for the driver"]
     assert len(admin_rows) == 1
     assert "Only for the driver" not in [r["title"] for r in admin_rows]
-    assert set(admin_rows[0]) == {"id", "title", "message", "type", "is_read", "created_at"}
+    assert set(admin_rows[0]) == {"id", "title", "message", "type", "is_read", "created_at", "source", "incident_id"}
 
 
 def test_list_supports_type_and_unread_filters_and_is_newest_first(client: TestClient, db_session: Session, fleet) -> None:

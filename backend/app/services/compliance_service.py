@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,78 @@ def update_rule(
     return rule
 
 
+def evaluate_rule(
+    interval_km: int, interval_months: int, current_odometer: int, last_date, last_odometer: int, today
+) -> tuple[str, int, int]:
+    """(status, km_remaining, days_remaining) of one compliance rule against a vehicle's last service of that type."""
+    km_gap = current_odometer - last_odometer
+    total_days = (_add_months(last_date, interval_months) - last_date).days
+    elapsed_days = (today - last_date).days
+
+    if km_gap > interval_km or elapsed_days > total_days:
+        status_ = "overdue"
+    # Integer-safe check for elapsed/total >= 0.8 (avoids float rounding
+    # on the multiplication): elapsed*5 >= total*4  <=>  elapsed >= 0.8*total.
+    elif km_gap * 5 >= interval_km * 4 or elapsed_days * 5 >= total_days * 4:
+        status_ = "due_soon"
+    else:
+        status_ = "compliant"
+    return status_, interval_km - km_gap, total_days - elapsed_days
+
+
+def compliance_statuses_by_vehicle(db: Session, org_id: uuid.UUID, vehicles: list[Vehicle]) -> dict[uuid.UUID, list[str]]:
+    """The compliance status of every applicable rule for each of `vehicles`, from three queries in total (the rules,
+    and the latest service per vehicle and type) instead of a few per vehicle. Exactly get_vehicle_compliance's
+    statuses; a vehicle with no applicable rule maps to []."""
+    rules = list(
+        db.execute(
+            select(ComplianceRule).where(ComplianceRule.organization_id == org_id, ComplianceRule.is_deleted.is_(False))
+        ).scalars()
+    )
+    rules_by_model: dict[tuple[str, str], list[ComplianceRule]] = {}
+    for rule in rules:
+        rules_by_model.setdefault((rule.vehicle_make, rule.vehicle_model), []).append(rule)
+    if not rules_by_model:
+        return {v.id: [] for v in vehicles}
+
+    ranked = (
+        select(
+            MaintenanceLog.vehicle_id.label("vehicle_id"),
+            MaintenanceLogService.service_type.label("service_type"),
+            MaintenanceLog.date.label("date"),
+            MaintenanceLog.odometer_at_service.label("odometer"),
+            func.row_number()
+            .over(
+                partition_by=(MaintenanceLog.vehicle_id, MaintenanceLogService.service_type),
+                order_by=(MaintenanceLog.date.desc(), MaintenanceLog.odometer_at_service.desc()),
+            )
+            .label("rn"),
+        )
+        .join(MaintenanceLogService, MaintenanceLogService.maintenance_log_id == MaintenanceLog.id)
+        .where(MaintenanceLog.organization_id == org_id, MaintenanceLog.is_deleted.is_(False))
+        .subquery()
+    )
+    latest = {
+        (vehicle_id, service_type): (date_, odometer)
+        for vehicle_id, service_type, date_, odometer in db.execute(
+            select(ranked.c.vehicle_id, ranked.c.service_type, ranked.c.date, ranked.c.odometer).where(ranked.c.rn == 1)
+        ).all()
+    }
+
+    today = datetime.now(timezone.utc).date()
+    out: dict[uuid.UUID, list[str]] = {}
+    for vehicle in vehicles:
+        statuses: list[str] = []
+        for rule in rules_by_model.get((vehicle.make, vehicle.model), []):
+            last = latest.get((vehicle.id, rule.service_type))
+            if last is None:
+                statuses.append("never_performed")
+            else:
+                statuses.append(evaluate_rule(rule.interval_km, rule.interval_months, vehicle.current_odometer, last[0], last[1], today)[0])
+        out[vehicle.id] = statuses
+    return out
+
+
 def get_vehicle_compliance(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID) -> VehicleComplianceResponse:
     """
     Read-only, computed fresh on every call -- never stored. For each
@@ -138,26 +210,15 @@ def get_vehicle_compliance(db: Session, org_id: uuid.UUID, vehicle_id: uuid.UUID
             )
             continue
 
-        km_gap = vehicle.current_odometer - last_service.odometer_at_service
-        rule_due_date = _add_months(last_service.date, rule.interval_months)
-        total_days = (rule_due_date - last_service.date).days
-        elapsed_days = (today - last_service.date).days
-
-        if km_gap > rule.interval_km or elapsed_days > total_days:
-            compliance_status = "overdue"
-        # Integer-safe check for elapsed/total >= 0.8 (avoids float rounding
-        # on the multiplication): elapsed*5 >= total*4  <=>  elapsed >= 0.8*total.
-        elif km_gap * 5 >= rule.interval_km * 4 or elapsed_days * 5 >= total_days * 4:
-            compliance_status = "due_soon"
-        else:
-            compliance_status = "compliant"
-
+        compliance_status, km_remaining, days_remaining = evaluate_rule(
+            rule.interval_km, rule.interval_months, vehicle.current_odometer, last_service.date, last_service.odometer_at_service, today
+        )
         items.append(
             ComplianceStatusItem(
                 rule=rule_response,
                 status=compliance_status,
-                km_remaining=rule.interval_km - km_gap,
-                days_remaining=total_days - elapsed_days,
+                km_remaining=km_remaining,
+                days_remaining=days_remaining,
                 last_service_date=last_service.date,
             )
         )

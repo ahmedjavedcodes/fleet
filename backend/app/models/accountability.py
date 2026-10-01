@@ -3,7 +3,7 @@ from datetime import date as date_
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -63,6 +63,12 @@ class IncidentLog(Base, OrgScopedMixin, AuditMixin, VehicleDriverRefMixin):
     and only via the dedicated resolution-update schema/route."""
 
     __tablename__ = "incident_logs"
+    # `resolution_status` is the incident's status. The dashboard counts and the warnings feed filter on it (with
+    # severity), and the per-vehicle "recent incidents" count filters on vehicle and date.
+    __table_args__ = (
+        Index("ix_incident_logs_org_status_severity", "organization_id", "resolution_status", "severity"),
+        Index("ix_incident_logs_vehicle_date", "vehicle_id", "date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     driver_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=True)

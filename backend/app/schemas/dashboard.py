@@ -13,8 +13,10 @@ class DashboardSummaryResponse(BaseModel):
     active_drivers: int
     month_fuel_cost: Decimal
     overdue_maintenance_count: int
+    # Kept for the AI agents' summary tool; the dashboard UI no longer shows it.
     low_stock_parts_count: int
     open_incidents_count: int
+    active_suppliers_count: int
 
 
 class FuelTrendPoint(BaseModel):

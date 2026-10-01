@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { dashboardKeys } from "@/lib/query/keys"
 import {
   dashboardSummaryResponseSchema,
@@ -9,8 +9,11 @@ import {
   type FleetHealthResponse,
   type FuelTrendsResponse,
   type MaintenanceCalendarResponse,
+  type MaintenanceCalendarItem,
+  type VehicleHealthScore,
 } from "@/lib/schemas/dashboard"
-import { apiRequest } from "./client"
+import { apiRequest, apiRequestPage, type Page } from "./client"
+import { nextOffset } from "./paging"
 
 // Every endpoint here is Admin/Fleet-Manager only (CLAUDE.md §2.2) — never
 // call these for M/D; compose their dashboards from the endpoints those
@@ -33,6 +36,53 @@ export function getMaintenanceCalendar(windowDays?: number): Promise<Maintenance
 
 export function getFleetHealth(): Promise<FleetHealthResponse> {
   return apiRequest("/dashboard/fleet-health", { schema: fleetHealthResponseSchema })
+}
+
+// How many rows the dashboard's lists fetch (and render) at a time; "Load more" fetches the next page.
+export const DASHBOARD_PAGE_SIZE = 25
+
+/** A list that loads page by page: everything fetched so far, and the unpaged total when the backend reports it. */
+export type PagedList<T> = { items: T[]; total: number | null }
+
+function toPagedList<T>(data: { pages: Page<T[]>[] }): PagedList<T> {
+  return { items: data.pages.flatMap((p) => p.items), total: data.pages[0]?.total ?? null }
+}
+
+export function getMaintenanceCalendarPage(windowDays: number, offset: number): Promise<Page<MaintenanceCalendarResponse>> {
+  return apiRequestPage("/dashboard/maintenance-calendar", {
+    query: { window_days: windowDays, limit: DASHBOARD_PAGE_SIZE, offset },
+    schema: maintenanceCalendarResponseSchema,
+  })
+}
+
+export function getFleetHealthPage(offset: number): Promise<Page<FleetHealthResponse>> {
+  return apiRequestPage("/dashboard/fleet-health", {
+    query: { limit: DASHBOARD_PAGE_SIZE, offset },
+    schema: fleetHealthResponseSchema,
+  })
+}
+
+/** Overdue first, then by due date: ordered and cut by the backend, so only one page is ever fetched or rendered. */
+export function useMaintenanceCalendarPages(windowDays: number) {
+  return useInfiniteQuery({
+    queryKey: dashboardKeys.maintenanceCalendarPages(windowDays),
+    queryFn: ({ pageParam }) => getMaintenanceCalendarPage(windowDays, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => nextOffset(all, last, DASHBOARD_PAGE_SIZE),
+    select: (data): PagedList<MaintenanceCalendarItem> => toPagedList(data),
+  })
+}
+
+/** Worst health first, one page at a time. */
+export function useFleetHealthPages(options?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: dashboardKeys.fleetHealthPages(),
+    queryFn: ({ pageParam }) => getFleetHealthPage(pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => nextOffset(all, last, DASHBOARD_PAGE_SIZE),
+    select: (data): PagedList<VehicleHealthScore> => toPagedList(data),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useDashboardSummary() {
