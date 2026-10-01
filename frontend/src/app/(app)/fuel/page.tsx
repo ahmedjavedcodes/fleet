@@ -16,6 +16,7 @@ import { VehicleLink } from "@/components/fleet/vehicle-link"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DataTable, type DataTableColumn } from "@/components/primitives/data-table"
 import { FilterBar } from "@/components/primitives/filter-bar"
+import { Input } from "@/components/ui/input"
 import { KpiTile } from "@/components/primitives/kpi-tile"
 import { SectionPanel } from "@/components/primitives/section-panel"
 import { StatusPill } from "@/components/primitives/status-pill"
@@ -61,12 +62,16 @@ export default function FuelPage() {
   const [tripFormOpen, setTripFormOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [range, setRange] = useState({ from: "", to: "" })
+  const [summarySearch, setSummarySearch] = useState("")
 
   // Fuel dates are filtered by the server (the list is capped at 50 rows, so a client-side
   // filter would only ever see the first page); trips are few, so they filter locally.
   const fuelLogsQuery = useFuelLogs({ limit: 50, date_from: range.from || undefined, date_to: range.to || undefined })
   const tripsQuery = useTrips()
   const summaryQuery = useFuelSummary(todayMonth(), { enabled: canSeeSummary })
+  // The summary is one row per vehicle for the month: filtered locally by plate, vehicle name or driver.
+  const summaryRows = <T extends { plate_number: string | null; vehicle_name: string | null; driver_names: string[] }>(rows: T[]) =>
+    rows.filter((r) => matchesSearch(summarySearch, r.plate_number, r.vehicle_name, ...r.driver_names))
 
   const fuelColumns: DataTableColumn<FuelLog>[] = [
     { key: "date", header: "Date", cell: (r) => formatDate(r.date) },
@@ -205,8 +210,17 @@ export default function FuelPage() {
                     />
                   </div>
                   <SectionPanel icon={FuelIcon} title="By vehicle">
+                    <Input
+                      aria-label="Search the fuel summary"
+                      placeholder="Search vehicle, plate or driver…"
+                      value={summarySearch}
+                      onChange={(e) => setSummarySearch(e.target.value)}
+                      className="mb-3 max-w-xs"
+                    />
                     {summary.by_vehicle.length === 0 ? (
                       <EmptyState icon={FuelIcon} title="No fuel data yet" description="Per-vehicle costs will appear here once logged." />
+                    ) : summaryRows(summary.by_vehicle).length === 0 ? (
+                      <EmptyState icon={FuelIcon} title="No matches" description="No vehicle or driver matches that search." />
                     ) : (
                       <DataTable
                         columns={[
@@ -226,7 +240,7 @@ export default function FuelPage() {
                           { key: "liters", header: "Liters", align: "right", cell: (r) => formatNumber(r.total_liters) },
                           { key: "avg", header: "Avg cost/km", align: "right", cell: (r) => (r.avg_cost_per_km ? formatRate(r.avg_cost_per_km) : "—") },
                         ]}
-                        rows={summary.by_vehicle}
+                        rows={summaryRows(summary.by_vehicle)}
                         getRowId={(r) => r.vehicle_id}
                       />
                     )}
