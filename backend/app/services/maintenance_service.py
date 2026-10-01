@@ -298,7 +298,7 @@ def calendar_page(
     db: Session, org_id: uuid.UUID, *, window_days: int = 30, limit: int | None = None, offset: int = 0, search: str | None = None
 ) -> tuple[list, int]:
     """The maintenance calendar (overdue, plus due within `window_days` and not already overdue) as plain rows, ordered
-    overdue first, then by due date, and cut to one page IN SQL, with the total. Row: (vehicle_id, plate_number, make,
+    latest due date first (nulls last), and cut to one page IN SQL, with the total. Row: (vehicle_id, plate_number, make,
     model, driver_name, last_service_date, service_type, next_due_date, next_due_km, status)."""
     today = datetime.now(timezone.utc).date()
     overdue = _overdue_clause(today)
@@ -317,7 +317,7 @@ def calendar_page(
         .outerjoin(Driver, Driver.id == MaintenanceLog.driver_id)
         .where(wanted)
         .order_by(
-            case((overdue, 0), else_=1), MaintenanceLog.next_due_date.asc().nulls_last(), Vehicle.plate_number,
+            MaintenanceLog.next_due_date.desc().nulls_last(), Vehicle.plate_number,
             MaintenanceLogService.service_type,
         )
         .offset(offset)

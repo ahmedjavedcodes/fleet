@@ -80,7 +80,7 @@ def get_maintenance_calendar_page(
     service_interval_km configured and include ones whose km-distance is close
     but whose calendar date isn't (see maintenance_service.list_upcoming_by_date).
 
-    Ordered overdue first, then by due date, and paged IN SQL: returns
+    Ordered latest due date first, and paged IN SQL: returns
     (the requested page, the total across all pages). limit=None returns everything.
     """
     rows, total = maintenance_service.calendar_page(db, org_id, window_days=window_days, limit=limit, offset=offset, search=search)

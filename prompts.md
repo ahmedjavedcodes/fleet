@@ -488,3 +488,7 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 - `search` also on `/dashboard/maintenance-calendar` (plate, make, model, driver name, in SQL) and `/incidents` (description, vehicle, driver). The dashboard has no incident list of its own, so the incidents `search` is on the incidents endpoint.
 - Frontend: a dashboard search box over the lists (calendar) and a FilterBar on Fleet health: search, health preset (Critical <50 -> max 49, Moderate 50-80, Good >80 -> min 81), make, status (Active / In service = maintenance / Decommissioned = retired). Debounced 300 ms; filters are part of the query key so a change restarts at page 1. Custom min/max inputs were not added (presets only).
 - Tests: `backend/tests/test_insights.py` (9), 7 new dashboard component tests.
+
+## Dashboard "Upcoming & overdue" card: latest first, top 7
+
+- Calendar query now orders by `next_due_date DESC NULLS LAST` (was overdue first, oldest due first, which surfaced 2024 items). The dashboard asks for `limit=7`; the card also slices to 7. "View all" links to `/maintenance` (there is no `/maintenance/schedule` route). Tests updated; the calendar Load more button was removed from the card.

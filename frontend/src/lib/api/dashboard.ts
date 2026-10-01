@@ -80,14 +80,19 @@ export function getFleetHealthPage(offset: number, filters: FleetHealthFilters =
   })
 }
 
-/** Overdue first, then by due date: ordered and cut by the backend, so only one page is ever fetched or rendered. */
+/** How many items the dashboard's "Upcoming & overdue" card shows; "View all" opens the full Maintenance page. */
+export const CALENDAR_WIDGET_LIMIT = 7
+
+/** The latest-due items first, only the top CALENDAR_WIDGET_LIMIT: sorted and limited by the backend. */
 export function useMaintenanceCalendarPages(windowDays: number, search?: string) {
-  return useInfiniteQuery({
+  return useQuery({
     queryKey: dashboardKeys.maintenanceCalendarPages(windowDays, search),
-    queryFn: ({ pageParam }) => getMaintenanceCalendarPage(windowDays, pageParam, search),
-    initialPageParam: 0,
-    getNextPageParam: (last, all) => nextOffset(all, last, DASHBOARD_PAGE_SIZE),
-    select: (data): PagedList<MaintenanceCalendarItem> => toPagedList(data),
+    queryFn: () =>
+      apiRequestPage("/dashboard/maintenance-calendar", {
+        query: { window_days: windowDays, limit: CALENDAR_WIDGET_LIMIT, search: search || undefined },
+        schema: maintenanceCalendarResponseSchema,
+      }),
+    select: (page): PagedList<MaintenanceCalendarItem> => ({ items: page.items.slice(0, CALENDAR_WIDGET_LIMIT), total: page.total }),
   })
 }
 

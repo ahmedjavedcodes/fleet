@@ -283,7 +283,7 @@ export function AdminDashboard() {
             areaLabel="the maintenance calendar"
           >
             {(list) => (
-              // Overdue first, then by due date: the backend orders and pages it.
+              // Latest due date first, top 7 only: the backend sorts and limits it; "View all" opens the full page.
               <div>
                 <div className="space-y-2">
                   {list.items.map((item) => (
@@ -297,7 +297,6 @@ export function AdminDashboard() {
                     />
                   ))}
                 </div>
-                <LoadMore query={calendarQuery} loaded={list.items.length} total={list.total} noun="items" />
               </div>
             )}
           </QueryRegion>

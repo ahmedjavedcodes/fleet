@@ -198,22 +198,20 @@ describe("AdminDashboard", () => {
   })
 
   describe("loading lists a page at a time", () => {
-    it("shows how many of the total are loaded and fetches the next page on request, for the calendar", async () => {
+    it("shows the top 7 latest-due calendar items with a View all link to the Maintenance page", () => {
       mockSummary.mockReturnValue(pendingQuery())
-      const calendar = pagedQuery(
-        [
-          { vehicle_id: "v1", plate_number: "OD-1", service_type: "oil_change", due_date: "2026-08-01", due_km: null, status: "overdue" },
-          { vehicle_id: "v2", plate_number: "OD-2", service_type: "oil_change", due_date: "2026-08-02", due_km: null, status: "overdue" },
-        ],
-        2094,
-        true
+      mockCalendar.mockReturnValue(
+        pagedQuery(
+          Array.from({ length: 7 }, (_, i) => ({ vehicle_id: `v${i}`, plate_number: `DUE-${i}`, service_type: "oil_change", due_date: "2026-10-01", due_km: null, status: "overdue" })),
+          2094,
+          false
+        )
       )
-      mockCalendar.mockReturnValue(calendar)
       render(<AdminDashboard />)
 
-      expect(screen.getByText("Showing 2 of 2,094 items")).toBeInTheDocument()
-      await userEvent.setup().click(screen.getByRole("button", { name: "Load more" }))
-      expect(calendar.fetchNextPage).toHaveBeenCalledTimes(1)
+      expect(screen.getAllByText(/^DUE-/)).toHaveLength(7)
+      expect(screen.getByRole("link", { name: "View all" })).toHaveAttribute("href", "/maintenance")
+      expect(screen.queryByText(/Showing/)).not.toBeInTheDocument()
     })
 
     it("does the same for fleet health, and renders only the rows it has been given", async () => {

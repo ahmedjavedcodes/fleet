@@ -203,7 +203,7 @@ def _calendar_fixture(db: Session, org: Organization):
     return plates
 
 
-def test_the_calendar_lists_overdue_first_then_by_due_date_and_pages_with_a_total(db_session: Session, organization: Organization) -> None:
+def test_the_calendar_lists_the_latest_due_date_first_and_pages_with_a_total(db_session: Session, organization: Organization) -> None:
     _calendar_fixture(db_session, organization)
 
     items, total = dashboard_service.get_maintenance_calendar_page(db_session, organization.id, window_days=30)
@@ -211,8 +211,9 @@ def test_the_calendar_lists_overdue_first_then_by_due_date_and_pages_with_a_tota
     rest, _ = dashboard_service.get_maintenance_calendar_page(db_session, organization.id, window_days=30, limit=4, offset=4)
 
     assert total == total_first == 6 and len(items) == 6
-    assert [i.status for i in items] == ["overdue"] * 4 + ["upcoming"] * 2
-    assert [i.plate_number for i in items[:4]] == ["CAL-003", "CAL-002", "CAL-001", "CAL-000"]  # most overdue first
+    # Latest due date first: the future ones, then the overdue ones from the most recent back to the oldest.
+    assert [i.plate_number for i in items] == ["CAL-005", "CAL-004", "CAL-000", "CAL-001", "CAL-002", "CAL-003"]
+    assert [i.status for i in items] == ["upcoming"] * 2 + ["overdue"] * 4
     assert first == items[:4] and rest == items[4:]
     assert dashboard_service.get_maintenance_calendar(db_session, organization.id, 30) == items
 
