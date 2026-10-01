@@ -502,3 +502,7 @@ Ongoing log of significant architectural decisions, prompt iterations, and tool 
 ## Insights page vehicle filter
 
 - `vehicle_id` (UUID) on `GET /dashboard/fuel-trends` and `/dashboard/maintenance-calendar` (SQL WHERE). Insights page: a plate input with datalist suggestions; an exact plate narrows the fuel trend and the calendar to that vehicle, "Clear" resets, an unknown plate says so and keeps the fleet. The insights calendar was unpaged and re-sorted overdue-first on the client: it now takes the backend order (latest due first) capped at 50.
+
+## Chat: "document search service is unavailable"
+
+- Root cause (reproduced in-process): the backend call to Pinecone intermittently fails with `getaddrinfo failed` (errno 11002, a one-off DNS lookup failure on this machine; 3 failures in a row, then success), which `document_service.search` turned straight into a 503 that the assistant reported as "unavailable". Fix: the read is retried up to 4 times with a short backoff before it becomes a 503; deliberate HTTP errors are not retried. Restart the backend to apply.

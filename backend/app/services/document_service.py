@@ -82,6 +82,10 @@ def _vector_id(organization_id, document_id, version: int, chunk_index: int) -> 
     return f"{organization_id}#{document_id}#v{version}#{chunk_index}"
 
 
+SEARCH_ATTEMPTS = 4
+SEARCH_RETRY_DELAY_SECONDS = 0.5
+
+
 def _unavailable() -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Document search is not configured")
 
@@ -357,13 +361,18 @@ def search(
     If embedding, Pinecone or the reranker fails mid-search, this is a 503 --
     never unreranked results: skipping precision scoring would hand the LLM
     exactly the low-relevance context the threshold exists to keep out."""
-    try:
-        return _search(db, user, query, document_types, document_ids)
-    except (HTTPException, VectorSecurityViolation):
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("document search failed: %s", type(exc).__name__, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Document search temporarily unavailable")
+    # A search is a read, so a transient failure (a dropped connection, a DNS lookup that fails once: seen on
+    # developer machines as getaddrinfo 11002 to Pinecone) is retried a couple of times before it becomes a 503.
+    for attempt in range(SEARCH_ATTEMPTS):
+        try:
+            return _search(db, user, query, document_types, document_ids)
+        except (HTTPException, VectorSecurityViolation):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("document search failed (attempt %d/%d): %s", attempt + 1, SEARCH_ATTEMPTS, type(exc).__name__, exc_info=attempt + 1 == SEARCH_ATTEMPTS)
+            if attempt + 1 == SEARCH_ATTEMPTS:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Document search temporarily unavailable")
+            time.sleep(SEARCH_RETRY_DELAY_SECONDS * (attempt + 1))
 
 
 def _search(

@@ -540,3 +540,42 @@ def test_delete_purges_vectors_and_rows(rag, client: TestClient, users) -> None:
     assert rag["store"].records(NS) == {}
     assert client.get(f"/api/v1/documents/{doc_id}", headers=auth_headers(admin)).status_code == 404
     assert _search(client, admin, "brake pads replaced")["results"] == []
+
+
+def test_a_transient_search_failure_is_retried_but_a_persistent_one_is_a_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dropped connection or a one-off DNS failure (getaddrinfo 11002 to Pinecone) must not fail the user's question."""
+    from fastapi import HTTPException
+
+    from app.services import document_service
+
+    monkeypatch.setattr(document_service.time, "sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("getaddrinfo failed")
+        return ["hit"], False
+
+    monkeypatch.setattr(document_service, "_search", flaky)
+    assert document_service.search(None, None, "q", None) == (["hit"], False) and calls["n"] == 3
+
+    def down(*args, **kwargs):
+        calls["n"] += 1
+        raise ConnectionError("getaddrinfo failed")
+
+    calls["n"] = 0
+    monkeypatch.setattr(document_service, "_search", down)
+    with pytest.raises(HTTPException) as exc:
+        document_service.search(None, None, "q", None)
+    assert exc.value.status_code == 503 and calls["n"] == document_service.SEARCH_ATTEMPTS
+
+    def refused(*args, **kwargs):
+        calls["n"] += 1
+        raise HTTPException(status_code=503, detail="Document search is not configured")
+
+    calls["n"] = 0
+    monkeypatch.setattr(document_service, "_search", refused)
+    with pytest.raises(HTTPException):
+        document_service.search(None, None, "q", None)
+    assert calls["n"] == 1  # a deliberate HTTP error is not retried
